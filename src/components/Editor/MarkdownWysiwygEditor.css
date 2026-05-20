@@ -210,6 +210,12 @@
   margin: 0;
 }
 
+.markdown-wysiwyg .cm-md-math-block-live-preview {
+  margin: 8px 0 4px;
+  border-style: dashed;
+  background: color-mix(in srgb, var(--bg-surface) 72%, transparent);
+}
+
 .markdown-wysiwyg .cm-md-math-source {
   color: var(--text-secondary);
   font-family: "JetBrains Mono", "Fira Code", "Menlo", monospace;

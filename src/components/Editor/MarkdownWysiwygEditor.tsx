@@ -1321,6 +1321,7 @@ class MathWidget extends WidgetType {
     private readonly displayMode: boolean,
     private readonly from: number,
     private readonly to: number,
+    private readonly className = "",
   ) {
     super();
   }
@@ -1330,13 +1331,18 @@ class MathWidget extends WidgetType {
       this.value === other.value &&
       this.displayMode === other.displayMode &&
       this.from === other.from &&
-      this.to === other.to
+      this.to === other.to &&
+      this.className === other.className
     );
   }
 
   toDOM(view: EditorView) {
     const span = document.createElement(this.displayMode ? "div" : "span");
-    span.className = this.displayMode ? "cm-md-math cm-md-math-block-render" : "cm-md-math cm-md-math-inline-render";
+    span.className = [
+      "cm-md-math",
+      this.displayMode ? "cm-md-math-block-render" : "cm-md-math-inline-render",
+      this.className,
+    ].filter(Boolean).join(" ");
     if (this.value.trim()) {
       try {
         katex.render(this.value, span, {
@@ -1777,6 +1783,20 @@ function buildMarkdownDecorations(state: EditorState) {
           ranges.push({ from: mathLine.from, to: mathLine.to, className: "cm-md-math-source" });
           addLatexSyntaxTokenDecorations(ranges, mathLine.text, mathLine.from);
         }
+        ranges.push({
+          from: mathBlock.to,
+          to: mathBlock.to,
+          point: true,
+          block: true,
+          side: 1,
+          widget: new MathWidget(
+            mathBlock.value,
+            true,
+            mathBlock.from,
+            mathBlock.to,
+            "cm-md-math-block-live-preview",
+          ),
+        });
       } else {
         ranges.push({
           from: mathBlock.from,

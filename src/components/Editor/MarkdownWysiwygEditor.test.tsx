@@ -65,6 +65,18 @@ describe("MarkdownWysiwygEditor", () => {
     });
   });
 
+  it("shows a live rendered preview under active display math source", async () => {
+    const path = "/workspace/examples/markdown/display-math.md";
+    useEditorStore.getState().openTab(path, "display-math.md", "$$\n\\frac{a}{b} + \\alpha\n$$\n");
+
+    const { container } = render(<MarkdownWysiwygEditor />);
+
+    await waitFor(() => {
+      expect(container.querySelector(".cm-md-math-source")).toBeInTheDocument();
+      expect(container.querySelector(".cm-md-math-block-live-preview .katex-display")).toBeInTheDocument();
+    });
+  });
+
   it("lets rendered table cells update the markdown source", async () => {
     const path = "/workspace/examples/markdown/table.md";
     useEditorStore.getState().openTab(path, "table.md", "| A | B |\n| --- | --- |\n| 1 | 2 |\n");
