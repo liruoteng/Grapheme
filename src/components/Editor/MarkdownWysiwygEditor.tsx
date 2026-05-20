@@ -10,7 +10,7 @@ import katex from "katex";
 import { refractor } from "refractor/all";
 import type { Element as HastElement, Nodes as HastNode, Root as HastRoot, Text as HastText } from "hast";
 import { EditorSelection, EditorState, StateEffect, StateField } from "@codemirror/state";
-import type { Extension, Range } from "@codemirror/state";
+import type { Extension, Range, TransactionSpec } from "@codemirror/state";
 import {
   Decoration,
   EditorView,
@@ -55,6 +55,13 @@ type DecorationRange = {
 type InlineRange = {
   from: number;
   to: number;
+};
+
+type ScrollSnapshot = {
+  top: number;
+  left: number;
+  anchorPos: number | null;
+  anchorTop: number | null;
 };
 
 const editTableSourceEffect = StateEffect.define<InlineRange | null>();
@@ -209,7 +216,15 @@ function markerRange(from: number, to: number, active: boolean, className = ""):
 }
 
 function inlineMarkerActive(markers: InlineRange[], cursorFrom: number, cursorTo: number) {
+  if (cursorFrom !== cursorTo) {
+    return markers.some((marker) => cursorFrom === marker.from && cursorTo === marker.to);
+  }
   return markers.some((marker) => cursorTo >= marker.from && cursorFrom <= marker.to);
+}
+
+function rangeActive(range: InlineRange, cursorFrom: number, cursorTo: number, selectionEmpty: boolean) {
+  if (!selectionEmpty) return cursorFrom === range.from && cursorTo === range.to;
+  return cursorTo >= range.from && cursorFrom <= range.to;
 }
 
 function escaped(text: string, index: number) {
@@ -568,6 +583,59 @@ function normalizePrismLanguage(language: string) {
   return prismAliases[normalized] ?? normalized;
 }
 
+function captureScrollSnapshot(view: EditorView, preferredAnchorPos?: number | null): ScrollSnapshot {
+  const rect = view.scrollDOM.getBoundingClientRect();
+  const anchorPos = preferredAnchorPos ?? view.posAtCoords({
+    x: rect.left + Math.min(rect.width / 2, 320),
+    y: rect.top + Math.min(96, Math.max(24, rect.height / 4)),
+  });
+  const anchorCoords = anchorPos === null ? null : view.coordsAtPos(anchorPos);
+
+  return {
+    top: view.scrollDOM.scrollTop,
+    left: view.scrollDOM.scrollLeft,
+    anchorPos,
+    anchorTop: anchorCoords?.top ?? null,
+  };
+}
+
+function restoreScrollPosition(view: EditorView, snapshot: ScrollSnapshot) {
+  if (useEditorStore.getState().typewriterMode) return;
+
+  view.requestMeasure({
+    read: () => snapshot,
+    write: (current) => {
+      const restore = () => {
+        view.scrollDOM.scrollTop = current.top;
+        view.scrollDOM.scrollLeft = current.left;
+        if (current.anchorPos !== null && current.anchorTop !== null) {
+          const nextAnchor = view.coordsAtPos(current.anchorPos);
+          if (nextAnchor) view.scrollDOM.scrollTop += nextAnchor.top - current.anchorTop;
+        }
+      };
+      restore();
+      requestAnimationFrame(() => {
+        restore();
+        requestAnimationFrame(restore);
+      });
+    },
+  });
+}
+
+function dispatchPreservingScroll(view: EditorView, transaction: TransactionSpec, anchorPos?: number | null) {
+  const snapshot = captureScrollSnapshot(view, anchorPos);
+  view.dispatch(transaction);
+  restoreScrollPosition(view, snapshot);
+}
+
+function selectRangePreservingScroll(view: EditorView, from: number, to: number) {
+  dispatchPreservingScroll(view, { selection: EditorSelection.range(from, to) }, from);
+}
+
+function selectCursorPreservingScroll(view: EditorView, pos: number) {
+  dispatchPreservingScroll(view, { selection: EditorSelection.cursor(pos) }, pos);
+}
+
 function shortAuthor(authors?: string[]) {
   const first = authors?.[0]?.trim();
   if (!first) return "";
@@ -773,6 +841,7 @@ class MarkdownTableWidget extends WidgetType {
     let committedSource = view.state.sliceDoc(tableFrom, tableTo);
     const renderedCells = new Map<string, HTMLTableCellElement>();
     let selectionAnchor: { row: number; col: number } | null = null;
+    let lastClickedCell: { row: number; col: number } | null = null;
     let selectedRange: { startRow: number; endRow: number; startCol: number; endCol: number } | null = null;
     let draggingTableSelection = false;
 
@@ -821,6 +890,14 @@ class MarkdownTableWidget extends WidgetType {
         cell.classList.toggle("is-selection-anchor", selected && row === from.row && col === from.col);
         if (selected) cell.setAttribute("aria-selected", "true");
         else cell.removeAttribute("aria-selected");
+      }
+    };
+
+    const clearTableSelection = () => {
+      selectedRange = null;
+      for (const cell of renderedCells.values()) {
+        cell.classList.remove("is-selected", "is-selection-anchor");
+        cell.removeAttribute("aria-selected");
       }
     };
 
@@ -897,20 +974,30 @@ class MarkdownTableWidget extends WidgetType {
       cell.addEventListener("mousedown", (event) => {
         event.stopPropagation();
         if (event.button !== 0) return;
+        if (event.shiftKey && lastClickedCell) {
+          event.preventDefault();
+          draggingTableSelection = false;
+          selectionAnchor = null;
+          applyTableSelection(lastClickedCell, { row: rowIndex, col: colIndex });
+          return;
+        }
+        clearTableSelection();
         selectionAnchor = { row: rowIndex, col: colIndex };
         draggingTableSelection = false;
-        applyTableSelection(selectionAnchor, selectionAnchor);
       });
-      cell.addEventListener("mouseenter", (event) => {
+      const extendSelectionToCell = (event: MouseEvent) => {
         if (!selectionAnchor || event.buttons !== 1) return;
         event.preventDefault();
         draggingTableSelection = true;
         if (wrap.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
         clearBrowserSelection();
         applyTableSelection(selectionAnchor, { row: rowIndex, col: colIndex });
-      });
+      };
+      cell.addEventListener("mouseenter", extendSelectionToCell);
+      cell.addEventListener("mouseover", extendSelectionToCell);
       cell.addEventListener("mouseup", (event) => {
         if (!selectionAnchor) return;
+        lastClickedCell = { row: rowIndex, col: colIndex };
         if (draggingTableSelection) {
           event.preventDefault();
           event.stopPropagation();
@@ -955,11 +1042,32 @@ class MarkdownTableWidget extends WidgetType {
     };
 
     const finishTableSelection = () => {
+      if (selectionAnchor && !draggingTableSelection) lastClickedCell = selectionAnchor;
       selectionAnchor = null;
       draggingTableSelection = false;
     };
+    const trackTableSelection = (event: MouseEvent) => {
+      if (!selectionAnchor || event.buttons !== 1) return;
+      if (typeof document.elementFromPoint !== "function") return;
+      const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
+      const cell = target?.closest<HTMLTableCellElement>(".cm-md-table-render th, .cm-md-table-render td");
+      if (!cell || !wrap.contains(cell)) return;
+      const row = Number(cell.dataset.row);
+      const col = Number(cell.dataset.col);
+      if (!Number.isFinite(row) || !Number.isFinite(col)) return;
+      if (row === selectionAnchor.row && col === selectionAnchor.col) return;
+      event.preventDefault();
+      draggingTableSelection = true;
+      if (wrap.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
+      clearBrowserSelection();
+      applyTableSelection(selectionAnchor, { row, col });
+    };
+    document.addEventListener("mousemove", trackTableSelection);
     document.addEventListener("mouseup", finishTableSelection);
-    this.cleanup = () => document.removeEventListener("mouseup", finishTableSelection);
+    this.cleanup = () => {
+      document.removeEventListener("mousemove", trackTableSelection);
+      document.removeEventListener("mouseup", finishTableSelection);
+    };
 
     wrap.addEventListener("copy", (event) => {
       if (!selectedRange) return;
@@ -973,11 +1081,7 @@ class MarkdownTableWidget extends WidgetType {
 
     wrap.addEventListener("keydown", (event) => {
       if (event.key !== "Escape" || !selectedRange) return;
-      selectedRange = null;
-      for (const cell of renderedCells.values()) {
-        cell.classList.remove("is-selected", "is-selection-anchor");
-        cell.removeAttribute("aria-selected");
-      }
+      clearTableSelection();
     });
 
     const actions = document.createElement("div");
@@ -989,10 +1093,9 @@ class MarkdownTableWidget extends WidgetType {
     editBtn.addEventListener("mousedown", (event) => event.preventDefault());
     editBtn.addEventListener("click", (event) => {
       event.preventDefault();
-      view.dispatch({
+      dispatchPreservingScroll(view, {
         effects: editTableSourceEffect.of({ from: this.table.from, to: this.table.to }),
         selection: EditorSelection.cursor(this.table.from),
-        scrollIntoView: true,
       });
       view.focus();
     });
@@ -1191,10 +1294,7 @@ class FrontmatterWidget extends WidgetType {
     edit.textContent = "Edit source";
     edit.addEventListener("click", (event) => {
       event.preventDefault();
-      view.dispatch({
-        selection: EditorSelection.cursor(this.frontmatter.to),
-        scrollIntoView: true,
-      });
+      selectCursorPreservingScroll(view, this.frontmatter.to);
       view.focus();
     });
     body.appendChild(edit);
@@ -1234,10 +1334,7 @@ class MarkdownImageWidget extends WidgetType {
     edit.addEventListener("mousedown", (event) => event.preventDefault());
     edit.addEventListener("click", (event) => {
       event.preventDefault();
-      view.dispatch({
-        selection: EditorSelection.range(this.image.from, this.image.to),
-        scrollIntoView: true,
-      });
+      selectRangePreservingScroll(view, this.image.from, this.image.to);
       view.focus();
     });
     actions.appendChild(edit);
@@ -1272,10 +1369,7 @@ class MarkdownImageWidget extends WidgetType {
     figure.addEventListener("mousedown", (event) => {
       if ((event.target as HTMLElement).closest("button")) return;
       event.preventDefault();
-      view.dispatch({
-        selection: EditorSelection.range(this.image.from, this.image.to),
-        scrollIntoView: true,
-      });
+      selectRangePreservingScroll(view, this.image.from, this.image.to);
       view.focus();
     });
 
@@ -1305,10 +1399,7 @@ class CitationWidget extends WidgetType {
     span.contentEditable = "false";
     span.addEventListener("mousedown", (event) => {
       event.preventDefault();
-      view.dispatch({
-        selection: EditorSelection.range(this.from, this.to),
-        scrollIntoView: true,
-      });
+      selectRangePreservingScroll(view, this.from, this.to);
       view.focus();
     });
     return span;
@@ -1361,10 +1452,7 @@ class MathWidget extends WidgetType {
     }
     span.addEventListener("mousedown", (event) => {
       event.preventDefault();
-      view.dispatch({
-        selection: EditorSelection.range(this.from, this.to),
-        scrollIntoView: true,
-      });
+      selectRangePreservingScroll(view, this.from, this.to);
       view.focus();
     });
     return span;
@@ -1388,10 +1476,7 @@ class HorizontalRuleWidget extends WidgetType {
     hr.className = "cm-md-horizontal-rule";
     hr.addEventListener("mousedown", (event) => {
       event.preventDefault();
-      view.dispatch({
-        selection: EditorSelection.cursor(this.to),
-        scrollIntoView: true,
-      });
+      selectCursorPreservingScroll(view, this.to);
       view.focus();
     });
     return hr;
@@ -1742,6 +1827,7 @@ function buildMarkdownDecorations(state: EditorState) {
   const selection = state.selection.main;
   const cursorFrom = selection.from;
   const cursorTo = selection.to;
+  const selectionEmpty = selection.empty;
   const doc = state.doc;
   const enableCodeSyntaxHighlighting = doc.length <= codeSyntaxHighlightMaxDocLength;
   const frontmatter = frontmatterAtTop(state);
@@ -1752,7 +1838,7 @@ function buildMarkdownDecorations(state: EditorState) {
     const text = line.text;
 
     if (frontmatter && line.from === frontmatter.from) {
-      const activeFrontmatter = cursorTo >= frontmatter.from && cursorFrom <= frontmatter.to;
+      const activeFrontmatter = selectionEmpty && cursorTo >= frontmatter.from && cursorFrom <= frontmatter.to;
       const lastFrontmatterLineNumber = doc.lineAt(frontmatter.to).number;
       if (activeFrontmatter) {
         for (let fmLineNumber = line.number; fmLineNumber <= lastFrontmatterLineNumber; fmLineNumber += 1) {
@@ -1775,7 +1861,7 @@ function buildMarkdownDecorations(state: EditorState) {
 
     const mathBlock = mathBlockAt(state, line.number);
     if (mathBlock) {
-      const activeMathBlock = cursorTo >= mathBlock.from && cursorFrom <= mathBlock.to;
+      const activeMathBlock = rangeActive(mathBlock, cursorFrom, cursorTo, selectionEmpty);
       const lastMathLineNumber = doc.lineAt(mathBlock.to).number;
       if (activeMathBlock) {
         for (let mathLineNumber = line.number; mathLineNumber <= lastMathLineNumber; mathLineNumber += 1) {
@@ -1813,7 +1899,7 @@ function buildMarkdownDecorations(state: EditorState) {
 
     const codeBlock = codeBlockAt(state, line.number);
     if (codeBlock) {
-      const activeCodeBlock = cursorTo >= codeBlock.from && cursorFrom <= codeBlock.to;
+      const activeCodeBlock = selectionEmpty && cursorTo >= codeBlock.from && cursorFrom <= codeBlock.to;
       const lastCodeLineNumber = doc.lineAt(codeBlock.to).number;
 
       for (let codeLineNumber = line.number; codeLineNumber <= lastCodeLineNumber; codeLineNumber += 1) {
@@ -1855,7 +1941,7 @@ function buildMarkdownDecorations(state: EditorState) {
 
     const image = imageAtLine(text, line.from);
     if (image) {
-      const activeImage = cursorTo >= image.from && cursorFrom <= image.to;
+      const activeImage = selectionEmpty && cursorTo >= image.from && cursorFrom <= image.to;
       if (activeImage) {
         ranges.push({ from: image.from, to: image.to, className: "cm-md-image-source" });
       } else {
@@ -1894,7 +1980,7 @@ function buildMarkdownDecorations(state: EditorState) {
     }
 
     const isDefaultCursor = cursorFrom === 0 && cursorTo === 0 && selection.empty;
-    const activeLine = !isDefaultCursor && cursorTo >= line.from && cursorFrom <= line.to;
+    const activeLine = selectionEmpty && !isDefaultCursor && cursorTo >= line.from && cursorFrom <= line.to;
     const heading = text.match(/^(#{1,6})\s+/);
     const blockquote = text.match(/^(>+\s?)/);
     const task = text.match(/^(\s*)([-*+])\s+\[([ xX])\]\s+/);
@@ -1908,7 +1994,7 @@ function buildMarkdownDecorations(state: EditorState) {
       ranges.push({ from: line.from + heading[0].length, to: line.to, className: `cm-md-heading cm-md-h${level}` });
       addInlineDecorations(ranges, text, line.from, heading[0].length, cursorFrom, cursorTo);
     } else if (/^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/.test(text)) {
-      if (!selection.empty) {
+      if (activeLine) {
         ranges.push({ from: line.from, to: line.to, className: "cm-md-rule-source" });
       } else {
         ranges.push({
@@ -2080,8 +2166,9 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
   const viewRef = useRef<EditorView | null>(null);
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previewUpdateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pointerScrollSnapshotRef = useRef<{ top: number; left: number } | null>(null);
+  const pointerScrollSnapshotRef = useRef<ScrollSnapshot | null>(null);
   const pointerScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pointerSelectionActiveRef = useRef(false);
   const onSaveRef = useRef(onSave);
   const onSnapshotRef = useRef(onSnapshot);
   const onPreviewRef = useRef(onPreviewTrigger);
@@ -2185,20 +2272,16 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
   const preservePointerScroll = useCallback((view: EditorView) => {
     const snapshot = pointerScrollSnapshotRef.current;
     if (!snapshot || useEditorStore.getState().typewriterMode) return;
+    restoreScrollPosition(view, snapshot);
+  }, []);
 
-    view.requestMeasure({
-      read: () => snapshot,
-      write: (current) => {
-        if (pointerScrollSnapshotRef.current !== current) return;
-        view.scrollDOM.scrollTop = current.top;
-        view.scrollDOM.scrollLeft = current.left;
-        requestAnimationFrame(() => {
-          if (pointerScrollSnapshotRef.current !== current) return;
-          view.scrollDOM.scrollTop = current.top;
-          view.scrollDOM.scrollLeft = current.left;
-        });
-      },
-    });
+  const releasePointerScrollSnapshot = useCallback(() => {
+    pointerSelectionActiveRef.current = false;
+    if (pointerScrollTimerRef.current) clearTimeout(pointerScrollTimerRef.current);
+    pointerScrollTimerRef.current = setTimeout(() => {
+      pointerScrollSnapshotRef.current = null;
+      pointerScrollTimerRef.current = null;
+    }, 80);
   }, []);
 
   const insertImageMarkdown = useCallback((view: EditorView, srcs: string[], at?: number) => {
@@ -2298,15 +2381,21 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
     EditorView.domEventHandlers({
       mousedown(event, view) {
         if (event.button !== 0) return false;
-        pointerScrollSnapshotRef.current = {
-          top: view.scrollDOM.scrollTop,
-          left: view.scrollDOM.scrollLeft,
-        };
+        pointerSelectionActiveRef.current = true;
+        pointerScrollSnapshotRef.current = captureScrollSnapshot(
+          view,
+          view.posAtCoords({ x: event.clientX, y: event.clientY }),
+        );
         if (pointerScrollTimerRef.current) clearTimeout(pointerScrollTimerRef.current);
         pointerScrollTimerRef.current = setTimeout(() => {
+          pointerSelectionActiveRef.current = false;
           pointerScrollSnapshotRef.current = null;
           pointerScrollTimerRef.current = null;
-        }, 120);
+        }, 3000);
+        return false;
+      },
+      mouseup() {
+        releasePointerScrollSnapshot();
         return false;
       },
       click(event, view) {
@@ -2316,7 +2405,7 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
         const link = linkAtPosition(view, pos);
         if (!link) return false;
         event.preventDefault();
-        view.dispatch({ selection: EditorSelection.range(link.from, link.to) });
+        selectRangePreservingScroll(view, link.from, link.to);
         openUrl(link.href).catch((err: unknown) => console.error("open link failed", err));
         return true;
       },
@@ -2378,7 +2467,7 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
         fontFamily: editorMdFont,
       },
     }),
-  ], [centerCursorIfNeeded, editorFontSize, editorMdFont, handleChange, insertImageMarkdown, preservePointerScroll, updateCitationMenu]);
+  ], [centerCursorIfNeeded, editorFontSize, editorMdFont, handleChange, insertImageMarkdown, preservePointerScroll, releasePointerScrollSnapshot, updateCitationMenu]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -2425,6 +2514,15 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
     window.addEventListener("editor:insert", handler);
     return () => window.removeEventListener("editor:insert", handler);
   }, []);
+
+  useEffect(() => {
+    window.addEventListener("mouseup", releasePointerScrollSnapshot);
+    window.addEventListener("blur", releasePointerScrollSnapshot);
+    return () => {
+      window.removeEventListener("mouseup", releasePointerScrollSnapshot);
+      window.removeEventListener("blur", releasePointerScrollSnapshot);
+    };
+  }, [releasePointerScrollSnapshot]);
 
   useEffect(() => {
     return () => {
