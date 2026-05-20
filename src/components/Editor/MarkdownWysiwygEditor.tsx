@@ -701,6 +701,7 @@ class MarkdownTableWidget extends WidgetType {
     wrap.className = "cm-md-table-render";
     wrap.tabIndex = -1;
     const draftHeader = [...this.table.header];
+    const draftAlignments = [...this.table.alignments];
     const draftRows = this.table.rows.map((row) => [...row]);
     const tableFrom = this.table.from;
     let tableTo = this.table.to;
@@ -772,6 +773,42 @@ class MarkdownTableWidget extends WidgetType {
       tableTo = tableFrom + nextSource.length;
       committedSource = nextSource;
     };
+
+    const replaceTableSource = (nextSource: string) => {
+      const replaceTo = nextSource === "" && view.state.sliceDoc(tableTo, tableTo + 1) === "\n"
+        ? tableTo + 1
+        : tableTo;
+      view.dispatch({
+        changes: { from: tableFrom, to: replaceTo, insert: nextSource },
+        selection: EditorSelection.cursor(tableFrom),
+        scrollIntoView: true,
+      });
+      tableTo = tableFrom + nextSource.length;
+      committedSource = nextSource;
+      view.focus();
+    };
+
+    const selectedColumnIndexes = () => {
+      if (selectedRange) {
+        const indexes: number[] = [];
+        for (let col = selectedRange.startCol; col <= selectedRange.endCol; col += 1) indexes.push(col);
+        return indexes;
+      }
+      return draftHeader.length > 0 ? [draftHeader.length - 1] : [];
+    };
+
+    const selectedDataRowIndexes = () => {
+      if (selectedRange) {
+        const indexes: number[] = [];
+        for (let row = Math.max(1, selectedRange.startRow); row <= selectedRange.endRow; row += 1) indexes.push(row - 1);
+        if (indexes.length > 0) return indexes;
+      }
+      return draftRows.length > 0 ? [draftRows.length - 1] : [];
+    };
+
+    const nextTableSource = (header: string[], alignments: MarkdownTable["alignments"], rows: string[][]) => (
+      serializeTable({ header, alignments, rows })
+    );
 
     const makeEditableCell = (
       cell: HTMLTableCellElement,
@@ -925,6 +962,52 @@ class MarkdownTableWidget extends WidgetType {
       view.focus();
     });
     actions.appendChild(colBtn);
+
+    const deleteRowBtn = document.createElement("button");
+    deleteRowBtn.type = "button";
+    deleteRowBtn.textContent = "- Row";
+    deleteRowBtn.addEventListener("mousedown", (event) => event.preventDefault());
+    deleteRowBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      const rowsToDelete = new Set(selectedDataRowIndexes());
+      if (rowsToDelete.size === 0) return;
+      replaceTableSource(nextTableSource(
+        draftHeader,
+        draftAlignments,
+        draftRows.filter((_, index) => !rowsToDelete.has(index)),
+      ));
+    });
+    actions.appendChild(deleteRowBtn);
+
+    const deleteColBtn = document.createElement("button");
+    deleteColBtn.type = "button";
+    deleteColBtn.textContent = "- Column";
+    deleteColBtn.addEventListener("mousedown", (event) => event.preventDefault());
+    deleteColBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      const columnsToDelete = new Set(selectedColumnIndexes());
+      if (columnsToDelete.size === 0) return;
+      if (columnsToDelete.size >= draftHeader.length) {
+        replaceTableSource("");
+        return;
+      }
+      replaceTableSource(nextTableSource(
+        draftHeader.filter((_, index) => !columnsToDelete.has(index)),
+        draftAlignments.filter((_, index) => !columnsToDelete.has(index)),
+        draftRows.map((row) => row.filter((_, index) => !columnsToDelete.has(index))),
+      ));
+    });
+    actions.appendChild(deleteColBtn);
+
+    const deleteTableBtn = document.createElement("button");
+    deleteTableBtn.type = "button";
+    deleteTableBtn.textContent = "Delete table";
+    deleteTableBtn.addEventListener("mousedown", (event) => event.preventDefault());
+    deleteTableBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      replaceTableSource("");
+    });
+    actions.appendChild(deleteTableBtn);
 
     wrap.appendChild(actions);
 
@@ -1700,7 +1783,8 @@ function buildMarkdownDecorations(state: EditorState) {
       continue;
     }
 
-    const activeLine = cursorTo >= line.from && cursorFrom <= line.to;
+    const isDefaultCursor = cursorFrom === 0 && cursorTo === 0 && selection.empty;
+    const activeLine = !isDefaultCursor && cursorTo >= line.from && cursorFrom <= line.to;
     const heading = text.match(/^(#{1,6})\s+/);
     const blockquote = text.match(/^(>+\s?)/);
     const task = text.match(/^(\s*)([-*+])\s+\[([ xX])\]\s+/);
