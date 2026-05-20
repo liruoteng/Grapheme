@@ -14,6 +14,11 @@ const steps = [
     args: ["run", "test:stress:frontend"],
   },
   {
+    name: "markdown-preview",
+    command: "npm",
+    args: ["run", "test:preview-pipeline:rust"],
+  },
+  {
     name: "rust",
     command: "npm",
     args: ["run", "test:stress:rust"],

@@ -2060,6 +2060,8 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
   const viewRef = useRef<EditorView | null>(null);
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previewUpdateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pointerScrollSnapshotRef = useRef<{ top: number; left: number } | null>(null);
+  const pointerScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onSaveRef = useRef(onSave);
   const onSnapshotRef = useRef(onSnapshot);
   const onPreviewRef = useRef(onPreviewTrigger);
@@ -2160,6 +2162,25 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
     });
   }, []);
 
+  const preservePointerScroll = useCallback((view: EditorView) => {
+    const snapshot = pointerScrollSnapshotRef.current;
+    if (!snapshot || useEditorStore.getState().typewriterMode) return;
+
+    view.requestMeasure({
+      read: () => snapshot,
+      write: (current) => {
+        if (pointerScrollSnapshotRef.current !== current) return;
+        view.scrollDOM.scrollTop = current.top;
+        view.scrollDOM.scrollLeft = current.left;
+        requestAnimationFrame(() => {
+          if (pointerScrollSnapshotRef.current !== current) return;
+          view.scrollDOM.scrollTop = current.top;
+          view.scrollDOM.scrollLeft = current.left;
+        });
+      },
+    });
+  }, []);
+
   const insertImageMarkdown = useCallback((view: EditorView, srcs: string[], at?: number) => {
     if (srcs.length === 0) return;
     const selection = view.state.selection.main;
@@ -2229,6 +2250,8 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
       if (update.docChanged) handleChange(update.view);
 
       if (update.selectionSet || update.docChanged) {
+        if (update.selectionSet && !update.docChanged) preservePointerScroll(update.view);
+
         const selection = update.state.selection.main;
         if (selection.empty) {
           useEditorStore.getState().setSelectedText(null);
@@ -2253,6 +2276,19 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
       }
     }),
     EditorView.domEventHandlers({
+      mousedown(event, view) {
+        if (event.button !== 0) return false;
+        pointerScrollSnapshotRef.current = {
+          top: view.scrollDOM.scrollTop,
+          left: view.scrollDOM.scrollLeft,
+        };
+        if (pointerScrollTimerRef.current) clearTimeout(pointerScrollTimerRef.current);
+        pointerScrollTimerRef.current = setTimeout(() => {
+          pointerScrollSnapshotRef.current = null;
+          pointerScrollTimerRef.current = null;
+        }, 120);
+        return false;
+      },
       click(event, view) {
         if (!(event.metaKey || event.ctrlKey)) return false;
         const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
@@ -2322,7 +2358,7 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
         fontFamily: editorMdFont,
       },
     }),
-  ], [centerCursorIfNeeded, editorFontSize, editorMdFont, handleChange, insertImageMarkdown, updateCitationMenu]);
+  ], [centerCursorIfNeeded, editorFontSize, editorMdFont, handleChange, insertImageMarkdown, preservePointerScroll, updateCitationMenu]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -2374,6 +2410,7 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
     return () => {
       if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
       if (previewUpdateTimer.current) clearTimeout(previewUpdateTimer.current);
+      if (pointerScrollTimerRef.current) clearTimeout(pointerScrollTimerRef.current);
     };
   }, []);
 
