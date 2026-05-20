@@ -684,6 +684,71 @@ function addSyntaxTokenDecorations(
   }
 }
 
+function addLatexSyntaxTokenDecorations(
+  ranges: DecorationRange[],
+  lineText: string,
+  lineFrom: number,
+) {
+  let index = 0;
+
+  const pushToken = (from: number, to: number, className: string) => {
+    if (from >= to) return;
+    ranges.push({
+      from: lineFrom + from,
+      to: lineFrom + to,
+      className: `cm-md-token cm-md-latex-token ${className}`,
+    });
+  };
+
+  while (index < lineText.length) {
+    const char = lineText[index];
+
+    if (char === "%") {
+      pushToken(index, lineText.length, "cm-md-token-comment");
+      break;
+    }
+
+    if (char === "\\") {
+      const command = lineText.slice(index).match(/^\\(?:[a-zA-Z]+[*]?|.)/);
+      if (command) {
+        pushToken(index, index + command[0].length, "cm-md-token-function");
+        index += command[0].length;
+        continue;
+      }
+    }
+
+    if (/[A-Za-z]/.test(char)) {
+      const variable = lineText.slice(index).match(/^[A-Za-z]+/);
+      if (variable) {
+        pushToken(index, index + variable[0].length, "cm-md-token-variable");
+        index += variable[0].length;
+        continue;
+      }
+    }
+
+    if (/\d/.test(char)) {
+      const number = lineText.slice(index).match(/^\d+(?:\.\d+)?/);
+      if (number) {
+        pushToken(index, index + number[0].length, "cm-md-token-number");
+        index += number[0].length;
+        continue;
+      }
+    }
+
+    if (/[\[\]{}()]/.test(char)) {
+      pushToken(index, index + 1, "cm-md-token-punctuation");
+      index += 1;
+      continue;
+    }
+
+    if (/[+\-*/=<>^_&|!,:;]/.test(char)) {
+      pushToken(index, index + 1, "cm-md-token-operator");
+    }
+
+    index += 1;
+  }
+}
+
 class MarkdownTableWidget extends WidgetType {
   private cleanup: (() => void) | null = null;
 
@@ -1591,7 +1656,31 @@ function addInlineDecorations(
 
     const active = inlineMarkerActive([{ from: math.from, to: math.to }], cursorFrom, cursorTo);
     if (active) {
-      ranges.push(markerRange(math.from, math.to, true));
+      const source = lineText.slice(math.from - lineFrom, math.to - lineFrom);
+      const contentStart = source.startsWith("\\(") ? 2 : 1;
+      const contentEnd = source.endsWith("\\)") ? source.length - 2 : source.length - 1;
+      ranges.push({
+        from: math.from,
+        to: math.from + contentStart,
+        className: "cm-md-marker cm-md-marker--active cm-md-math-delimiter",
+      });
+      if (contentEnd > contentStart) {
+        ranges.push({
+          from: math.from + contentStart,
+          to: math.from + contentEnd,
+          className: "cm-md-math-source",
+        });
+        addLatexSyntaxTokenDecorations(
+          ranges,
+          source.slice(contentStart, contentEnd),
+          math.from + contentStart,
+        );
+      }
+      ranges.push({
+        from: math.from + contentEnd,
+        to: math.to,
+        className: "cm-md-marker cm-md-marker--active cm-md-math-delimiter",
+      });
     } else {
       ranges.push({
         from: math.from,
@@ -1686,6 +1775,7 @@ function buildMarkdownDecorations(state: EditorState) {
         for (let mathLineNumber = line.number; mathLineNumber <= lastMathLineNumber; mathLineNumber += 1) {
           const mathLine = doc.line(mathLineNumber);
           ranges.push({ from: mathLine.from, to: mathLine.to, className: "cm-md-math-source" });
+          addLatexSyntaxTokenDecorations(ranges, mathLine.text, mathLine.from);
         }
       } else {
         ranges.push({
