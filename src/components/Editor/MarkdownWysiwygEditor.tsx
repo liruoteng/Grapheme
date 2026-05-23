@@ -2624,7 +2624,8 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
     const handler = (event: Event) => {
       const view = viewRef.current;
       if (!view) return;
-      const text = (event as CustomEvent<string>).detail;
+      const rawText = (event as CustomEvent<string>).detail;
+      const text = rawText.startsWith("\n") && !rawText.endsWith("\n") ? `${rawText}\n` : rawText;
       const range = externalInsertRange(view, text);
       view.dispatch({
         changes: { from: range.from, to: range.to, insert: text },
