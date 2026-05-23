@@ -394,7 +394,7 @@ pub async fn search_citations(query: String) -> Result<Vec<CitationResult>, Stri
             ("fields", "title,authors,year,abstract,citationCount,externalIds"),
             ("limit", "6"),
         ])
-        .header("User-Agent", "TypeStudio/1.0")
+        .header("User-Agent", "Grapheme/1.0")
         .send()
         .await
         .map_err(|e| e.to_string())?;

@@ -559,7 +559,7 @@ function FileTree({ onOpenFolder }, ref) {
                 const name = p.split("/").pop() ?? p;
                 import("@tauri-apps/plugin-dialog").then(({ ask }) => {
                   ask(
-                    `"${name}" was modified outside Type Studio. Reload from disk and discard your changes?`,
+                    `"${name}" was modified outside Grapheme. Reload from disk and discard your changes?`,
                     { title: "File Changed Externally", kind: "warning" }
                   ).then((reload) => {
                     if (!reload) return;

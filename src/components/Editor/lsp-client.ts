@@ -106,7 +106,7 @@ export function startLspClient(
   async function initialize() {
     await request("initialize", {
       processId: null,
-      clientInfo: { name: "Type Studio", version: "0.1.0" },
+      clientInfo: { name: "Grapheme", version: "0.1.0" },
       rootUri: null,
       capabilities: {
         textDocument: {

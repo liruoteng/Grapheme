@@ -1729,6 +1729,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "grapheme"
+version = "0.0.1"
+dependencies = [
+ "comemo",
+ "futures-util",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-fs",
+ "tauri-plugin-opener",
+ "tokio",
+ "tokio-tungstenite",
+ "typst",
+ "typst-assets",
+ "typst-svg",
+ "zip",
+]
+
+[[package]]
 name = "gtk"
 version = "0.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5580,28 +5602,6 @@ dependencies = [
  "serde",
  "serde_derive",
  "syntect",
-]
-
-[[package]]
-name = "type-studio"
-version = "0.0.1"
-dependencies = [
- "comemo",
- "futures-util",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-fs",
- "tauri-plugin-opener",
- "tokio",
- "tokio-tungstenite",
- "typst",
- "typst-assets",
- "typst-svg",
- "zip",
 ]
 
 [[package]]

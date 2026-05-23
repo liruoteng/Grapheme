@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Type Studio",
+  "productName": "Grapheme",
   "version": "0.0.1",
-  "identifier": "com.ruoteng.type-studio",
+  "identifier": "com.ruoteng.grapheme",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Type Studio",
+        "title": "Grapheme",
         "width": 1400,
         "height": 900,
         "minWidth": 800,

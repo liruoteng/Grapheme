@@ -40,7 +40,7 @@ const CLAUDE_MODELS = [
 ];
 
 const SYSTEM_PROMPT =
-  "You are a writing assistant in Type Studio, a Typst academic document editor. " +
+  "You are a writing assistant in Grapheme, a Typst academic document editor. " +
   "Help users write, improve, and edit their content. Respond in plain text. " +
   "When given selected text as context, focus your response on working with that text.";
 

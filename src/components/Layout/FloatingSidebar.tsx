@@ -187,7 +187,7 @@ export function FloatingSidebar({ onOpenFolder }: FloatingSidebarProps) {
     >
       {/* ── Top bar: brand + actions ──────────────────────────── */}
       <div className="fsb-topbar">
-        <span className="fsb-brand">type-studio</span>
+        <span className="fsb-brand">Grapheme</span>
         <div className="fsb-topbar-actions">
           {sidebarOpen && (
             <button

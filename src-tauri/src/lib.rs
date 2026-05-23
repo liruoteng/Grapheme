@@ -1010,7 +1010,7 @@ mod markdown_preview_tests {
 async fn fetch_doi(doi: String) -> Result<serde_json::Value, String> {
     let url = format!("https://api.crossref.org/works/{doi}");
     let client = reqwest::Client::builder()
-        .user_agent("TypeStudio/0.1 (mailto:user@typestudio.app)")
+        .user_agent("Grapheme/0.1")
         .build()
         .map_err(|e| e.to_string())?;
     let resp = client
@@ -1895,7 +1895,7 @@ pub fn run() {
                 .accelerator("CmdOrCtrl+,")
                 .build(handle)?;
 
-            let app_menu = SubmenuBuilder::new(handle, "Type Studio")
+            let app_menu = SubmenuBuilder::new(handle, "Grapheme")
                 .about(Some(AboutMetadata::default()))
                 .separator()
                 .item(&m_settings)

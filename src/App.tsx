@@ -831,7 +831,7 @@ function WelcomeScreen({ onNewFile, onOpenFolder }: { onNewFile: (kind?: "typ" |
   return (
     <div className="welcome-screen">
       <div className="welcome-inner">
-        <h1 className="welcome-title">type-studio</h1>
+        <h1 className="welcome-title">Grapheme</h1>
         <p className="welcome-subtitle">A Typst writing environment</p>
         <div className="welcome-actions">
           <button className="welcome-action" onClick={() => onNewFile("typ")}>
