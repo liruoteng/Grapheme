@@ -2387,7 +2387,7 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
     markdown(),
     syntaxHighlighting(HighlightStyle.define([
       { tag: tags.meta, color: "#404740" },
-      { tag: tags.link, textDecoration: "underline" },
+      { tag: tags.link, textDecoration: "none" },
       { tag: tags.heading, fontWeight: "bold" },
       { tag: tags.emphasis, fontStyle: "italic" },
       { tag: tags.strong, fontWeight: "bold" },

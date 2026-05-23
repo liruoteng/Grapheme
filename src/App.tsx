@@ -62,6 +62,7 @@ export default function App() {
   // Track save events so usePreview re-compiles on every save of a .typ file
   const [saveEvent, setSaveEvent] = useState<SaveEvent | null>(null);
   usePreview(saveEvent);
+  const previewValidationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Subscribe to compile actor events ─────────────────────────────────────
   useEffect(() => {
@@ -260,6 +261,19 @@ export default function App() {
     if (path.endsWith(".md") || path.endsWith(".markdown")) {
       invoke("write_preview_sidecar_content", { path, content }).then(() => {
         useEditorStore.getState().setPreviewError(null);
+        if (previewValidationTimerRef.current) clearTimeout(previewValidationTimerRef.current);
+        previewValidationTimerRef.current = setTimeout(() => {
+          const latest = useEditorStore.getState().tabs.find((t) => t.path === path)?.content;
+          if (latest !== content) return;
+          invoke<string | null>("validate_preview_sidecar_content", { path, content })
+            .then((diagnostic) => {
+              useEditorStore.getState().setPreviewError(diagnostic || null);
+            })
+            .catch((e) => {
+              console.error("validate_preview_sidecar_content failed:", JSON.stringify(e), e);
+              useEditorStore.getState().setPreviewError(String(e));
+            });
+        }, 800);
       }).catch((e) => {
         console.error("write_preview_sidecar_content failed:", JSON.stringify(e), e);
         useEditorStore.getState().setPreviewError(String(e));
@@ -273,6 +287,12 @@ export default function App() {
       useEditorStore.getState().setPreviewError(String(e));
       useEditorStore.getState().setPreviewLoading(false);
     });
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (previewValidationTimerRef.current) clearTimeout(previewValidationTimerRef.current);
+    };
   }, []);
 
   const previewOpen = activePanels.includes("preview");

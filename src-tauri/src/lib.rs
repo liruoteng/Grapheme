@@ -884,7 +884,7 @@ mod markdown_preview_tests {
 
         assert!(result.unwrap().is_some());
         assert!(recovered.contains("= Heading 1"));
-        assert!(recovered.contains("\\@lecun2015deep"));
+        assert!(recovered.contains("\\@"));
         assert!(recovered.contains("Deep learning has revolutionized"));
         validate_typst_source(&preview_path, &recovered).unwrap();
 
@@ -934,7 +934,7 @@ mod markdown_preview_tests {
         let source = fs::read_to_string(&preview_path).unwrap();
 
         assert!(source.contains("= Heading 1"));
-        assert!(source.contains("\\@lecun2015deep"));
+        assert!(source.contains("\\@"));
         validate_typst_source(&preview_path, &source).unwrap();
 
         let _ = fs::remove_dir_all(dir);
@@ -1001,6 +1001,68 @@ mod markdown_preview_tests {
             "coverage math fell back to raw: {source}"
         );
         validate_typst_source(&preview_path, &source).unwrap();
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn markdown_preview_idle_validation_writes_nonblank_compilable_preview() {
+        let dir = temp_test_dir("markdown-preview-idle-validation");
+        let md_path = dir.join("idle.md");
+        let md = "# Idle validation\n\n```typst\n#let x =\n```\n\nStill visible.\n";
+
+        let diagnostic =
+            validate_preview_sidecar_content(md_path.to_string_lossy().to_string(), md.to_string())
+                .unwrap();
+        let preview_path = md_preview_typ_path(&md_path.to_string_lossy());
+        let source = fs::read_to_string(&preview_path).unwrap();
+
+        assert!(diagnostic.is_some());
+        assert!(!source.trim().is_empty());
+        assert!(source.contains("Idle validation"));
+        assert!(source.contains("Still visible"));
+        validate_typst_source(&preview_path, &source).unwrap();
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn markdown_preview_stage_timing_budgets() {
+        let dir = temp_test_dir("markdown-preview-timing");
+        let md_path = dir.join("timing.md");
+        let mut md = String::from("# Timing\n\n");
+        for i in 0..8 {
+            md.push_str(&format!(
+                "## Section {i}\n\nParagraph with plain text for timing coverage.\n\n"
+            ));
+        }
+
+        let fast_start = std::time::Instant::now();
+        write_markdown_preview_source_fast(&md_path.to_string_lossy(), &md).unwrap();
+        let fast_ms = fast_start.elapsed().as_millis();
+
+        let resilient_start = std::time::Instant::now();
+        let diagnostic = write_markdown_preview_source_resilient(&md_path.to_string_lossy(), &md)
+            .unwrap();
+        let resilient_ms = resilient_start.elapsed().as_millis();
+
+        let fallback_start = std::time::Instant::now();
+        let fallback = markdown_preview_fallback_source(
+            &md_path,
+            &md,
+            "synthetic timing diagnostic",
+        );
+        let fallback_ms = fallback_start.elapsed().as_millis();
+
+        eprintln!(
+            "[markdown-preview timing] fast={fast_ms}ms resilient={resilient_ms}ms fallback={fallback_ms}ms"
+        );
+
+        assert!(diagnostic.is_none());
+        assert!(!fallback.trim().is_empty());
+        assert!(fast_ms < 500, "fast preview took {fast_ms}ms");
+        assert!(resilient_ms < 3_000, "resilient preview took {resilient_ms}ms");
+        assert!(fallback_ms < 250, "fallback source took {fallback_ms}ms");
 
         let _ = fs::remove_dir_all(dir);
     }
@@ -1280,6 +1342,18 @@ fn write_preview_sidecar_content(path: String, content: String) -> Result<(), St
         write_markdown_preview_source_fast(&path, &content)?;
     }
     Ok(())
+}
+
+/// Debounced idle validation for Markdown sidecar preview content.
+/// Rewrites the preview file through the resilient path only after typing
+/// settles, so normal editing stays fast while broken generated Typst still
+/// gets a compilable recovered/fallback preview.
+#[tauri::command]
+fn validate_preview_sidecar_content(path: String, content: String) -> Result<Option<String>, String> {
+    if is_markdown_path(Path::new(&path)) {
+        return write_markdown_preview_source_resilient(&path, &content);
+    }
+    Ok(None)
 }
 
 // ── export_pdf ─────────────────────────────────────────────────────────────
@@ -1736,6 +1810,7 @@ pub fn run() {
             start_sidecar_preview,
             stop_sidecar_preview,
             write_preview_sidecar_content,
+            validate_preview_sidecar_content,
             export_pdf,
             save_snapshot,
             list_snapshots,

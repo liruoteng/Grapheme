@@ -23,8 +23,8 @@ export function usePreview(saveEvent: SaveEvent | null) {
     if (!isMd) return;
     const tab = useEditorStore.getState().tabs.find((t) => t.path === p);
     if (!tab) return;
-    invoke("write_preview_sidecar_content", { path: p, content: tab.content }).then(() => {
-      useEditorStore.getState().setPreviewError(null);
+    invoke<string | null>("validate_preview_sidecar_content", { path: p, content: tab.content }).then((diagnostic) => {
+      useEditorStore.getState().setPreviewError(diagnostic || null);
     }).catch((e) => {
       console.error(e);
       useEditorStore.getState().setPreviewError(String(e));

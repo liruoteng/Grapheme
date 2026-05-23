@@ -12,16 +12,19 @@ const steps = [
     name: "frontend",
     command: "npm",
     args: ["run", "test:stress:frontend"],
+    budgetMs: 5_000,
   },
   {
     name: "markdown-preview",
     command: "npm",
     args: ["run", "test:preview-pipeline:rust"],
+    budgetMs: 20_000,
   },
   {
     name: "rust",
     command: "npm",
     args: ["run", "test:stress:rust"],
+    budgetMs: 15_000,
   },
 ];
 
@@ -44,6 +47,8 @@ function runStep(step) {
         code,
         signal,
         durationMs: Date.now() - startedAt,
+        budgetMs: step.budgetMs,
+        withinBudget: !step.budgetMs || Date.now() - startedAt <= step.budgetMs,
       });
     });
   });
@@ -61,6 +66,7 @@ const report = {
   startedAt: startedAt.toISOString(),
   finishedAt: new Date().toISOString(),
   passed: results.every((result) => result.code === 0),
+  budgetsPassed: results.every((result) => !result.budgetMs || result.durationMs <= result.budgetMs),
   results,
 };
 
@@ -68,4 +74,4 @@ mkdirSync(reportDir, { recursive: true });
 writeFileSync(reportPath, JSON.stringify(report, null, 2));
 
 console.log(`\nStress report written to ${reportPath}`);
-process.exit(report.passed ? 0 : 1);
+process.exit(report.passed && report.budgetsPassed ? 0 : 1);
