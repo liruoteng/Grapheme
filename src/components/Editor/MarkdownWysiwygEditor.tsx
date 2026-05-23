@@ -178,8 +178,58 @@ const prismAliases: Record<string, string> = {
   "objective-c": "objectivec",
 };
 
-const codeBlockLanguages = ["", ...refractor.listLanguages().sort((a, b) => a.localeCompare(b))];
-const codeSyntaxHighlightMaxDocLength = 20_000;
+const codeBlockLanguages = [
+  "",
+  "bash",
+  "c",
+  "clojure",
+  "cpp",
+  "csharp",
+  "css",
+  "dart",
+  "diff",
+  "docker",
+  "elixir",
+  "erlang",
+  "git",
+  "go",
+  "graphql",
+  "haskell",
+  "html",
+  "java",
+  "javascript",
+  "jsx",
+  "json",
+  "julia",
+  "kotlin",
+  "latex",
+  "lisp",
+  "lua",
+  "makefile",
+  "markdown",
+  "objectivec",
+  "perl",
+  "php",
+  "powershell",
+  "python",
+  "r",
+  "regex",
+  "ruby",
+  "rust",
+  "scala",
+  "scheme",
+  "scss",
+  "sql",
+  "swift",
+  "toml",
+  "tsx",
+  "typescript",
+  "vim",
+  "xml",
+  "yaml",
+  "zig",
+];
+const codeSyntaxHighlightMaxDocLength = 100_000;
 const previewUpdateDebounceMs = 500;
 
 function codeBlockLanguageOptions(current: string) {
@@ -1531,6 +1581,7 @@ class CodeBlockActionsWidget extends WidgetType {
     const setMenuOpen = (open: boolean) => {
       menu.hidden = !open;
       wrap.classList.toggle("is-open", open);
+      if (open) searchInput.focus();
     };
 
     const applyLanguage = (nextLanguage: string) => {
@@ -1547,7 +1598,34 @@ class CodeBlockActionsWidget extends WidgetType {
       view.focus();
     };
 
-    for (const language of codeBlockLanguageOptions(this.codeBlock.language)) {
+    const allLanguages = codeBlockLanguageOptions(this.codeBlock.language);
+
+    const searchInput = document.createElement("input");
+    searchInput.type = "text";
+    searchInput.className = "cm-md-code-language-search";
+    searchInput.placeholder = "Search languages...";
+    searchInput.addEventListener("mousedown", stopMouse);
+    searchInput.addEventListener("input", () => {
+      const query = searchInput.value.toLowerCase();
+      for (let i = 1; i < menu.children.length; i++) {
+        const child = menu.children[i] as HTMLElement;
+        const name = child.textContent?.toLowerCase() || "";
+        child.hidden = query.length > 0 && !name.includes(query);
+      }
+    });
+    searchInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && searchInput.value) {
+        const first = menu.querySelector<HTMLElement>(".cm-md-code-language-option:not([hidden])");
+        if (first) {
+          first.click();
+          return;
+        }
+      }
+      if (event.key === "Escape") setMenuOpen(false);
+    });
+    menu.appendChild(searchInput);
+
+    for (const language of allLanguages) {
       const item = document.createElement("button");
       item.type = "button";
       item.className = `cm-md-code-language-option${language === this.codeBlock.language ? " is-selected" : ""}`;

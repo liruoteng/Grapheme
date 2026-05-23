@@ -658,14 +658,31 @@
   right: 28px;
   z-index: 3;
   display: grid;
-  width: 180px;
-  max-height: 260px;
+  width: 200px;
+  max-height: 280px;
   overflow-y: auto;
   padding: 5px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg-elevated);
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.26);
+}
+
+.markdown-wysiwyg .cm-md-code-language-search {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font: 400 12px/1.4 "JetBrains Mono", "Fira Code", "Menlo", monospace;
+  outline: none;
+  margin-bottom: 4px;
+}
+
+.markdown-wysiwyg .cm-md-code-language-search:focus {
+  border-color: var(--accent);
 }
 
 .markdown-wysiwyg .cm-md-code-language-menu[hidden] {
