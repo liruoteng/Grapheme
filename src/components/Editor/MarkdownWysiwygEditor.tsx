@@ -1927,6 +1927,16 @@ function linkAtPosition(view: EditorView, pos: number) {
   return null;
 }
 
+function externalInsertRange(view: EditorView, text: string) {
+  const selection = view.state.selection.main;
+  if (!selection.empty || !text.startsWith("\n")) {
+    return { from: selection.from, to: selection.to };
+  }
+
+  const link = linkAtPosition(view, selection.from);
+  return link ? { from: link.to, to: link.to } : { from: selection.from, to: selection.to };
+}
+
 function buildMarkdownDecorations(state: EditorState) {
   const ranges: DecorationRange[] = [];
   const selection = state.selection.main;
@@ -2615,10 +2625,10 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
       const view = viewRef.current;
       if (!view) return;
       const text = (event as CustomEvent<string>).detail;
-      const selection = view.state.selection.main;
+      const range = externalInsertRange(view, text);
       view.dispatch({
-        changes: { from: selection.from, to: selection.to, insert: text },
-        selection: EditorSelection.cursor(selection.from + text.length),
+        changes: { from: range.from, to: range.to, insert: text },
+        selection: EditorSelection.cursor(range.from + text.length),
         scrollIntoView: true,
       });
       view.focus();
