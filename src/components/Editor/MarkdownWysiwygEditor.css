@@ -66,6 +66,10 @@
   opacity: 0.62;
 }
 
+.markdown-wysiwyg .cm-md-active-list-marker {
+  font-size: 1em;
+}
+
 .markdown-wysiwyg .cm-md-heading {
   display: inline-block;
   color: color-mix(in srgb, var(--markdown-wysiwyg-text) 88%, var(--text-secondary));

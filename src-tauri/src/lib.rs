@@ -663,6 +663,7 @@ fn quote_typst_string(s: &str) -> String {
     out
 }
 
+#[cfg(test)]
 fn split_typst_chunks(source: &str) -> Vec<String> {
     let mut chunks = Vec::new();
     let mut current = String::new();
@@ -679,6 +680,7 @@ fn split_typst_chunks(source: &str) -> Vec<String> {
     chunks
 }
 
+#[cfg(test)]
 fn recover_typst_source(path: &Path, typst_content: &str) -> Result<String, String> {
     let chunks = split_typst_chunks(typst_content);
     let mut skipped = Vec::new();
@@ -691,6 +693,7 @@ fn recover_typst_source(path: &Path, typst_content: &str) -> Result<String, Stri
     }
 }
 
+#[cfg(test)]
 fn extract_missing_labels(diagnostics: &str) -> Vec<String> {
     let mut labels = Vec::new();
     let mut rest = diagnostics;
@@ -708,6 +711,7 @@ fn extract_missing_labels(diagnostics: &str) -> Vec<String> {
     labels
 }
 
+#[cfg(test)]
 fn escape_missing_label_refs(source: &str, diagnostics: &str) -> Option<String> {
     let labels = extract_missing_labels(diagnostics);
     if labels.is_empty() {
@@ -742,6 +746,7 @@ fn escape_missing_label_refs(source: &str, diagnostics: &str) -> Option<String> 
     Some(out)
 }
 
+#[cfg(test)]
 fn recover_typst_chunks(
     path: &Path,
     prefix: &str,
@@ -798,6 +803,7 @@ fn markdown_preview_fallback_source(md_path: &Path, md_content: &str, diagnostic
     )
 }
 
+#[cfg(test)]
 fn write_markdown_preview_source_resilient(
     md_path: &str,
     md_content: &str,
@@ -980,6 +986,26 @@ mod markdown_preview_tests {
     }
 
     #[test]
+    fn fast_markdown_preview_compiles_math_reference() {
+        let math_path = Path::new("../examples/markdown/math.md");
+        if !math_path.exists() {
+            return;
+        }
+
+        let dir = temp_test_dir("markdown-preview-fast-math");
+        let md_path = dir.join("math.md");
+        let md = fs::read_to_string(math_path).unwrap();
+
+        write_markdown_preview_source_fast(&md_path.to_string_lossy(), &md).unwrap();
+        let preview_path = md_preview_typ_path(&md_path.to_string_lossy());
+        let source = fs::read_to_string(&preview_path).unwrap();
+
+        validate_typst_source(&preview_path, &source).unwrap();
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn fast_markdown_preview_compiles_latex_math_coverage() {
         let dir = temp_test_dir("markdown-preview-math-coverage");
         let md_path = dir.join("math-coverage.md");
@@ -1017,10 +1043,33 @@ mod markdown_preview_tests {
         let preview_path = md_preview_typ_path(&md_path.to_string_lossy());
         let source = fs::read_to_string(&preview_path).unwrap();
 
-        assert!(diagnostic.is_some());
+        assert!(diagnostic.is_none());
         assert!(!source.trim().is_empty());
         assert!(source.contains("Idle validation"));
         assert!(source.contains("Still visible"));
+        assert!(source.contains("#raw("));
+        validate_typst_source(&preview_path, &source).unwrap();
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn markdown_preview_idle_validation_compiles_math_reference_fast() {
+        let math_path = Path::new("../examples/markdown/math.md");
+        if !math_path.exists() {
+            return;
+        }
+
+        let dir = temp_test_dir("markdown-preview-idle-math");
+        let md_path = dir.join("math.md");
+        let md = fs::read_to_string(math_path).unwrap();
+
+        let diagnostic =
+            validate_preview_sidecar_content(md_path.to_string_lossy().to_string(), md).unwrap();
+        let preview_path = md_preview_typ_path(&md_path.to_string_lossy());
+        let source = fs::read_to_string(&preview_path).unwrap();
+
+        assert!(diagnostic.is_none(), "got diagnostic: {diagnostic:?}");
         validate_typst_source(&preview_path, &source).unwrap();
 
         let _ = fs::remove_dir_all(dir);
@@ -1310,11 +1359,11 @@ async fn start_sidecar_preview(
     let input_path = if is_markdown_path(Path::new(&path)) {
         let md_content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
         let temp = md_preview_typ_path(&path);
-        let diagnostic = write_markdown_preview_source_resilient(&path, &md_content)?;
+        write_markdown_preview_source_fast(&path, &md_content)?;
         let _ = app_handle.emit(
             "preview-error",
             PreviewError {
-                message: diagnostic.unwrap_or_default(),
+                message: String::new(),
             },
         );
         temp.to_string_lossy().to_string()
@@ -1351,7 +1400,17 @@ fn write_preview_sidecar_content(path: String, content: String) -> Result<(), St
 #[tauri::command]
 fn validate_preview_sidecar_content(path: String, content: String) -> Result<Option<String>, String> {
     if is_markdown_path(Path::new(&path)) {
-        return write_markdown_preview_source_resilient(&path, &content);
+        write_markdown_preview_source_fast(&path, &content)?;
+        let temp_path = md_preview_typ_path(&path);
+        let preview_source = fs::read_to_string(&temp_path).map_err(|e| e.to_string())?;
+        return match validate_typst_source_quiet(&temp_path, &preview_source) {
+            Ok(()) => Ok(None),
+            Err(msg) => {
+                let fallback = markdown_preview_fallback_source(Path::new(&path), &content, &msg);
+                fs::write(&temp_path, fallback).map_err(|e| e.to_string())?;
+                Ok(Some(msg))
+            }
+        };
     }
     Ok(None)
 }

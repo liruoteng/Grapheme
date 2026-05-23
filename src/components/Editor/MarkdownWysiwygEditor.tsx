@@ -2108,7 +2108,7 @@ function buildMarkdownDecorations(state: EditorState) {
       addInlineDecorations(ranges, text, line.from, task[0].length, cursorFrom, cursorTo);
     } else if (unordered) {
       if (activeLine) {
-        ranges.push(markerRange(line.from + unordered[1].length, line.from + unordered[0].length, true));
+        ranges.push(markerRange(line.from + unordered[1].length, line.from + unordered[0].length, true, "cm-md-active-list-marker"));
       } else {
         ranges.push({
           from: line.from + unordered[1].length,
@@ -2120,7 +2120,7 @@ function buildMarkdownDecorations(state: EditorState) {
       addInlineDecorations(ranges, text, line.from, unordered[0].length, cursorFrom, cursorTo);
     } else if (ordered) {
       if (activeLine) {
-        ranges.push(markerRange(line.from + ordered[1].length, line.from + ordered[0].length, true));
+        ranges.push(markerRange(line.from + ordered[1].length, line.from + ordered[0].length, true, "cm-md-active-list-marker"));
       } else {
         ranges.push({
           from: line.from + ordered[1].length,
