@@ -61,8 +61,12 @@ fn read_file_bytes(path: String) -> Result<Vec<u8>, String> {
 }
 
 #[tauri::command]
-fn write_file(path: String, contents: String) -> Result<(), String> {
-    fs::write(&path, contents).map_err(|e| e.to_string())
+async fn write_file(path: String, contents: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        fs::write(&path, contents).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -1386,11 +1390,15 @@ async fn stop_sidecar_preview(state: tauri::State<'_, AppState>) -> Result<(), S
 /// recompiles automatically.
 /// For .typ files: no-op (auto-save handles writing to disk directly).
 #[tauri::command]
-fn write_preview_sidecar_content(path: String, content: String) -> Result<(), String> {
-    if is_markdown_path(Path::new(&path)) {
-        write_markdown_preview_source_fast(&path, &content)?;
-    }
-    Ok(())
+async fn write_preview_sidecar_content(path: String, content: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if is_markdown_path(Path::new(&path)) {
+            write_markdown_preview_source_fast(&path, &content)?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Debounced idle validation for Markdown sidecar preview content.
@@ -1398,21 +1406,26 @@ fn write_preview_sidecar_content(path: String, content: String) -> Result<(), St
 /// settles, so normal editing stays fast while broken generated Typst still
 /// gets a compilable recovered/fallback preview.
 #[tauri::command]
-fn validate_preview_sidecar_content(path: String, content: String) -> Result<Option<String>, String> {
-    if is_markdown_path(Path::new(&path)) {
-        write_markdown_preview_source_fast(&path, &content)?;
-        let temp_path = md_preview_typ_path(&path);
-        let preview_source = fs::read_to_string(&temp_path).map_err(|e| e.to_string())?;
-        return match validate_typst_source_quiet(&temp_path, &preview_source) {
-            Ok(()) => Ok(None),
-            Err(msg) => {
-                let fallback = markdown_preview_fallback_source(Path::new(&path), &content, &msg);
-                fs::write(&temp_path, fallback).map_err(|e| e.to_string())?;
-                Ok(Some(msg))
+async fn validate_preview_sidecar_content(path: String, content: String) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if is_markdown_path(Path::new(&path)) {
+            write_markdown_preview_source_fast(&path, &content)?;
+            let temp_path = md_preview_typ_path(&path);
+            let preview_source = fs::read_to_string(&temp_path).map_err(|e| e.to_string())?;
+            match validate_typst_source_quiet(&temp_path, &preview_source) {
+                Ok(()) => Ok(None),
+                Err(msg) => {
+                    let fallback = markdown_preview_fallback_source(Path::new(&path), &content, &msg);
+                    fs::write(&temp_path, fallback).map_err(|e| e.to_string())?;
+                    Ok(Some(msg))
+                }
             }
-        };
-    }
-    Ok(None)
+        } else {
+            Ok(None)
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // ── export_pdf ─────────────────────────────────────────────────────────────

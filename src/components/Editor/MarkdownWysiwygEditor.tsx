@@ -899,7 +899,26 @@ class MarkdownTableWidget extends WidgetType {
   }
 
   eq(other: MarkdownTableWidget) {
-    return JSON.stringify(this.table) === JSON.stringify(other.table);
+    if (this.table.from !== other.table.from ||
+      this.table.to !== other.table.to ||
+      this.table.header.length !== other.table.header.length ||
+      this.table.alignments.length !== other.table.alignments.length ||
+      this.table.rows.length !== other.table.rows.length) return false;
+    for (let i = 0; i < this.table.header.length; i++) {
+      if (this.table.header[i] !== other.table.header[i]) return false;
+    }
+    for (let i = 0; i < this.table.alignments.length; i++) {
+      if (this.table.alignments[i] !== other.table.alignments[i]) return false;
+    }
+    for (let i = 0; i < this.table.rows.length; i++) {
+      const a = this.table.rows[i];
+      const b = other.table.rows[i];
+      if (a.length !== b.length) return false;
+      for (let j = 0; j < a.length; j++) {
+        if (a[j] !== b[j]) return false;
+      }
+    }
+    return true;
   }
 
   toDOM(view: EditorView) {
@@ -1392,7 +1411,11 @@ class MarkdownImageWidget extends WidgetType {
   }
 
   eq(other: MarkdownImageWidget) {
-    return JSON.stringify(this.image) === JSON.stringify(other.image);
+    return this.image.from === other.image.from &&
+      this.image.to === other.image.to &&
+      this.image.alt === other.image.alt &&
+      this.image.src === other.image.src &&
+      this.image.title === other.image.title;
   }
 
   toDOM(view: EditorView) {
@@ -1948,12 +1971,14 @@ function buildMarkdownDecorations(state: EditorState) {
   const frontmatter = frontmatterAtTop(state);
   const tableSourceEditRange = state.field(tableSourceEditRangeField, false);
   const imageSourceEditRange = state.field(imageSourceEditRangeField, false);
+  const boundaries: Array<{ from: number; to: number }> = [];
 
   for (let lineNumber = 1; lineNumber <= doc.lines; lineNumber += 1) {
     const line = doc.line(lineNumber);
     const text = line.text;
 
     if (frontmatter && line.from === frontmatter.from) {
+      boundaries.push({ from: frontmatter.from, to: frontmatter.to });
       const activeFrontmatter = selectionEmpty && cursorTo >= frontmatter.from && cursorFrom <= frontmatter.to;
       const lastFrontmatterLineNumber = doc.lineAt(frontmatter.to).number;
       if (activeFrontmatter) {
@@ -1977,6 +2002,7 @@ function buildMarkdownDecorations(state: EditorState) {
 
     const mathBlock = mathBlockAt(state, line.number);
     if (mathBlock) {
+      boundaries.push({ from: mathBlock.from, to: mathBlock.to });
       const activeMathBlock = rangeActive(mathBlock, cursorFrom, cursorTo, selectionEmpty);
       const lastMathLineNumber = doc.lineAt(mathBlock.to).number;
       if (activeMathBlock) {
@@ -2015,6 +2041,7 @@ function buildMarkdownDecorations(state: EditorState) {
 
     const codeBlock = codeBlockAt(state, line.number);
     if (codeBlock) {
+      boundaries.push({ from: codeBlock.from, to: codeBlock.to });
       const activeCodeBlock = selectionEmpty && cursorTo >= codeBlock.from && cursorFrom <= codeBlock.to;
       const lastCodeLineNumber = doc.lineAt(codeBlock.to).number;
 
@@ -2191,13 +2218,46 @@ function buildMarkdownDecorations(state: EditorState) {
       );
     }
   }
+  prevBlockBoundaries = boundaries;
   return Decoration.set(decorations, true);
+}
+
+let prevBlockBoundaries: Array<{ from: number; to: number }> | null = null;
+
+function cursorCrossedBlockBoundary(
+  oldPos: number,
+  newPos: number,
+  boundaries: Array<{ from: number; to: number }> | null,
+): boolean {
+  if (!boundaries) return true;
+  const wasInside = boundaries.some((b) => oldPos >= b.from && oldPos <= b.to);
+  const isInside = boundaries.some((b) => newPos >= b.from && newPos <= b.to);
+  return wasInside !== isInside;
 }
 
 const markdownWysiwygDecorationField = StateField.define<DecorationSet>({
   create: buildMarkdownDecorations,
   update(value, transaction) {
-    if (transaction.docChanged || transaction.selection) {
+    if (transaction.docChanged) {
+      prevBlockBoundaries = null;
+      return buildMarkdownDecorations(transaction.state);
+    }
+    if (transaction.selection) {
+      const startImgRange = transaction.startState.field(imageSourceEditRangeField, false);
+      const endImgRange = transaction.state.field(imageSourceEditRangeField, false);
+      const startTblRange = transaction.startState.field(tableSourceEditRangeField, false);
+      const endTblRange = transaction.state.field(tableSourceEditRangeField, false);
+      if (startImgRange !== endImgRange || startTblRange !== endTblRange) {
+        prevBlockBoundaries = null;
+        return buildMarkdownDecorations(transaction.state);
+      }
+
+      const newPos = transaction.state.selection.main.head;
+      const oldPos = transaction.startState.selection.main.head;
+      if (!cursorCrossedBlockBoundary(oldPos, newPos, prevBlockBoundaries)) {
+        return value;
+      }
+      prevBlockBoundaries = null;
       return buildMarkdownDecorations(transaction.state);
     }
     return value;

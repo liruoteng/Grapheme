@@ -266,6 +266,7 @@ export function MonacoEditor({ onSave, onSnapshot, onNewFile, onPreviewTrigger, 
   const changeVersions = useRef<Map<string, number>>(new Map());
   const lspChangeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const previewTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const onSnapshotRef = useRef(onSnapshot);
   const onPreviewTriggerRef = useRef(onPreviewTrigger);
   useEffect(() => { onSnapshotRef.current = onSnapshot; }, [onSnapshot]);
@@ -365,6 +366,12 @@ export function MonacoEditor({ onSave, onSnapshot, onNewFile, onPreviewTrigger, 
     const path = useEditorStore.getState().activeTabPath;
     if (path) useEditorStore.getState().updateTabContent(path, externalContent.content);
   }, [externalContent?.seq]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    return () => {
+      if (previewTimer.current) clearTimeout(previewTimer.current);
+    };
+  }, []);
 
   // Apply / remove writing mode options when the flag changes
   useEffect(() => {
@@ -600,10 +607,19 @@ export function MonacoEditor({ onSave, onSnapshot, onNewFile, onPreviewTrigger, 
       updateTabContent(activeTabPath, value);
       setLastEditTime(Date.now());
 
-      // Live preview: fire synchronously — the Tauri invoke is async so it
-      // never blocks the editor.
-      if (activeTabPath.endsWith(".typ") || activeTabPath.endsWith(".md") || activeTabPath.endsWith(".markdown")) {
-        onPreviewTriggerRef.current?.(activeTabPath, value);
+      // Live preview: for .typ the sidecar watches disk → send immediately.
+      // For .md, debounce the preview trigger to avoid flooding the Tauri
+      // command queue and the sidecar watcher on every keystroke.
+      const isMd = activeTabPath.endsWith(".md") || activeTabPath.endsWith(".markdown");
+      if (activeTabPath.endsWith(".typ") || isMd) {
+        if (isMd) {
+          clearTimeout(previewTimer.current);
+          previewTimer.current = setTimeout(() => {
+            onPreviewTriggerRef.current?.(activeTabPath, value);
+          }, 200);
+        } else {
+          onPreviewTriggerRef.current?.(activeTabPath, value);
+        }
       }
 
       // Auto-save debounce. For .typ files we always use the tinymist sidecar
