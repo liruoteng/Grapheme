@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fireEvent, render, waitFor } from "@testing-library/react";
+import { invoke } from "@tauri-apps/api/core";
+import { getActiveDragSource } from "../FileExplorer/FileTree";
 import { MarkdownWysiwygEditor } from "./MarkdownWysiwygEditor";
 import { useEditorStore } from "../../stores/editorStore";
 
@@ -13,6 +15,14 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(),
 }));
 
+vi.mock("../FileExplorer/FileTree", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../FileExplorer/FileTree")>();
+  return {
+    ...actual,
+    getActiveDragSource: vi.fn(() => null),
+  };
+});
+
 describe("MarkdownWysiwygEditor", () => {
   beforeEach(() => {
     useEditorStore.setState({
@@ -22,7 +32,10 @@ describe("MarkdownWysiwygEditor", () => {
       editorMdFont: '"Source Serif 4", "Charter", "Georgia", "Times New Roman", serif',
       editorWidth: 960,
       theme: "dark",
+      workspacePath: "/workspace",
     });
+    vi.mocked(getActiveDragSource).mockReturnValue(null);
+    vi.mocked(invoke).mockReset();
   });
 
   it("renders the markdown sample without crashing", async () => {
@@ -277,6 +290,72 @@ describe("MarkdownWysiwygEditor", () => {
 
     await waitFor(() => {
       expect(useEditorStore.getState().activeTab()?.content).toBe("");
+    });
+  });
+
+  it("renders markdown images in WYSIWYG mode without exposing source on click", async () => {
+    const path = "/workspace/examples/markdown/image.md";
+    useEditorStore.getState().openTab(path, "image.md", "![Sample image](assets/photo.png \"Demo\")\n");
+
+    const { container } = render(<MarkdownWysiwygEditor />);
+
+    let figure: HTMLElement | null = null;
+    await waitFor(() => {
+      figure = container.querySelector(".cm-md-image-render");
+      expect(figure).toBeInTheDocument();
+      expect(container.querySelector(".cm-md-image-render img")).toHaveAttribute("src", "/workspace/assets/photo.png");
+    });
+
+    fireEvent.mouseDown(figure!);
+
+    expect(container.querySelector(".cm-md-image-render")).toBeInTheDocument();
+    expect(container.querySelector(".cm-md-image-source")).not.toBeInTheDocument();
+  });
+
+  it("shows markdown image source only from the edit source button", async () => {
+    const path = "/workspace/examples/markdown/image.md";
+    useEditorStore.getState().openTab(path, "image.md", "![Sample image](assets/photo.png)\n");
+
+    const { container } = render(<MarkdownWysiwygEditor />);
+
+    await waitFor(() => {
+      expect(container.querySelector(".cm-md-image-render")).toBeInTheDocument();
+    });
+
+    const editSource = [...container.querySelectorAll(".cm-md-image-actions button")]
+      .find((button) => button.textContent === "Edit source");
+    fireEvent.click(editSource!);
+
+    await waitFor(() => {
+      expect(container.querySelector(".cm-md-image-source")).toBeInTheDocument();
+    });
+  });
+
+  it("inserts markdown image syntax when an image is dragged from the file sidebar", async () => {
+    const path = "/workspace/examples/markdown/image.md";
+    useEditorStore.getState().openTab(path, "image.md", "Intro\n");
+    vi.mocked(getActiveDragSource).mockReturnValue("/workspace/assets/photo.png");
+
+    const { container } = render(<MarkdownWysiwygEditor />);
+
+    let editor: HTMLElement | null = null;
+    await waitFor(() => {
+      editor = container.querySelector(".cm-content");
+      expect(editor).toBeInTheDocument();
+    });
+
+    fireEvent.drop(editor!, {
+      clientX: 0,
+      clientY: 0,
+      dataTransfer: {
+        files: [],
+        types: ["application/x-type-studio-path"],
+        getData: vi.fn(() => "/workspace/assets/photo.png"),
+      },
+    });
+
+    await waitFor(() => {
+      expect(useEditorStore.getState().activeTab()?.content).toBe("![photo.png](assets/photo.png)Intro\n");
     });
   });
 });

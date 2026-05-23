@@ -68,6 +68,14 @@
 
 .markdown-wysiwyg .cm-md-active-list-marker {
   font-size: 1em;
+  display: inline-block;
+  min-width: 1.45em;
+  margin-right: 0.18em;
+}
+
+.markdown-wysiwyg .cm-md-active-link-marker,
+.markdown-wysiwyg .cm-md-math-delimiter {
+  font-size: 1em;
 }
 
 .markdown-wysiwyg .cm-md-heading {

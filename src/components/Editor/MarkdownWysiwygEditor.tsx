@@ -65,6 +65,7 @@ type ScrollSnapshot = {
 };
 
 const editTableSourceEffect = StateEffect.define<InlineRange | null>();
+const editImageSourceEffect = StateEffect.define<InlineRange | null>();
 
 const tableSourceEditRangeField = StateField.define<InlineRange | null>({
   create: () => null,
@@ -78,6 +79,29 @@ const tableSourceEditRangeField = StateField.define<InlineRange | null>({
 
     for (const effect of transaction.effects) {
       if (effect.is(editTableSourceEffect)) value = effect.value;
+    }
+
+    if (value && transaction.selection) {
+      const selection = transaction.state.selection.main;
+      if (selection.to < value.from || selection.from > value.to) return null;
+    }
+
+    return value;
+  },
+});
+
+const imageSourceEditRangeField = StateField.define<InlineRange | null>({
+  create: () => null,
+  update(value, transaction) {
+    if (value && transaction.docChanged) {
+      value = {
+        from: transaction.changes.mapPos(value.from),
+        to: transaction.changes.mapPos(value.to),
+      };
+    }
+
+    for (const effect of transaction.effects) {
+      if (effect.is(editImageSourceEffect)) value = effect.value;
     }
 
     if (value && transaction.selection) {
@@ -269,7 +293,7 @@ function inlineMarkerActive(markers: InlineRange[], cursorFrom: number, cursorTo
   if (cursorFrom !== cursorTo) {
     return markers.some((marker) => cursorFrom === marker.from && cursorTo === marker.to);
   }
-  return markers.some((marker) => cursorTo >= marker.from && cursorFrom <= marker.to);
+  return markers.some((marker) => cursorTo > marker.from && cursorFrom < marker.to);
 }
 
 function rangeActive(range: InlineRange, cursorFrom: number, cursorTo: number, selectionEmpty: boolean) {
@@ -1384,7 +1408,11 @@ class MarkdownImageWidget extends WidgetType {
     edit.addEventListener("mousedown", (event) => event.preventDefault());
     edit.addEventListener("click", (event) => {
       event.preventDefault();
-      selectRangePreservingScroll(view, this.image.from, this.image.to);
+      view.dispatch({
+        effects: editImageSourceEffect.of({ from: this.image.from, to: this.image.to }),
+        selection: EditorSelection.range(this.image.from, this.image.to),
+        scrollIntoView: false,
+      });
       view.focus();
     });
     actions.appendChild(edit);
@@ -1419,7 +1447,6 @@ class MarkdownImageWidget extends WidgetType {
     figure.addEventListener("mousedown", (event) => {
       if ((event.target as HTMLElement).closest("button")) return;
       event.preventDefault();
-      selectRangePreservingScroll(view, this.image.from, this.image.to);
       view.focus();
     });
 
@@ -1804,9 +1831,9 @@ function addInlineDecorations(
     } else if (match[6] !== undefined && match[7] !== undefined) {
       const labelEnd = start + 1 + match[6].length;
       const active = inlineMarkerActive([{ from: start, to: end }], cursorFrom, cursorTo);
-      ranges.push(markerRange(start, start + 1, active));
+      ranges.push(markerRange(start, start + 1, active, "cm-md-active-link-marker"));
       ranges.push({ from: start + 1, to: labelEnd, className: "cm-md-link" });
-      ranges.push(markerRange(labelEnd, end, active));
+      ranges.push(markerRange(labelEnd, end, active, "cm-md-active-link-marker"));
     } else if (match[8] !== undefined || match[9] !== undefined) {
       const active = inlineMarkerActive([{ from: start, to: end }], cursorFrom, cursorTo);
       ranges.push(markerRange(start, start + 1, active));
@@ -1910,6 +1937,7 @@ function buildMarkdownDecorations(state: EditorState) {
   const enableCodeSyntaxHighlighting = doc.length <= codeSyntaxHighlightMaxDocLength;
   const frontmatter = frontmatterAtTop(state);
   const tableSourceEditRange = state.field(tableSourceEditRangeField, false);
+  const imageSourceEditRange = state.field(imageSourceEditRangeField, false);
 
   for (let lineNumber = 1; lineNumber <= doc.lines; lineNumber += 1) {
     const line = doc.line(lineNumber);
@@ -2019,7 +2047,7 @@ function buildMarkdownDecorations(state: EditorState) {
 
     const image = imageAtLine(text, line.from);
     if (image) {
-      const activeImage = selectionEmpty && cursorTo >= image.from && cursorFrom <= image.to;
+      const activeImage = !!imageSourceEditRange && imageSourceEditRange.to >= image.from && imageSourceEditRange.from <= image.to;
       if (activeImage) {
         ranges.push({ from: image.from, to: image.to, className: "cm-md-image-source" });
       } else {
@@ -2408,6 +2436,7 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
     ])),
     syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
     tableSourceEditRangeField,
+    imageSourceEditRangeField,
     markdownWysiwygDecorations(),
     EditorView.lineWrapping,
     keymap.of([
@@ -2498,7 +2527,12 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
         const workspacePath = useEditorStore.getState().workspacePath;
         if (!workspacePath) return false;
 
-        const dropPos = view.posAtCoords({ x: event.clientX, y: event.clientY }) ?? view.state.selection.main.from;
+        let dropPos = view.state.selection.main.from;
+        try {
+          dropPos = view.posAtCoords({ x: event.clientX, y: event.clientY }) ?? dropPos;
+        } catch {
+          dropPos = view.state.selection.main.from;
+        }
         const files = Array.from(event.dataTransfer?.files ?? []);
         const imageFiles = files.filter((file) => file.type.startsWith("image/"));
         if (imageFiles.length > 0) {
