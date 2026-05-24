@@ -1971,14 +1971,12 @@ function buildMarkdownDecorations(state: EditorState) {
   const frontmatter = frontmatterAtTop(state);
   const tableSourceEditRange = state.field(tableSourceEditRangeField, false);
   const imageSourceEditRange = state.field(imageSourceEditRangeField, false);
-  const boundaries: Array<{ from: number; to: number }> = [];
 
   for (let lineNumber = 1; lineNumber <= doc.lines; lineNumber += 1) {
     const line = doc.line(lineNumber);
     const text = line.text;
 
     if (frontmatter && line.from === frontmatter.from) {
-      boundaries.push({ from: frontmatter.from, to: frontmatter.to });
       const activeFrontmatter = selectionEmpty && cursorTo >= frontmatter.from && cursorFrom <= frontmatter.to;
       const lastFrontmatterLineNumber = doc.lineAt(frontmatter.to).number;
       if (activeFrontmatter) {
@@ -2002,7 +2000,6 @@ function buildMarkdownDecorations(state: EditorState) {
 
     const mathBlock = mathBlockAt(state, line.number);
     if (mathBlock) {
-      boundaries.push({ from: mathBlock.from, to: mathBlock.to });
       const activeMathBlock = rangeActive(mathBlock, cursorFrom, cursorTo, selectionEmpty);
       const lastMathLineNumber = doc.lineAt(mathBlock.to).number;
       if (activeMathBlock) {
@@ -2041,7 +2038,6 @@ function buildMarkdownDecorations(state: EditorState) {
 
     const codeBlock = codeBlockAt(state, line.number);
     if (codeBlock) {
-      boundaries.push({ from: codeBlock.from, to: codeBlock.to });
       const activeCodeBlock = selectionEmpty && cursorTo >= codeBlock.from && cursorFrom <= codeBlock.to;
       const lastCodeLineNumber = doc.lineAt(codeBlock.to).number;
 
@@ -2218,46 +2214,13 @@ function buildMarkdownDecorations(state: EditorState) {
       );
     }
   }
-  prevBlockBoundaries = boundaries;
   return Decoration.set(decorations, true);
-}
-
-let prevBlockBoundaries: Array<{ from: number; to: number }> | null = null;
-
-function cursorCrossedBlockBoundary(
-  oldPos: number,
-  newPos: number,
-  boundaries: Array<{ from: number; to: number }> | null,
-): boolean {
-  if (!boundaries) return true;
-  const wasInside = boundaries.some((b) => oldPos >= b.from && oldPos <= b.to);
-  const isInside = boundaries.some((b) => newPos >= b.from && newPos <= b.to);
-  return wasInside !== isInside;
 }
 
 const markdownWysiwygDecorationField = StateField.define<DecorationSet>({
   create: buildMarkdownDecorations,
   update(value, transaction) {
-    if (transaction.docChanged) {
-      prevBlockBoundaries = null;
-      return buildMarkdownDecorations(transaction.state);
-    }
-    if (transaction.selection) {
-      const startImgRange = transaction.startState.field(imageSourceEditRangeField, false);
-      const endImgRange = transaction.state.field(imageSourceEditRangeField, false);
-      const startTblRange = transaction.startState.field(tableSourceEditRangeField, false);
-      const endTblRange = transaction.state.field(tableSourceEditRangeField, false);
-      if (startImgRange !== endImgRange || startTblRange !== endTblRange) {
-        prevBlockBoundaries = null;
-        return buildMarkdownDecorations(transaction.state);
-      }
-
-      const newPos = transaction.state.selection.main.head;
-      const oldPos = transaction.startState.selection.main.head;
-      if (!cursorCrossedBlockBoundary(oldPos, newPos, prevBlockBoundaries)) {
-        return value;
-      }
-      prevBlockBoundaries = null;
+    if (transaction.docChanged || transaction.selection) {
       return buildMarkdownDecorations(transaction.state);
     }
     return value;
