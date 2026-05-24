@@ -236,7 +236,21 @@ export function PanelManager({ contents, headerExtras, headerExtrasLeft, titleSu
       const top0 = sz(topId);
       const bot0 = sz(botId);
       const total = top0 + bot0;
+      let isResizing = true;
+      const stop = () => {
+        if (!isResizing) return;
+        isResizing = false;
+        document.body.classList.remove("pm-resizing-row");
+        window.removeEventListener("mousemove", move);
+        window.removeEventListener("mouseup", stop);
+        window.removeEventListener("blur", stop);
+        document.removeEventListener("mouseup", stop);
+      };
       const move = (ev: MouseEvent) => {
+        if (ev.buttons === 0) {
+          stop();
+          return;
+        }
         const dy = (ev.clientY - y0) / h * total;
         setPanelSizes(p => ({
           ...p,
@@ -244,14 +258,11 @@ export function PanelManager({ contents, headerExtras, headerExtrasLeft, titleSu
           [botId]: Math.max(total * 0.05, bot0 - dy),
         }));
       };
-      const up = () => {
-        document.body.classList.remove("pm-resizing-row");
-        window.removeEventListener("mousemove", move);
-        window.removeEventListener("mouseup", up);
-      };
       document.body.classList.add("pm-resizing-row");
       window.addEventListener("mousemove", move);
-      window.addEventListener("mouseup", up);
+      window.addEventListener("mouseup", stop);
+      window.addEventListener("blur", stop);
+      document.addEventListener("mouseup", stop);
     };
 
   const handleColResize = useCallback((e: React.MouseEvent) => {
@@ -259,17 +270,28 @@ export function PanelManager({ contents, headerExtras, headerExtrasLeft, titleSu
     const x0  = e.clientX;
     const w   = rowRef.current?.getBoundingClientRect().width ?? 800;
     const fr0 = colFr;
-    const move = (ev: MouseEvent) => {
-      setColFr(Math.max(0.1, Math.min(0.9, fr0 + (ev.clientX - x0) / w)));
-    };
-    const up = () => {
+    let isResizing = true;
+    const stop = () => {
+      if (!isResizing) return;
+      isResizing = false;
       document.body.classList.remove("pm-resizing-col");
       window.removeEventListener("mousemove", move);
-      window.removeEventListener("mouseup", up);
+      window.removeEventListener("mouseup", stop);
+      window.removeEventListener("blur", stop);
+      document.removeEventListener("mouseup", stop);
+    };
+    const move = (ev: MouseEvent) => {
+      if (ev.buttons === 0) {
+        stop();
+        return;
+      }
+      setColFr(Math.max(0.1, Math.min(0.9, fr0 + (ev.clientX - x0) / w)));
     };
     document.body.classList.add("pm-resizing-col");
     window.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", up);
+    window.addEventListener("mouseup", stop);
+    window.addEventListener("blur", stop);
+    document.addEventListener("mouseup", stop);
   }, [colFr]);
 
   // ── Layout computation ────────────────────────────────────────────────────

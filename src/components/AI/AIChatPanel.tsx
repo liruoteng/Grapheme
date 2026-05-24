@@ -97,6 +97,18 @@ const SYSTEM_PROMPT =
   "Help users write, improve, and edit their content. Respond in plain text. " +
   "When given selected text as context, focus your response on working with that text.";
 
+const ACTION_PROTOCOL =
+  "You are running in Grapheme Act mode. Do not chat, explain, apologize, or describe what you did. " +
+  "Return exactly one XML edit operation and nothing else. " +
+  "Use <replace_selection>new text</replace_selection> when selected text should be rewritten. " +
+  "Use <insert_at_cursor>new text</insert_at_cursor> when text should be added at the cursor. " +
+  "Use <replace_document>full new document</replace_document> only when the user explicitly asks to rewrite the whole document.";
+
+type ActionEdit =
+  | { kind: "replace_selection"; text: string }
+  | { kind: "insert_at_cursor"; text: string }
+  | { kind: "replace_document"; text: string };
+
 function generateBibKey(paper: CitationResult): string {
   const firstAuthor = paper.authors[0]?.name ?? "unknown";
   const lastName = firstAuthor.split(" ").pop()?.toLowerCase().replace(/[^a-z]/g, "") ?? "unknown";
@@ -117,6 +129,19 @@ function formatDate(ts: number): string {
 
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
+
+function extractTaggedText(source: string, tag: ActionEdit["kind"]): string | null {
+  const match = source.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, "i"));
+  return match ? match[1].replace(/^\n/, "").replace(/\n$/, "") : null;
+}
+
+function parseActionEdit(response: string): ActionEdit | null {
+  for (const kind of ["replace_selection", "insert_at_cursor", "replace_document"] as const) {
+    const text = extractTaggedText(response, kind);
+    if (text !== null) return { kind, text };
+  }
+  return null;
 }
 
 export function AIChatPanel() {
@@ -167,6 +192,7 @@ export function AIChatPanel() {
 
   // ── Provider settings ──────────────────────────────────────────────────
   const selectedText = useEditorStore((s) => s.selectedText);
+  const activeTab = useEditorStore((s) => s.activeTab());
   const aiProvider   = useEditorStore((s) => s.aiProvider);
   const setAiProvider  = useEditorStore((s) => s.setAiProvider);
   const ollamaUrl      = useEditorStore((s) => s.ollamaUrl);
@@ -258,6 +284,18 @@ export function AIChatPanel() {
   const insertAtCursor = useCallback((text: string) => {
     window.dispatchEvent(new CustomEvent("editor:insert", { detail: text }));
   }, []);
+
+  const replaceDocument = useCallback((text: string) => {
+    window.dispatchEvent(new CustomEvent("editor:replace-document", { detail: text }));
+  }, []);
+
+  const applyActionEdit = useCallback((edit: ActionEdit) => {
+    if (edit.kind === "replace_document") {
+      replaceDocument(edit.text);
+    } else {
+      insertAtCursor(edit.text);
+    }
+  }, [insertAtCursor, replaceDocument]);
 
   const handleCopyBib = useCallback(async (paper: CitationResult) => {
     await navigator.clipboard.writeText(generateBibEntry(paper));
@@ -381,7 +419,16 @@ export function AIChatPanel() {
     }
 
     let contextualContent = trimmed;
-    if (selectedText) {
+    if (chatMode === "action") {
+      contextualContent =
+        `${ACTION_PROTOCOL}\n\n` +
+        `User request:\n${trimmed}\n\n` +
+        `Active document path: ${activeTab?.path ?? "(untitled)"}\n\n` +
+        `Current document:\n\`\`\`\n${activeTab?.content ?? ""}\n\`\`\``;
+      if (selectedText) {
+        contextualContent += `\n\nSelected text:\n\`\`\`\n${selectedText}\n\`\`\``;
+      }
+    } else if (selectedText) {
       contextualContent = `Selected text:\n\`\`\`\n${selectedText}\n\`\`\`\n\n${trimmed}`;
     }
 
@@ -416,7 +463,7 @@ export function AIChatPanel() {
           messages: apiMessages,
           ollamaUrl,
           ollamaModel,
-          system: SYSTEM_PROMPT,
+          system: chatMode === "action" ? ACTION_PROTOCOL : SYSTEM_PROMPT,
           onChunk,
         });
       } else {
@@ -449,7 +496,7 @@ export function AIChatPanel() {
         const returnedSessionId = await invoke<string | null>("stream_claude_cli", {
           sessionId: activeSession?.claudeSessionId ?? null,
           message: contextualContent,
-          system: activeSession?.claudeSessionId ? "" : SYSTEM_PROMPT,
+          system: activeSession?.claudeSessionId ? "" : (chatMode === "action" ? ACTION_PROTOCOL : SYSTEM_PROMPT),
           model: claudeModel || null,
           effort,
           thinking,
@@ -474,9 +521,19 @@ export function AIChatPanel() {
 
       if (chatMode === "action") {
         const last = finalMsgs[finalMsgs.length - 1];
-        if (last?.role === "assistant" && last.content) {
-          insertAtCursor(last.content);
-        }
+        const edit = last?.role === "assistant" ? parseActionEdit(last.content) : null;
+        const actionMsgs = finalMsgs.map((m, i) => {
+          if (i !== finalMsgs.length - 1 || m.role !== "assistant") return m;
+          return {
+            ...m,
+            content: edit
+              ? `Applied ${edit.kind.replace(/_/g, " ")}.`
+              : "Act mode could not find a valid edit operation. No editor change was made.",
+          };
+        });
+        setLocalMessages(actionMsgs);
+        commitMessages(actionMsgs);
+        if (edit) applyActionEdit(edit);
       }
     } catch (e: unknown) {
       if (!abortRef.current) {

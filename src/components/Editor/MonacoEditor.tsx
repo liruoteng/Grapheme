@@ -359,6 +359,24 @@ export function MonacoEditor({ onSave, onSnapshot, onNewFile, onPreviewTrigger, 
     return () => window.removeEventListener("editor:insert", handler);
   }, []);
 
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const text = (e as CustomEvent<string>).detail;
+      const editor = editorRef.current;
+      const model = editor?.getModel();
+      if (!editor || !model) return;
+      editor.executeEdits("ai-replace-document", [{
+        range: model.getFullModelRange(),
+        text,
+        forceMoveMarkers: true,
+      }]);
+      editor.setPosition({ lineNumber: 1, column: 1 });
+      editor.focus();
+    };
+    window.addEventListener("editor:replace-document", handler);
+    return () => window.removeEventListener("editor:replace-document", handler);
+  }, []);
+
   // Imperatively restore content when a snapshot is loaded
   useEffect(() => {
     if (!externalContent || !editorRef.current) return;

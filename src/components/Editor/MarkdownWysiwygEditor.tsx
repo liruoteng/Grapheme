@@ -2662,6 +2662,22 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
   }, []);
 
   useEffect(() => {
+    const handler = (event: Event) => {
+      const view = viewRef.current;
+      if (!view) return;
+      const text = (event as CustomEvent<string>).detail;
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: text },
+        selection: EditorSelection.cursor(0),
+        scrollIntoView: true,
+      });
+      view.focus();
+    };
+    window.addEventListener("editor:replace-document", handler);
+    return () => window.removeEventListener("editor:replace-document", handler);
+  }, []);
+
+  useEffect(() => {
     window.addEventListener("mouseup", releasePointerScrollSnapshot);
     window.addEventListener("blur", releasePointerScrollSnapshot);
     return () => {
