@@ -589,7 +589,7 @@ fn compose_markdown_preview_source(md_path: &Path, md_content: &str) -> (String,
     let fm = fm_yaml
         .map(converter::parse_front_matter)
         .unwrap_or_default();
-    let (body, warnings) = converter::markdown_to_typst_preview(body_md);
+    let (body, warnings) = converter::markdown_to_typst_preview(body_md, md_path);
 
     let explicit_template = md_path
         .parent()
@@ -840,7 +840,14 @@ fn write_markdown_preview_source_resilient(
 fn write_markdown_preview_source_fast(md_path: &str, md_content: &str) -> Result<(), String> {
     let path = Path::new(md_path);
     let (typst_content, _warnings) = compose_markdown_preview_source(path, md_content);
-    fs::write(md_preview_typ_path(md_path), typst_content).map_err(|e| e.to_string())
+    let preview_path = md_preview_typ_path(md_path);
+    if fs::read_to_string(&preview_path)
+        .map(|existing| existing == typst_content)
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
+    fs::write(preview_path, typst_content).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

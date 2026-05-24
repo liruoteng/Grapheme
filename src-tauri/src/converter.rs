@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 // ── Front matter ─────────────────────────────────────────────────────────────
 
@@ -233,6 +234,7 @@ pub fn markdown_to_typst(content: &str) -> (String, Vec<String>) {
             raw_typst_passthrough: true,
             typst_citations: true,
             preview_safe: false,
+            image_base_dir: None,
         },
     )
 }
@@ -240,13 +242,15 @@ pub fn markdown_to_typst(content: &str) -> (String, Vec<String>) {
 /// Markdown → Typst for live preview. This avoids constructs that commonly
 /// make partial drafts fail to compile, leaving tinymist as the only compiler
 /// in the hot path.
-pub fn markdown_to_typst_preview(content: &str) -> (String, Vec<String>) {
+pub fn markdown_to_typst_preview(content: &str, md_path: &Path) -> (String, Vec<String>) {
+    let image_base_dir = md_path.parent().map(|p| p.to_path_buf());
     markdown_to_typst_with_options(
         content,
         MarkdownOptions {
             raw_typst_passthrough: false,
             typst_citations: false,
             preview_safe: true,
+            image_base_dir,
         },
     )
 }
@@ -255,6 +259,7 @@ struct MarkdownOptions {
     raw_typst_passthrough: bool,
     typst_citations: bool,
     preview_safe: bool,
+    image_base_dir: Option<PathBuf>,
 }
 
 fn markdown_to_typst_with_options(
@@ -1831,7 +1836,28 @@ fn inline_with_options(text: &str, options: &MarkdownOptions) -> String {
         // Image: ![alt](url)
         if chars[i] == '!' && i + 1 < chars.len() && chars[i + 1] == '[' {
             if let Some((alt, url, end)) = parse_link(&chars, i + 1) {
-                if options.preview_safe {
+                if options.preview_safe
+                    && !url.starts_with("http://")
+                    && !url.starts_with("https://")
+                {
+                    if let Some(ref base) = options.image_base_dir {
+                        if base.join(&url).exists() {
+                            result.push_str(&format!(
+                                "#image(\"{url}\", alt: \"{alt}\")"
+                            ));
+                        } else {
+                            result.push_str(&format!(
+                                "#link(\"{url}\")[{}]",
+                                inline_with_options(&alt, options)
+                            ));
+                        }
+                    } else {
+                        result.push_str(&format!(
+                            "#link(\"{url}\")[{}]",
+                            inline_with_options(&alt, options)
+                        ));
+                    }
+                } else if options.preview_safe {
                     result.push_str(&format!(
                         "#link(\"{url}\")[{}]",
                         inline_with_options(&alt, options)
@@ -2151,6 +2177,10 @@ mod tests {
 
     fn convert(md: &str) -> String {
         markdown_to_typst(md).0
+    }
+
+    fn preview(md: &str) -> String {
+        markdown_to_typst_preview(md, Path::new("test.md")).0
     }
 
     // ── Headings ──────────────────────────────────────────────────────────────
@@ -2488,13 +2518,13 @@ mod tests {
 
     #[test]
     fn preview_escapes_citation_refs() {
-        let out = markdown_to_typst_preview("See [@vaswani2017] for details.\n").0;
+        let out = preview("See [@vaswani2017] for details.\n");
         assert!(out.contains("\\@vaswani2017"), "got: {out}");
     }
 
     #[test]
     fn preview_renders_typst_fence_as_code() {
-        let out = markdown_to_typst_preview("```typst\n#let x =\n```\n").0;
+        let out = preview("```typst\n#let x =\n```\n");
         assert!(out.contains("#raw("), "got: {out}");
         assert!(out.contains("lang: \"typst\""), "got: {out}");
         assert!(out.contains("#let x ="), "got: {out}");
@@ -2517,37 +2547,36 @@ mod tests {
 
     #[test]
     fn preview_renders_simple_inline_math_as_typst_math() {
-        let out = markdown_to_typst_preview("We use $E = mc^2$ here.\n").0;
+        let out = preview("We use $E = mc^2$ here.\n");
         assert!(out.contains("$E = m c^2$"), "got: {out}");
         assert!(!out.contains("#raw(\"E = mc^2\""), "got: {out}");
     }
 
     #[test]
     fn preview_renders_simple_block_math_as_typst_math() {
-        let out = markdown_to_typst_preview("$$\nE = m c^2\n$$\n").0;
+        let out = preview("$$\nE = m c^2\n$$\n");
         assert!(out.contains("$ E = m c^2 $"), "got: {out}");
         assert!(!out.contains("#raw(\"E = m c^2\""), "got: {out}");
     }
 
     #[test]
     fn preview_translates_latex_fraction_math() {
-        let out = markdown_to_typst_preview("We use $\\frac{1}{2}$ here.\n").0;
+        let out = preview("We use $\\frac{1}{2}$ here.\n");
         assert!(out.contains("$(1)/(2)$"), "got: {out}");
         assert!(!out.contains("#raw(\"\\\\frac{1}{2}\""), "got: {out}");
     }
 
     #[test]
     fn preview_translates_latex_sqrt_and_greek_math() {
-        let out = markdown_to_typst_preview("We use $\\alpha + \\sqrt{b^2 - 4ac}$ here.\n").0;
+        let out = preview("We use $\\alpha + \\sqrt{b^2 - 4ac}$ here.\n");
         assert!(out.contains("$alpha + sqrt(b^2 - 4a c)$"), "got: {out}");
     }
 
     #[test]
     fn preview_translates_display_latex_operators() {
-        let out = markdown_to_typst_preview(
+        let out = preview(
             "$$\n\\lim_{n \\to \\infty} \\left(1 + \\frac{1}{n}\\right)^n = e\n$$\n",
-        )
-        .0;
+        );
         assert!(
             out.contains("$ lim_{n -> infinity} (1 + (1)/(n))^n = e $"),
             "got: {out}"

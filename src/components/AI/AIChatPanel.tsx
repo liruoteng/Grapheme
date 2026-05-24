@@ -1,6 +1,18 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { invoke, Channel } from "@tauri-apps/api/core";
-import { X, Option } from "lucide-react";
+import {
+  BookOpen,
+  Clipboard,
+  FilePenLine,
+  Highlighter,
+  Option,
+  PenLine,
+  Quote,
+  RefreshCw,
+  Send,
+  Sparkles,
+  X,
+} from "lucide-react";
 import { useEditorStore, type AiMessage } from "../../stores/editorStore";
 import { prepareWithSegments, measureNaturalWidth } from "@chenglou/pretext";
 import "./AIChatPanel.css";
@@ -32,6 +44,47 @@ interface CitationResult {
 
 type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 type ChatMode = "plan" | "action";
+
+const WRITING_ACTIONS = [
+  {
+    label: "Draft",
+    icon: FilePenLine,
+    prompt: "Draft the next paragraph for this essay. Match the current voice and keep the argument focused.",
+  },
+  {
+    label: "Edit",
+    icon: Highlighter,
+    prompt: "Edit this passage for clarity, structure, and academic tone. Keep the meaning intact.",
+  },
+  {
+    label: "Rephrase",
+    icon: RefreshCw,
+    prompt: "Rephrase this passage in a smoother academic style. Preserve citations and technical terms.",
+  },
+  {
+    label: "Cite",
+    icon: Quote,
+    prompt: "/cite ",
+  },
+];
+
+const EMPTY_STARTERS = [
+  {
+    title: "Plan an essay",
+    body: "Build a thesis, outline, and section goals from my topic.",
+    prompt: "Help me turn this topic into a thesis-driven essay outline: ",
+  },
+  {
+    title: "Improve selection",
+    body: "Make selected text clearer without changing the claim.",
+    prompt: "Improve the selected text for clarity, flow, and academic tone.",
+  },
+  {
+    title: "Find sources",
+    body: "Search papers and prepare BibTeX-ready citations.",
+    prompt: "/cite ",
+  },
+];
 
 const CLAUDE_MODELS = [
   { id: "claude-opus-4-7",           label: "Opus 4.7" },
@@ -479,6 +532,15 @@ export function AIChatPanel() {
     commitMessages(localMessagesRef.current);
   };
 
+  const applyPrompt = (prompt: string) => {
+    setInput(prompt);
+    requestAnimationFrame(() => {
+      chatInputRef.current?.focus();
+      const len = prompt.length;
+      chatInputRef.current?.setSelectionRange(len, len);
+    });
+  };
+
   // ── Session list helpers ───────────────────────────────────────────────
   function dateGroup(ts: number): string {
     const now = new Date();
@@ -626,13 +688,26 @@ export function AIChatPanel() {
       <div className="ai-chat-messages">
         {localMessages.length === 0 && (
           <div className="ai-chat-empty">
-            <div className="ai-chat-empty-icon">✦</div>
-            <p>Ask anything about your document.</p>
-            <p className="ai-chat-hint">
-              Select text in the editor to provide context.
-              <br />
-              Use <code>/cite query</code> to search references.
+            <div className="ai-chat-empty-kicker">
+              <Sparkles size={15} />
+              Essay copilot
+            </div>
+            <h2>Write, revise, and cite without leaving the editor.</h2>
+            <p>
+              Select a passage to edit it in place, or start with a writing task below.
             </p>
+            <div className="ai-starter-grid">
+              {EMPTY_STARTERS.map((starter) => (
+                <button
+                  key={starter.title}
+                  className="ai-starter-card"
+                  onClick={() => applyPrompt(starter.prompt)}
+                >
+                  <span className="ai-starter-title">{starter.title}</span>
+                  <span className="ai-starter-body">{starter.body}</span>
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
@@ -667,7 +742,7 @@ export function AIChatPanel() {
                       onClick={() => navigator.clipboard.writeText(msg.content)}
                       title="Copy"
                     >
-                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                      <Clipboard size={14} />
                     </button>
                     {!msg.content.startsWith("Found ") && !msg.content.startsWith("No results") && (
                       <button
@@ -675,7 +750,7 @@ export function AIChatPanel() {
                         onClick={() => insertAtCursor(msg.content)}
                         title="Insert at cursor"
                       >
-                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg>
+                        <PenLine size={14} />
                       </button>
                     )}
                   </div>
@@ -727,8 +802,11 @@ export function AIChatPanel() {
       </div>
 
       {selectedText && (
-        <div className="ai-context-badge">
-          <span className="ai-context-label">Context:</span>
+        <div className="ai-context-badge" title={selectedText}>
+          <span className="ai-context-label">
+            <BookOpen size={13} />
+            Selection
+          </span>
           <span className="ai-context-text">
             {selectedText.slice(0, 80)}
             {selectedText.length > 80 ? "…" : ""}
@@ -737,13 +815,29 @@ export function AIChatPanel() {
       )}
 
       <div className="ai-chat-input-area">
+        <div className="ai-writing-actions" aria-label="Writing actions">
+          {WRITING_ACTIONS.map((action) => {
+            const Icon = action.icon;
+            return (
+              <button
+                key={action.label}
+                className="ai-writing-action"
+                onClick={() => applyPrompt(action.prompt)}
+                title={`${action.label}${selectedText ? " selected text" : ""}`}
+              >
+                <Icon size={14} />
+                <span>{action.label}</span>
+              </button>
+            );
+          })}
+        </div>
         <textarea
           ref={chatInputRef}
           className="ai-chat-input"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={selectedText ? "Ask about selection… or /cite query" : "Ask anything… or /cite query"}
+          placeholder={selectedText ? "Tell AI what to do with the selection…" : "Ask for drafting, editing, rephrasing, or /cite query"}
           rows={3}
           disabled={isLoading}
         />
@@ -824,6 +918,7 @@ export function AIChatPanel() {
             <button className="ai-chat-btn ai-chat-btn--stop" style={{ minWidth: BTN_MIN_WIDTH }} onClick={handleStop}>Stop</button>
           ) : (
             <button className="ai-chat-btn ai-chat-btn--send" style={{ minWidth: BTN_MIN_WIDTH }} onClick={handleSend} disabled={!input.trim()}>
+              <Send size={13} />
               Send
             </button>
           )}

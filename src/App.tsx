@@ -11,6 +11,7 @@ import {
   Menu,
   FileText,
   Code,
+  Bot,
 } from "lucide-react";
 import { StatusBar } from "./components/Layout/StatusBar";
 import { FloatingSidebar } from "./components/Layout/FloatingSidebar";
@@ -848,6 +849,15 @@ const PreviewPanelControls = memo(function PreviewPanelControls({
 
 // ── Welcome screen (shown when all panels are closed) ─────────────────────────
 function WelcomeScreen({ onNewFile, onOpenFolder }: { onNewFile: (kind?: "typ" | "md") => void; onOpenFolder: () => void }) {
+  const handleStartAiChat = () => {
+    const store = useEditorStore.getState();
+    const panels = store.activePanels;
+    if (!panels.includes("ai")) {
+      store.setActivePanels([...panels, "ai"]);
+    }
+    window.dispatchEvent(new CustomEvent("ai:new-session"));
+  };
+
   return (
     <div className="welcome-screen">
       <div className="welcome-inner">
@@ -873,6 +883,13 @@ function WelcomeScreen({ onNewFile, onOpenFolder }: { onNewFile: (kind?: "typ" |
             <span className="welcome-action-text">
               <span className="welcome-action-label">Open folder</span>
               <span className="welcome-action-hint">⌘⇧O</span>
+            </span>
+          </button>
+          <button className="welcome-action" onClick={handleStartAiChat}>
+            <span className="welcome-action-icon"><Bot size={16} /></span>
+            <span className="welcome-action-text">
+              <span className="welcome-action-label">Grapheme AI</span>
+              <span className="welcome-action-hint">⌘1</span>
             </span>
           </button>
         </div>

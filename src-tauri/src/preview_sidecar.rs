@@ -14,27 +14,32 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
-/// Holds the currently running preview child and the URL it's serving.
+const MAX_CACHED_PREVIEWS: usize = 4;
+
+struct PreviewEntry {
+    child: Child,
+    url: String,
+    path: String,
+    invert_colors: String,
+    last_used: u64,
+}
+
+/// Holds recently used preview children and the URLs they're serving.
 #[derive(Default)]
 pub struct PreviewSidecar {
-    child: Option<Child>,
-    url: Option<String>,
-    path: Option<String>,
-    invert_colors: Option<String>,
+    entries: Vec<PreviewEntry>,
+    next_use: u64,
 }
 
 pub type SharedSidecar = Arc<Mutex<PreviewSidecar>>;
 
 impl PreviewSidecar {
-    /// Stop the running child, if any. Waits for it to exit.
+    /// Stop every cached preview child. Waits for each one to exit.
     pub async fn stop(&mut self) {
-        if let Some(mut child) = self.child.take() {
-            let _ = child.kill().await;
-            let _ = child.wait().await;
+        for mut entry in self.entries.drain(..) {
+            let _ = entry.child.kill().await;
+            let _ = entry.child.wait().await;
         }
-        self.url = None;
-        self.path = None;
-        self.invert_colors = None;
     }
 }
 
@@ -50,15 +55,36 @@ pub async fn start(
     let mut guard = sidecar.lock().await;
 
     // Reuse only if both the file *and* the invert-colors setting are unchanged.
-    let same_path = guard.path.as_deref() == Some(input_path);
-    let same_invert = guard.invert_colors.as_deref() == Some(invert_colors);
-    if same_path && same_invert {
-        if let Some(url) = guard.url.clone() {
+    if let Some(index) = guard
+        .entries
+        .iter()
+        .position(|entry| entry.path == input_path && entry.invert_colors == invert_colors)
+    {
+        let child_alive = matches!(guard.entries[index].child.try_wait(), Ok(None));
+        if child_alive {
+            guard.next_use += 1;
+            guard.entries[index].last_used = guard.next_use;
+            let url = guard.entries[index].url.clone();
             return Ok(url);
         }
+
+        let mut stale = guard.entries.remove(index);
+        let _ = stale.child.wait().await;
     }
 
-    guard.stop().await;
+    while guard.entries.len() >= MAX_CACHED_PREVIEWS {
+        let Some((oldest, _)) = guard
+            .entries
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, entry)| entry.last_used)
+        else {
+            break;
+        };
+        let mut entry = guard.entries.remove(oldest);
+        let _ = entry.child.kill().await;
+        let _ = entry.child.wait().await;
+    }
 
     // Resolve the project root so absolute imports (`#import "/foo.typ"`)
     // work. Defaults to the input file's parent directory.
@@ -108,10 +134,15 @@ pub async fn start(
         }
     });
 
-    guard.child = Some(child);
-    guard.url = Some(url.clone());
-    guard.path = Some(input_path.to_string());
-    guard.invert_colors = Some(invert_colors.to_string());
+    guard.next_use += 1;
+    let last_used = guard.next_use;
+    guard.entries.push(PreviewEntry {
+        child,
+        url: url.clone(),
+        path: input_path.to_string(),
+        invert_colors: invert_colors.to_string(),
+        last_used,
+    });
 
     Ok(url)
 }

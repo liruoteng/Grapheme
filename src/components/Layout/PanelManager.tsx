@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, type RefObject, type ReactNode } from "react";
+import { useState, useRef, useCallback, Fragment, type RefObject, type ReactNode } from "react";
 import { X, Check } from "lucide-react";
 import { useEditorStore } from "../../stores/editorStore";
 import "./PanelManager.css";
@@ -12,7 +12,7 @@ interface PanelDef {
 }
 
 export const ALL_PANELS: PanelDef[] = [
-  { id: "ai",      label: "AI",      shortcut: "⌘1" },
+  { id: "ai",      label: "Grapheme AI",      shortcut: "⌘1" },
   { id: "editor",  label: "Editor",  shortcut: "⌘2" },
   { id: "preview", label: "Preview", shortcut: "⌘3" },
   { id: "diff",    label: "Diff",    shortcut: "⌘4" },
@@ -312,10 +312,10 @@ export function PanelManager({ contents, headerExtras, headerExtrasLeft, titleSu
       <div className="pm-root">
         <div ref={singleColRef} className="pm-flex-col">
           {activePanels.map((id, i) => (
-            <>
+            <Fragment key={id}>
               {i > 0 && <RowHandle key={`h${i}`} onMouseDown={rowResizer(activePanels[i - 1], id, singleColRef)} />}
               {makePanel(id, i, i === 0, n === 1)}
-            </>
+            </Fragment>
           ))}
         </div>
       </div>
@@ -340,10 +340,10 @@ export function PanelManager({ contents, headerExtras, headerExtrasLeft, titleSu
           {/* Left column */}
           <div ref={leftColRef} className="pm-flex-col" style={{ flex: `${colFr} 1 0`, minWidth: 0, overflow: "hidden" }}>
             {leftIds.map((id, i) => (
-              <>
+              <Fragment key={id}>
                 {i > 0 && <RowHandle key={`lh${i}`} onMouseDown={rowResizer(leftIds[i - 1], id, leftColRef)} />}
                 {makePanel(id, activePanels.indexOf(id), false, false)}
-              </>
+              </Fragment>
             ))}
           </div>
 
@@ -353,20 +353,20 @@ export function PanelManager({ contents, headerExtras, headerExtrasLeft, titleSu
           {/* Right column */}
           <div ref={rightColRef} className="pm-flex-col" style={{ flex: `${1 - colFr} 1 0`, minWidth: 0, overflow: "hidden" }}>
             {rightIds.map((id, i) => (
-              <>
+              <Fragment key={id}>
                 {i > 0 && <RowHandle key={`rh${i}`} onMouseDown={rowResizer(rightIds[i - 1], id, rightColRef)} />}
                 {makePanel(id, activePanels.indexOf(id), i === 0, false)}
-              </>
+              </Fragment>
             ))}
           </div>
         </div>
 
         {/* Wide panel at bottom (n=3 or n=5) */}
         {wideId && (
-          <>
+          <Fragment key={wideId}>
             <RowHandle onMouseDown={rowResizer("__top__", wideId, outerRef)} />
             {makePanel(wideId, activePanels.indexOf(wideId), false, true)}
-          </>
+          </Fragment>
         )}
       </div>
     </div>
