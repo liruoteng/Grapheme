@@ -3,7 +3,7 @@ import { X, Check } from "lucide-react";
 import { useEditorStore } from "../../stores/editorStore";
 import "./PanelManager.css";
 
-export type PanelId = "editor" | "preview" | "diff" | "outline" | "ai" | "pdf";
+export type PanelId = "editor" | "preview" | "diff" | "outline" | "ai" | "pdf" | "bibliography";
 
 interface PanelDef {
   id: PanelId;
@@ -18,6 +18,7 @@ export const ALL_PANELS: PanelDef[] = [
   { id: "diff",    label: "Diff",    shortcut: "⌘4" },
   { id: "outline", label: "Outline", shortcut: "⌘5" },
   { id: "pdf",     label: "PDF Viewer", shortcut: "⌘6" },
+  { id: "bibliography", label: "Bibliography", shortcut: "⌘7" },
 ];
 
 export interface PanelContents {
@@ -27,6 +28,7 @@ export interface PanelContents {
   diff:    ReactNode;
   outline: ReactNode;
   pdf:     ReactNode;
+  bibliography: ReactNode;
 }
 
 interface PanelManagerProps {

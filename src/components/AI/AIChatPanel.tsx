@@ -3,12 +3,8 @@ import { invoke, Channel } from "@tauri-apps/api/core";
 import {
   BookOpen,
   Clipboard,
-  FilePenLine,
-  Highlighter,
   Option,
   PenLine,
-  Quote,
-  RefreshCw,
   Send,
   Sparkles,
   X,
@@ -44,29 +40,6 @@ interface CitationResult {
 
 type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 type ChatMode = "plan" | "action";
-
-const WRITING_ACTIONS = [
-  {
-    label: "Draft",
-    icon: FilePenLine,
-    prompt: "Draft the next paragraph for this essay. Match the current voice and keep the argument focused.",
-  },
-  {
-    label: "Edit",
-    icon: Highlighter,
-    prompt: "Edit this passage for clarity, structure, and academic tone. Keep the meaning intact.",
-  },
-  {
-    label: "Rephrase",
-    icon: RefreshCw,
-    prompt: "Rephrase this passage in a smoother academic style. Preserve citations and technical terms.",
-  },
-  {
-    label: "Cite",
-    icon: Quote,
-    prompt: "/cite ",
-  },
-];
 
 const EMPTY_STARTERS = [
   {
@@ -872,22 +845,6 @@ export function AIChatPanel() {
       )}
 
       <div className="ai-chat-input-area">
-        <div className="ai-writing-actions" aria-label="Writing actions">
-          {WRITING_ACTIONS.map((action) => {
-            const Icon = action.icon;
-            return (
-              <button
-                key={action.label}
-                className="ai-writing-action"
-                onClick={() => applyPrompt(action.prompt)}
-                title={`${action.label}${selectedText ? " selected text" : ""}`}
-              >
-                <Icon size={14} />
-                <span>{action.label}</span>
-              </button>
-            );
-          })}
-        </div>
         <textarea
           ref={chatInputRef}
           className="ai-chat-input"

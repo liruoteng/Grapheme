@@ -1,6 +1,6 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { X, ArrowDownToLine } from "lucide-react";
+import { X, ArrowDownToLine, Copy, Search } from "lucide-react";
 import { useEditorStore, type Reference } from "../../stores/editorStore";
 import "./ReferencesPanel.css";
 
@@ -135,7 +135,7 @@ function AddCitationPanel({ onAdd }: AddCitationPanelProps) {
     setManualYear("");
     setManualVenue("");
     setMode("closed");
-  }, [manualKey, manualTitle, manualAuthors, manualYear, manualVenue, onAdd]);
+  }, [manualKey, manualTitle, manualAuthors, manualYear, onAdd]);
 
   if (mode === "closed") {
     return (
@@ -208,28 +208,53 @@ export function ReferencesPanel() {
   const addReference = useEditorStore((s) => s.addReference);
   const removeReference = useEditorStore((s) => s.removeReference);
   const workspacePath = useEditorStore((s) => s.workspacePath);
+  const activeTab = useEditorStore((s) => s.activeTab());
 
   const [dropHover, setDropHover] = useState(false);
   const [busy, setBusy] = useState(false);
   const [errMsg, setErrMsg] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<"all" | "cited" | "uncited">("all");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    if (!e.dataTransfer.types.includes("Files")) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "copy";
-    setDropHover(true);
-  }, []);
+  const citedKeys = useMemo(() => {
+    const keys = new Set<string>();
+    const content = activeTab?.content ?? "";
+    const citationRe = /\[@([^\]\n]+)\]/g;
+    let match: RegExpExecArray | null;
+    while ((match = citationRe.exec(content)) !== null) {
+      for (const part of match[1].split(";")) {
+        const key = part.trim().replace(/^@/, "");
+        if (key) keys.add(key);
+      }
+    }
+    return keys;
+  }, [activeTab?.content]);
 
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    if (e.target === e.currentTarget) setDropHover(false);
-  }, []);
+  const visibleReferences = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return references.filter((ref) => {
+      const cited = ref.bibKey ? citedKeys.has(ref.bibKey) : false;
+      if (filter === "cited" && !cited) return false;
+      if (filter === "uncited" && cited) return false;
+      if (!q) return true;
+      return [
+        ref.bibKey,
+        ref.title,
+        ref.name,
+        ref.year ? String(ref.year) : undefined,
+        ref.authors?.join(" "),
+      ]
+        .filter(Boolean)
+        .some((value) => value!.toLowerCase().includes(q));
+    });
+  }, [citedKeys, filter, query, references]);
 
-  const handleDrop = useCallback(
-    async (e: React.DragEvent) => {
-      e.preventDefault();
-      setDropHover(false);
-      const files = Array.from(e.dataTransfer.files ?? []);
+  const citedCount = references.filter((ref) => ref.bibKey && citedKeys.has(ref.bibKey)).length;
+
+  const handleFiles = useCallback(
+    async (files: File[]) => {
       if (files.length === 0) return;
       setBusy(true);
       setErrMsg(null);
@@ -270,6 +295,34 @@ export function ReferencesPanel() {
     [addReference, workspacePath]
   );
 
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes("Files")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    setDropHover(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    if (e.target === e.currentTarget) setDropHover(false);
+  }, []);
+
+  const handleDrop = useCallback(
+    async (e: React.DragEvent) => {
+      e.preventDefault();
+      setDropHover(false);
+      await handleFiles(Array.from(e.dataTransfer.files ?? []));
+    },
+    [handleFiles]
+  );
+
+  const handleFileBrowse = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      await handleFiles(Array.from(e.target.files ?? []));
+      e.target.value = "";
+    },
+    [handleFiles]
+  );
+
   // Dispatch [@key] so the writing editor handles it as a Pandoc-style citation
   const insertCite = useCallback((ref: Reference) => {
     const key = ref.bibKey;
@@ -282,6 +335,13 @@ export function ReferencesPanel() {
     setCopiedKey(ref.id);
     setTimeout(() => setCopiedKey(null), 1500);
   }, []);
+
+  const copyAllBibEntries = useCallback(async () => {
+    if (references.length === 0) return;
+    await navigator.clipboard.writeText(references.map(formatBibEntry).join("\n\n"));
+    setCopiedKey("__all__");
+    setTimeout(() => setCopiedKey(null), 1500);
+  }, [references]);
 
   const openPdf = useCallback(async (ref: Reference) => {
     if (!ref.path) return;
@@ -296,26 +356,77 @@ export function ReferencesPanel() {
   return (
     <div className="references-panel">
       <div className="references-header">
-        <span className="references-title">REFERENCES</span>
+        <span className="references-title">BIBLIOGRAPHY</span>
+        <button
+          className="references-header-action"
+          onClick={copyAllBibEntries}
+          disabled={references.length === 0}
+          title="Copy all BibTeX entries"
+          aria-label="Copy all BibTeX entries"
+        >
+          <Copy size={12} />
+          <span>{copiedKey === "__all__" ? "Copied" : "BibTeX"}</span>
+        </button>
         <span className="references-count">{references.length}</span>
       </div>
 
       <div
+        role="button"
+        tabIndex={0}
         className={`references-dropzone${dropHover ? " is-hover" : ""}${busy ? " is-busy" : ""}`}
+        onClick={() => fileInputRef.current?.click()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            fileInputRef.current?.click();
+          }
+        }}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
+        aria-label="Add reference files"
       >
+        <input
+          ref={fileInputRef}
+          className="references-file-input"
+          type="file"
+          multiple
+          accept=".bib,.pdf,application/pdf"
+          onChange={handleFileBrowse}
+          tabIndex={-1}
+        />
         <div className="references-dropzone-icon" aria-hidden>
           {busy ? "…" : <ArrowDownToLine size={20} />}
         </div>
         <div className="references-dropzone-text">
-          <strong>Drop reference papers here</strong>
+          <strong>Drop or choose reference papers</strong>
           <span>PDFs are saved to <code>references/</code>; .bib files are parsed</span>
         </div>
       </div>
 
       <AddCitationPanel onAdd={addReference} />
+
+      <div className="references-tools">
+        <label className="references-search">
+          <Search size={13} />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search key, title, author, year"
+          />
+        </label>
+        <div className="references-filter" aria-label="Reference filter">
+          <button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>
+            All
+          </button>
+          <button className={filter === "cited" ? "active" : ""} onClick={() => setFilter("cited")}>
+            Cited {citedCount}
+          </button>
+          <button className={filter === "uncited" ? "active" : ""} onClick={() => setFilter("uncited")}>
+            Uncited
+          </button>
+        </div>
+      </div>
 
       {errMsg && (
         <div className="references-error" onClick={() => setErrMsg(null)} title="Click to dismiss">
@@ -331,12 +442,20 @@ export function ReferencesPanel() {
               Drop PDFs or .bib files above, fetch by DOI, or add manually. Click <code>Cite</code> to insert <code>[@key]</code> at cursor.
             </p>
           </div>
+        ) : visibleReferences.length === 0 ? (
+          <div className="references-empty">
+            <p>No matching references.</p>
+            <p className="references-empty-hint">
+              Adjust search or switch back to All.
+            </p>
+          </div>
         ) : (
-          references.map((ref) => (
+          visibleReferences.map((ref) => (
             <div key={ref.id} className="reference-card">
               <div className="reference-card-head">
                 <span className={`reference-kind reference-kind--${ref.kind}`}>{ref.kind.toUpperCase()}</span>
                 {ref.bibKey && <span className="reference-key">@{ref.bibKey}</span>}
+                {ref.bibKey && citedKeys.has(ref.bibKey) && <span className="reference-cited">CITED</span>}
                 <button
                   className="reference-card-remove"
                   onClick={() => removeReference(ref.id)}

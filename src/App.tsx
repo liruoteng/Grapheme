@@ -26,6 +26,7 @@ import { SettingsDialog } from "./components/Settings/SettingsDialog";
 import { TemplatePickerDialog } from "./components/Templates/TemplatePickerDialog";
 import { AIChatPanel } from "./components/AI/AIChatPanel";
 import { PDFViewerPanel } from "./components/PdfViewer/PDFViewerPanel";
+import { ReferencesPanel } from "./components/References/ReferencesPanel";
 import { useEditorStore, markPathJustWritten } from "./stores/editorStore";
 import { usePreview, SaveEvent } from "./hooks/usePreview";
 import "./App.css";
@@ -52,7 +53,7 @@ export default function App() {
     if (panels.includes(id)) {
       setActivePanels(panels.filter((p) => p !== id));
     } else {
-      if (panels.length >= 5) return;
+      if (panels.length >= ALL_PANELS.length) return;
       setActivePanels([...panels, id]);
     }
   }, [setActivePanels]);
@@ -148,9 +149,17 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [handleNewFile]);
 
-  // ── ⌘1–⌘5 — toggle panels ───────────────────────────────────────────────
+  // ── ⌘1–⌘7 — toggle panels ───────────────────────────────────────────────
   useEffect(() => {
-    const PANEL_KEYS: Record<string, PanelId> = { "1": "ai", "2": "editor", "3": "preview", "4": "diff", "5": "outline" };
+    const PANEL_KEYS: Record<string, PanelId> = {
+      "1": "ai",
+      "2": "editor",
+      "3": "preview",
+      "4": "diff",
+      "5": "outline",
+      "6": "pdf",
+      "7": "bibliography",
+    };
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey)) return;
       const id = PANEL_KEYS[e.key];
@@ -557,6 +566,7 @@ export default function App() {
                 ),
                 outline: <TableOfContents />,
                 pdf: <PDFViewerPanel />,
+                bibliography: <ReferencesPanel />,
               }}
             />
           </div>

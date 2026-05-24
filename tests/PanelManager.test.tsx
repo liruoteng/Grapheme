@@ -14,6 +14,7 @@ const contents: PanelContents = {
   diff: <div>Diff content</div>,
   outline: <div>Outline content</div>,
   pdf: <div>PDF content</div>,
+  bibliography: <div>Bibliography content</div>,
 };
 
 describe("PanelManager", () => {

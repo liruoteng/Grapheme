@@ -109,6 +109,60 @@ fn quote_typst(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+fn is_remote_image_src(src: &str) -> bool {
+    src.starts_with("http://") || src.starts_with("https://")
+}
+
+fn resolve_preview_image_path(src: &str, base_dir: &Path) -> Option<PathBuf> {
+    if is_remote_image_src(src) {
+        return None;
+    }
+
+    let src_path = Path::new(src);
+    if src_path.is_absolute() {
+        return src_path.exists().then(|| src_path.to_path_buf());
+    }
+
+    for dir in base_dir.ancestors() {
+        let candidate = dir.join(src_path);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+
+    None
+}
+
+fn relative_path_from(path: &Path, base: &Path) -> Option<PathBuf> {
+    let path_components: Vec<_> = path.components().collect();
+    let base_components: Vec<_> = base.components().collect();
+    let common_len = path_components
+        .iter()
+        .zip(base_components.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+
+    if common_len == 0 {
+        return None;
+    }
+
+    let mut relative = PathBuf::new();
+    for _ in common_len..base_components.len() {
+        relative.push("..");
+    }
+    for component in &path_components[common_len..] {
+        relative.push(component.as_os_str());
+    }
+
+    Some(relative)
+}
+
+fn preview_image_typst_path(src: &str, base_dir: &Path) -> Option<String> {
+    let resolved = resolve_preview_image_path(src, base_dir)?;
+    let relative = relative_path_from(&resolved, base_dir)?;
+    Some(quote_typst(&relative.to_string_lossy()))
+}
+
 fn build_default_preamble(fm: &FrontMatter) -> String {
     // Only emit a preamble when the document has metadata to display.
     if fm.title.is_none() && fm.authors.is_empty() && fm.abstract_text.is_none() {
@@ -1836,14 +1890,11 @@ fn inline_with_options(text: &str, options: &MarkdownOptions) -> String {
         // Image: ![alt](url)
         if chars[i] == '!' && i + 1 < chars.len() && chars[i + 1] == '[' {
             if let Some((alt, url, end)) = parse_link(&chars, i + 1) {
-                if options.preview_safe
-                    && !url.starts_with("http://")
-                    && !url.starts_with("https://")
-                {
+                if options.preview_safe && !is_remote_image_src(&url) {
                     if let Some(ref base) = options.image_base_dir {
-                        if base.join(&url).exists() {
+                        if let Some(path) = preview_image_typst_path(&url, base) {
                             result.push_str(&format!(
-                                "#image(\"{url}\", alt: \"{alt}\")"
+                                "#image(\"{path}\", alt: \"{alt}\")"
                             ));
                         } else {
                             result.push_str(&format!(
@@ -1862,7 +1913,7 @@ fn inline_with_options(text: &str, options: &MarkdownOptions) -> String {
                         "#link(\"{url}\")[{}]",
                         inline_with_options(&alt, options)
                     ));
-                } else if url.starts_with("http://") || url.starts_with("https://") {
+                } else if is_remote_image_src(&url) {
                     // Typst image() only accepts local paths; render as a link instead
                     result.push_str(&format!("#link(\"{url}\")[{alt}]"));
                 } else {
@@ -2174,6 +2225,8 @@ pub fn try_pdf_to_typst(src: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn convert(md: &str) -> String {
         markdown_to_typst(md).0
@@ -2181,6 +2234,19 @@ mod tests {
 
     fn preview(md: &str) -> String {
         markdown_to_typst_preview(md, Path::new("test.md")).0
+    }
+
+    fn temp_test_dir(name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "type-studio-converter-{name}-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
     }
 
     // ── Headings ──────────────────────────────────────────────────────────────
@@ -2502,6 +2568,32 @@ mod tests {
         let out = convert("![alt](https://example.com/img.png)\n");
         assert!(out.contains("#link(\"https://example.com/img.png\")[alt]"));
         assert!(!out.contains("#image("));
+    }
+
+    #[test]
+    fn preview_renders_existing_local_image() {
+        let dir = temp_test_dir("preview-local-image");
+        fs::write(dir.join("photo.png"), b"not-a-real-png").unwrap();
+
+        let out = markdown_to_typst_preview("![alt](photo.png)\n", &dir.join("note.md")).0;
+
+        assert!(out.contains("#image(\"photo.png\", alt: \"alt\")"));
+        assert!(!out.contains("#link(\"photo.png\")"));
+    }
+
+    #[test]
+    fn preview_resolves_workspace_asset_image_from_parent_directory() {
+        let dir = temp_test_dir("preview-workspace-asset-image");
+        let docs_dir = dir.join("docs");
+        let assets_dir = dir.join("assets");
+        fs::create_dir_all(&docs_dir).unwrap();
+        fs::create_dir_all(&assets_dir).unwrap();
+        fs::write(assets_dir.join("photo.png"), b"not-a-real-png").unwrap();
+
+        let out = markdown_to_typst_preview("![photo.png](assets/photo.png)\n", &docs_dir.join("note.md")).0;
+
+        assert!(out.contains("#image(\"../assets/photo.png\", alt: \"photo.png\")"));
+        assert!(!out.contains("#link(\"assets/photo.png\")"));
     }
 
     // ── Citations ─────────────────────────────────────────────────────────────
