@@ -3,23 +3,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEditorStore, FileEntry, isRecentlyWritten } from "../../stores/editorStore";
 import { ContextMenu, type ContextMenuItem } from "../Layout/ContextMenu";
 import { getFileIconMeta } from "./fileIcons";
+import { getActiveDragSource, getFileDragMime, setActiveDragSource } from "./fileDrag";
 import "./FileTree.css";
 
 export interface FileTreeHandle {
   newFile: () => void;
   newFolder: () => void;
   refresh: () => void;
-}
-
-const DRAG_MIME = "application/x-type-studio-path";
-
-// WebKit hides custom MIME types from `dataTransfer.types` during dragover/drop,
-// so we track the active in-explorer drag source here instead.
-let activeDragSource: string | null = null;
-
-/** Exposed for the editor's drop handler to detect in-app file drags. */
-export function getActiveDragSource(): string | null {
-  return activeDragSource;
 }
 
 function setCustomDragImage(e: React.DragEvent, label: string, isDir: boolean) {
@@ -181,17 +171,18 @@ function DirNode({ path, name, depth, onRefreshParent, onSelectDir, onClearDirSe
 
   const onDragStart = (e: React.DragEvent) => {
     e.stopPropagation();
-    e.dataTransfer.setData(DRAG_MIME, path);
+    e.dataTransfer.setData(getFileDragMime(), path);
     e.dataTransfer.setData("text/plain", path);
     e.dataTransfer.effectAllowed = "move";
     setCustomDragImage(e, name, true);
-    activeDragSource = path;
+    setActiveDragSource(path);
   };
 
-  const onDragEnd = () => { activeDragSource = null; };
+  const onDragEnd = () => { setActiveDragSource(null); };
 
   const onDragOver = (e: React.DragEvent) => {
     const hasFiles = e.dataTransfer.types.includes("Files");
+    const activeDragSource = getActiveDragSource();
     if (!activeDragSource && !hasFiles) return;
     e.preventDefault();
     e.stopPropagation();
@@ -209,9 +200,9 @@ function DirNode({ path, name, depth, onRefreshParent, onSelectDir, onClearDirSe
       onOsDrop(e.dataTransfer.files, path);
       return;
     }
-    const src = activeDragSource ?? e.dataTransfer.getData(DRAG_MIME);
+    const src = getActiveDragSource() ?? e.dataTransfer.getData(getFileDragMime());
     if (!src) return;
-    activeDragSource = null;
+    setActiveDragSource(null);
     onRequestMove(src, path);
   };
 
@@ -395,14 +386,14 @@ function FileNode({ path, name, depth, onRefreshParent, highlighted, onClearDirS
 
   const onDragStart = (e: React.DragEvent) => {
     e.stopPropagation();
-    e.dataTransfer.setData(DRAG_MIME, path);
+    e.dataTransfer.setData(getFileDragMime(), path);
     e.dataTransfer.setData("text/plain", path);
-    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.effectAllowed = "copyMove";
     setCustomDragImage(e, name, false);
-    activeDragSource = path;
+    setActiveDragSource(path);
   };
 
-  const onDragEnd = () => { activeDragSource = null; };
+  const onDragEnd = () => { setActiveDragSource(null); };
 
   if (renamingTo !== null) {
     return (
@@ -738,6 +729,7 @@ function FileTree({ onOpenFolder }, ref) {
 
   const onBodyDragOver = (e: React.DragEvent) => {
     const hasFiles = e.dataTransfer.types.includes("Files");
+    const activeDragSource = getActiveDragSource();
     if (!activeDragSource && !hasFiles) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = activeDragSource ? "move" : "copy";
@@ -759,9 +751,9 @@ function FileTree({ onOpenFolder }, ref) {
       copyOsFilesInto(e.dataTransfer.files, dest);
       return;
     }
-    const src = activeDragSource ?? e.dataTransfer.getData(DRAG_MIME);
+    const src = getActiveDragSource() ?? e.dataTransfer.getData(getFileDragMime());
     if (!src) return;
-    activeDragSource = null;
+    setActiveDragSource(null);
     moveNode(src, workspacePath);
   };
 

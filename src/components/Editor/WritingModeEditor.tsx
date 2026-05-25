@@ -29,7 +29,7 @@ import { SlashMenu } from "./SlashMenu";
 import type { SlashCommand } from "./SlashMenu";
 import { SelectionToolbar } from "./SelectionToolbar";
 import { copyImageFilesToAssets } from "../../lib/utils";
-import { getActiveDragSource } from "../FileExplorer/FileTree";
+import { getActiveDragSource } from "../FileExplorer/fileDrag";
 import { linkClickPlugin } from "./linkClickPlugin";
 import { imageViewPlugin } from "./imageView";
 import { typewriterPlugin } from "./typewriterPlugin";

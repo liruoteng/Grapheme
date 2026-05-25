@@ -2,6 +2,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { X, ArrowDownToLine, Copy, Search } from "lucide-react";
 import { useEditorStore, type Reference } from "../../stores/editorStore";
+import { getActiveDragSource, getFileDragMime, setActiveDragSource } from "../FileExplorer/fileDrag";
 import "./ReferencesPanel.css";
 
 // ── BibTeX parser ─────────────────────────────────────────────────────────────
@@ -295,8 +296,35 @@ export function ReferencesPanel() {
     [addReference, workspacePath]
   );
 
+  const handleExplorerFile = useCallback(
+    async (path: string) => {
+      if (!path.toLowerCase().endsWith(".bib")) {
+        setErrMsg("Only .bib files can be imported from the explorer");
+        return;
+      }
+      setBusy(true);
+      setErrMsg(null);
+      try {
+        const text = await invoke<string>("read_file", { path });
+        const entries = parseBibtex(text);
+        if (entries.length === 0) {
+          setErrMsg(`No BibTeX entries found in ${path.split("/").pop() ?? path}`);
+          return;
+        }
+        for (const entry of entries) addReference(entry);
+      } catch (err) {
+        setErrMsg(String(err));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [addReference]
+  );
+
   const handleDragOver = useCallback((e: React.DragEvent) => {
-    if (!e.dataTransfer.types.includes("Files")) return;
+    const explorerPath = getActiveDragSource();
+    const canImportExplorerBib = explorerPath?.toLowerCase().endsWith(".bib") ?? false;
+    if (!e.dataTransfer.types.includes("Files") && !canImportExplorerBib) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "copy";
     setDropHover(true);
@@ -310,9 +338,16 @@ export function ReferencesPanel() {
     async (e: React.DragEvent) => {
       e.preventDefault();
       setDropHover(false);
-      await handleFiles(Array.from(e.dataTransfer.files ?? []));
+      const files = Array.from(e.dataTransfer.files ?? []);
+      if (files.length > 0) {
+        await handleFiles(files);
+        return;
+      }
+      const explorerPath = getActiveDragSource() || e.dataTransfer.getData(getFileDragMime()) || e.dataTransfer.getData("text/plain");
+      setActiveDragSource(null);
+      if (explorerPath) await handleExplorerFile(explorerPath);
     },
-    [handleFiles]
+    [handleExplorerFile, handleFiles]
   );
 
   const handleFileBrowse = useCallback(

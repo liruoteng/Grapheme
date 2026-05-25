@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fireEvent, render, waitFor } from "@testing-library/react";
+import { EditorSelection } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { invoke } from "@tauri-apps/api/core";
-import { getActiveDragSource } from "../FileExplorer/FileTree";
+import { getActiveDragSource } from "../FileExplorer/fileDrag";
 import { MarkdownWysiwygEditor } from "./MarkdownWysiwygEditor";
 import { useEditorStore } from "../../stores/editorStore";
 
@@ -16,8 +17,8 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(),
 }));
 
-vi.mock("../FileExplorer/FileTree", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../FileExplorer/FileTree")>();
+vi.mock("../FileExplorer/fileDrag", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../FileExplorer/fileDrag")>();
   return {
     ...actual,
     getActiveDragSource: vi.fn(() => null),
@@ -372,6 +373,75 @@ describe("MarkdownWysiwygEditor", () => {
     });
 
     expect(container.querySelector(".cm-md-image-render img")).toBe(img);
+  });
+
+  it("places the cursor before or after a rendered image from left and right clicks", async () => {
+    const source = "![Sample image](assets/photo.png)\n";
+    const path = "/workspace/examples/markdown/image.md";
+    useEditorStore.getState().openTab(path, "image.md", source);
+
+    const { container } = render(<MarkdownWysiwygEditor />);
+
+    let figure: HTMLElement | null = null;
+    await waitFor(() => {
+      figure = container.querySelector(".cm-md-image-render");
+      expect(figure).toBeInTheDocument();
+    });
+
+    const content = container.querySelector(".cm-content") as HTMLElement;
+    const view = EditorView.findFromDOM(content);
+    expect(view).toBeTruthy();
+    vi.spyOn(figure!, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: 200,
+      bottom: 100,
+      width: 200,
+      height: 100,
+      toJSON: () => ({}),
+    });
+
+    fireEvent.mouseDown(figure!, { clientX: 20 });
+    expect(view!.state.selection.main.from).toBe(0);
+
+    fireEvent.mouseDown(figure!, { clientX: 180 });
+    expect(view!.state.selection.main.from).toBe(source.trimEnd().length);
+  });
+
+  it("deletes a rendered image with Backspace and Delete at its edges", async () => {
+    const source = "![Sample image](assets/photo.png)\n";
+    const path = "/workspace/examples/markdown/image.md";
+    useEditorStore.getState().openTab(path, "image.md", source);
+
+    const { container } = render(<MarkdownWysiwygEditor />);
+
+    await waitFor(() => {
+      expect(container.querySelector(".cm-md-image-render")).toBeInTheDocument();
+    });
+
+    const content = container.querySelector(".cm-content") as HTMLElement;
+    const view = EditorView.findFromDOM(content);
+    expect(view).toBeTruthy();
+
+    view!.dispatch({ selection: EditorSelection.cursor(source.trimEnd().length) });
+    fireEvent.keyDown(content, { key: "Backspace" });
+
+    await waitFor(() => {
+      expect(useEditorStore.getState().activeTab()?.content).toBe("\n");
+    });
+
+    useEditorStore.getState().updateTabContent(path, source);
+    view!.dispatch({
+      changes: { from: 0, to: view!.state.doc.length, insert: source },
+      selection: EditorSelection.cursor(0),
+    });
+    fireEvent.keyDown(content, { key: "Delete" });
+
+    await waitFor(() => {
+      expect(useEditorStore.getState().activeTab()?.content).toBe("\n");
+    });
   });
 
   it("inserts markdown image syntax when an image is dragged from the file sidebar", async () => {

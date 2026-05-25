@@ -26,7 +26,7 @@ import {
 import type { DecorationSet } from "@codemirror/view";
 import { useEditorStore, type Reference } from "../../stores/editorStore";
 import { copyImageFilesToAssets } from "../../lib/utils";
-import { getActiveDragSource } from "../FileExplorer/FileTree";
+import { getActiveDragSource } from "../FileExplorer/fileDrag";
 import { SlashMenu, type SlashCommand } from "./SlashMenu";
 import { WidthHandle } from "./WidthHandle";
 import { normalizeTableDelimiterEscapes } from "./markdownEscapeUtil";
@@ -1574,6 +1574,13 @@ class MarkdownImageWidget extends WidgetType {
     figure.addEventListener("mousedown", (event) => {
       if ((event.target as HTMLElement).closest("button")) return;
       event.preventDefault();
+      const imageFrom = Number(figure.dataset.imageFrom);
+      const imageTo = Number(figure.dataset.imageTo);
+      if (Number.isFinite(imageFrom) && Number.isFinite(imageTo)) {
+        const rect = figure.getBoundingClientRect();
+        const pos = event.clientX < rect.left + rect.width / 2 ? imageFrom : imageTo;
+        view.dispatch({ selection: EditorSelection.cursor(pos), scrollIntoView: false });
+      }
       view.focus();
     });
 
@@ -2055,6 +2062,32 @@ function linkAtPosition(view: EditorView, pos: number) {
   return null;
 }
 
+function imageOnLineAtPosition(state: EditorState, pos: number) {
+  const doc = state.doc;
+  const safePos = Math.max(0, Math.min(pos, doc.length));
+  const line = doc.lineAt(safePos);
+  return imageAtLine(line.text, line.from);
+}
+
+function deleteImageAtCursor(view: EditorView, direction: "backward" | "forward") {
+  const selection = view.state.selection.main;
+  if (!selection.empty) return false;
+
+  const image = imageOnLineAtPosition(view.state, selection.from);
+  if (!image) return false;
+  const atDeleteEdge = direction === "backward"
+    ? selection.from === image.to
+    : selection.from === image.from;
+  if (!atDeleteEdge) return false;
+
+  view.dispatch({
+    changes: { from: image.from, to: image.to },
+    selection: EditorSelection.cursor(image.from),
+    scrollIntoView: true,
+  });
+  return true;
+}
+
 function externalInsertRange(view: EditorView, text: string) {
   const selection = view.state.selection.main;
   if (!selection.empty || !text.startsWith("\n")) {
@@ -2322,6 +2355,18 @@ function buildMarkdownDecorations(state: EditorState) {
   return Decoration.set(decorations, true);
 }
 
+function buildMarkdownImageAtomicRanges(state: EditorState) {
+  const ranges: Range<Decoration>[] = [];
+  const doc = state.doc;
+  const imageAtom = Decoration.mark({});
+  for (let lineNumber = 1; lineNumber <= doc.lines; lineNumber += 1) {
+    const line = doc.line(lineNumber);
+    const image = imageAtLine(line.text, line.from);
+    if (image) ranges.push(imageAtom.range(image.from, image.to));
+  }
+  return Decoration.set(ranges, true);
+}
+
 const markdownWysiwygDecorationField = StateField.define<DecorationSet>({
   create: buildMarkdownDecorations,
   update(value, transaction) {
@@ -2333,8 +2378,17 @@ const markdownWysiwygDecorationField = StateField.define<DecorationSet>({
   provide: (field) => EditorView.decorations.from(field),
 });
 
+const markdownImageAtomicRangeField = StateField.define<DecorationSet>({
+  create: buildMarkdownImageAtomicRanges,
+  update(value, transaction) {
+    if (transaction.docChanged) return buildMarkdownImageAtomicRanges(transaction.state);
+    return value;
+  },
+  provide: (field) => EditorView.atomicRanges.of((view) => view.state.field(field)),
+});
+
 function markdownWysiwygDecorations(): Extension {
-  return markdownWysiwygDecorationField;
+  return [markdownWysiwygDecorationField, markdownImageAtomicRangeField];
 }
 
 function CitationMenu({
@@ -2588,6 +2642,14 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
           onSnapshotRef.current?.(path);
           return true;
         },
+      },
+      {
+        key: "Backspace",
+        run: (view) => deleteImageAtCursor(view, "backward"),
+      },
+      {
+        key: "Delete",
+        run: (view) => deleteImageAtCursor(view, "forward"),
       },
       indentWithTab,
       ...defaultKeymap,

@@ -2,7 +2,7 @@ import { fireEvent, render, waitFor } from "@testing-library/react";
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MarkdownWysiwygEditor } from "../../src/components/Editor/MarkdownWysiwygEditor";
-import { getActiveDragSource } from "../../src/components/FileExplorer/FileTree";
+import { getActiveDragSource } from "../../src/components/FileExplorer/fileDrag";
 import { useEditorStore } from "../../src/stores/editorStore";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -14,8 +14,8 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(),
 }));
 
-vi.mock("../../src/components/FileExplorer/FileTree", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../src/components/FileExplorer/FileTree")>();
+vi.mock("../../src/components/FileExplorer/fileDrag", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/components/FileExplorer/fileDrag")>();
   return {
     ...actual,
     getActiveDragSource: vi.fn(() => null),
