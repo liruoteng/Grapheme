@@ -10,6 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tauri::menu::{AboutMetadata, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{Emitter, Manager};
 
@@ -499,6 +500,42 @@ pub struct PreviewError {
     pub message: String,
 }
 
+#[derive(Clone, Serialize)]
+pub struct PerfMetric {
+    pub name: String,
+    pub duration_ms: Option<f64>,
+    pub value: Option<f64>,
+    pub unit: Option<String>,
+    pub detail: Option<String>,
+    pub timestamp_ms: u128,
+}
+
+fn epoch_ms() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+}
+
+fn emit_perf_metric(
+    app_handle: &tauri::AppHandle,
+    name: &str,
+    duration: std::time::Duration,
+    detail: Option<String>,
+) {
+    let _ = app_handle.emit(
+        "perf-metric",
+        PerfMetric {
+            name: name.to_string(),
+            duration_ms: Some(duration.as_secs_f64() * 1000.0),
+            value: None,
+            unit: Some("ms".to_string()),
+            detail,
+            timestamp_ms: epoch_ms(),
+        },
+    );
+}
+
 /// For the hybrid markdown workflow: if `md_content` has `compile: <rel>` in
 /// its frontmatter, converts the markdown body to Typst (no preamble), writes
 /// it as a sibling `.typ` file, and returns the compile target path + content.
@@ -850,6 +887,27 @@ fn write_markdown_preview_source_fast(md_path: &str, md_content: &str) -> Result
     fs::write(preview_path, typst_content).map_err(|e| e.to_string())
 }
 
+fn validate_preview_sidecar_content_blocking(
+    path: String,
+    content: String,
+) -> Result<Option<String>, String> {
+    if is_markdown_path(Path::new(&path)) {
+        write_markdown_preview_source_fast(&path, &content)?;
+        let temp_path = md_preview_typ_path(&path);
+        let preview_source = fs::read_to_string(&temp_path).map_err(|e| e.to_string())?;
+        match validate_typst_source_quiet(&temp_path, &preview_source) {
+            Ok(()) => Ok(None),
+            Err(msg) => {
+                let fallback = markdown_preview_fallback_source(Path::new(&path), &content, &msg);
+                fs::write(&temp_path, fallback).map_err(|e| e.to_string())?;
+                Ok(Some(msg))
+            }
+        }
+    } else {
+        Ok(None)
+    }
+}
+
 #[cfg(test)]
 mod markdown_preview_tests {
     use super::*;
@@ -1048,9 +1106,11 @@ mod markdown_preview_tests {
         let md_path = dir.join("idle.md");
         let md = "# Idle validation\n\n```typst\n#let x =\n```\n\nStill visible.\n";
 
-        let diagnostic =
-            validate_preview_sidecar_content(md_path.to_string_lossy().to_string(), md.to_string())
-                .unwrap();
+        let diagnostic = validate_preview_sidecar_content_blocking(
+            md_path.to_string_lossy().to_string(),
+            md.to_string(),
+        )
+        .unwrap();
         let preview_path = md_preview_typ_path(&md_path.to_string_lossy());
         let source = fs::read_to_string(&preview_path).unwrap();
 
@@ -1075,8 +1135,11 @@ mod markdown_preview_tests {
         let md_path = dir.join("math.md");
         let md = fs::read_to_string(math_path).unwrap();
 
-        let diagnostic =
-            validate_preview_sidecar_content(md_path.to_string_lossy().to_string(), md).unwrap();
+        let diagnostic = validate_preview_sidecar_content_blocking(
+            md_path.to_string_lossy().to_string(),
+            md,
+        )
+        .unwrap();
         let preview_path = md_preview_typ_path(&md_path.to_string_lossy());
         let source = fs::read_to_string(&preview_path).unwrap();
 
@@ -1209,6 +1272,7 @@ async fn compile_actor(
         }
         let req = rx.borrow_and_update().clone();
         let Some(req) = req else { continue };
+        let compile_started_at = Instant::now();
 
         // Run Markdown conversion outside spawn_blocking so we can emit warnings.
         let (source_content, conv_warnings) = if is_markdown_path(Path::new(&req.path)) {
@@ -1285,9 +1349,21 @@ async fn compile_actor(
                         updates,
                     },
                 );
+                emit_perf_metric(
+                    &app_handle,
+                    "preview.compile",
+                    compile_started_at.elapsed(),
+                    Some(format!("pages={}", prev_hashes.len())),
+                );
             }
             Ok(Err(msg)) => {
                 let _ = app_handle.emit("preview-error", PreviewError { message: msg });
+                emit_perf_metric(
+                    &app_handle,
+                    "preview.compile",
+                    compile_started_at.elapsed(),
+                    Some("error".to_string()),
+                );
             }
             Err(e) => {
                 let _ = app_handle.emit(
@@ -1295,6 +1371,12 @@ async fn compile_actor(
                     PreviewError {
                         message: e.to_string(),
                     },
+                );
+                emit_perf_metric(
+                    &app_handle,
+                    "preview.compile",
+                    compile_started_at.elapsed(),
+                    Some("join-error".to_string()),
                 );
             }
         }
@@ -1364,6 +1446,7 @@ async fn start_sidecar_preview(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
+    let started_at = Instant::now();
     let tinymist = state.tinymist_path.lock().unwrap().clone();
     let sidecar = state.preview_sidecar.clone();
 
@@ -1379,10 +1462,17 @@ async fn start_sidecar_preview(
         );
         temp.to_string_lossy().to_string()
     } else {
-        path
+        path.clone()
     };
 
-    preview_sidecar::start(&sidecar, &tinymist, &input_path, &invert_colors).await
+    let result = preview_sidecar::start(&sidecar, &tinymist, &input_path, &invert_colors).await;
+    emit_perf_metric(
+        &app_handle,
+        "preview.sidecar-start",
+        started_at.elapsed(),
+        Some(if result.is_ok() { input_path } else { "error".to_string() }),
+    );
+    result
 }
 
 #[tauri::command]
@@ -1397,15 +1487,28 @@ async fn stop_sidecar_preview(state: tauri::State<'_, AppState>) -> Result<(), S
 /// recompiles automatically.
 /// For .typ files: no-op (auto-save handles writing to disk directly).
 #[tauri::command]
-async fn write_preview_sidecar_content(path: String, content: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
+async fn write_preview_sidecar_content(
+    path: String,
+    content: String,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    let started_at = Instant::now();
+    let detail = path.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
         if is_markdown_path(Path::new(&path)) {
             write_markdown_preview_source_fast(&path, &content)?;
         }
         Ok(())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    emit_perf_metric(
+        &app_handle,
+        "preview.markdown-write",
+        started_at.elapsed(),
+        Some(detail),
+    );
+    result
 }
 
 /// Debounced idle validation for Markdown sidecar preview content.
@@ -1413,26 +1516,25 @@ async fn write_preview_sidecar_content(path: String, content: String) -> Result<
 /// settles, so normal editing stays fast while broken generated Typst still
 /// gets a compilable recovered/fallback preview.
 #[tauri::command]
-async fn validate_preview_sidecar_content(path: String, content: String) -> Result<Option<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        if is_markdown_path(Path::new(&path)) {
-            write_markdown_preview_source_fast(&path, &content)?;
-            let temp_path = md_preview_typ_path(&path);
-            let preview_source = fs::read_to_string(&temp_path).map_err(|e| e.to_string())?;
-            match validate_typst_source_quiet(&temp_path, &preview_source) {
-                Ok(()) => Ok(None),
-                Err(msg) => {
-                    let fallback = markdown_preview_fallback_source(Path::new(&path), &content, &msg);
-                    fs::write(&temp_path, fallback).map_err(|e| e.to_string())?;
-                    Ok(Some(msg))
-                }
-            }
-        } else {
-            Ok(None)
-        }
+async fn validate_preview_sidecar_content(
+    path: String,
+    content: String,
+    app_handle: tauri::AppHandle,
+) -> Result<Option<String>, String> {
+    let started_at = Instant::now();
+    let detail = path.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        validate_preview_sidecar_content_blocking(path, content)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    emit_perf_metric(
+        &app_handle,
+        "preview.markdown-validate",
+        started_at.elapsed(),
+        Some(detail),
+    );
+    result
 }
 
 // ── export_pdf ─────────────────────────────────────────────────────────────
@@ -1443,8 +1545,10 @@ async fn validate_preview_sidecar_content(path: String, content: String) -> Resu
 fn export_pdf(
     path: String,
     dest_path: String,
+    app_handle: tauri::AppHandle,
     state: tauri::State<AppState>,
 ) -> Result<String, String> {
+    let started_at = Instant::now();
     let tinymist = resolve_tinymist(&state);
 
     let input_path = Path::new(&path);
@@ -1480,6 +1584,12 @@ fn export_pdf(
         let _ = fs::remove_file(&temp);
     }
 
+    let detail = if result.is_ok() {
+        Some(dest_path.clone())
+    } else {
+        Some("error".to_string())
+    };
+    emit_perf_metric(&app_handle, "export.pdf", started_at.elapsed(), detail);
     result?;
     Ok(dest_path)
 }
@@ -2084,6 +2194,8 @@ pub fn run() {
                     | "close-tab"
                     | "export-pdf"
                     | "import-latex"
+                    | "undo"
+                    | "redo"
                     | "toggle-sidebar"
                     | "toggle-preview"
                     | "toggle-outline"

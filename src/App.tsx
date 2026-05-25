@@ -27,8 +27,10 @@ import { TemplatePickerDialog } from "./components/Templates/TemplatePickerDialo
 import { AIChatPanel } from "./components/AI/AIChatPanel";
 import { PDFViewerPanel } from "./components/PdfViewer/PDFViewerPanel";
 import { ReferencesPanel } from "./components/References/ReferencesPanel";
+import { ProfilerPanel } from "./components/Profiler/ProfilerPanel";
 import { useEditorStore, markPathJustWritten } from "./stores/editorStore";
 import { usePreview, SaveEvent } from "./hooks/usePreview";
+import { markProfilerDuration } from "./lib/performanceProfiler";
 import "./App.css";
 
 export default function App() {
@@ -159,6 +161,7 @@ export default function App() {
       "5": "outline",
       "6": "pdf",
       "7": "bibliography",
+      "8": "profiler",
     };
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey)) return;
@@ -217,6 +220,7 @@ export default function App() {
 
   // ── Save: write file → mark clean → trigger preview compile ──────────────
   const handleSave = useCallback(async (path: string, content: string, isExplicit: boolean = false) => {
+    const saveStartedAt = performance.now();
     const tab = useEditorStore.getState().tabs.find((t) => t.path === path);
     if (isExplicit && tab?.isTemp) {
       try {
@@ -240,6 +244,8 @@ export default function App() {
         }
       } catch (e) {
         console.error("save new file error", e);
+      } finally {
+        markProfilerDuration("file.save", saveStartedAt, path);
       }
       return;
     }
@@ -260,16 +266,20 @@ export default function App() {
       }
     } catch (e) {
       console.error("save error", e);
+    } finally {
+      markProfilerDuration("file.save", saveStartedAt, path);
     }
   }, [markTabClean]);
 
   // ── Live preview: fire-and-forget to compile actor, results via events ──────
   const handlePreviewTrigger = useCallback((path: string, content: string) => {
+    const previewStartedAt = performance.now();
     // Markdown uses the tinymist sidecar: convert in-memory content to Typst
     // and write to the temp .preview.typ file. tinymist's file watcher detects
     // the change and recompiles automatically.
     if (path.endsWith(".md") || path.endsWith(".markdown")) {
       invoke("write_preview_sidecar_content", { path, content }).then(() => {
+        markProfilerDuration("preview.markdown-write", previewStartedAt, path);
         useEditorStore.getState().setPreviewError(null);
         if (previewValidationTimerRef.current) clearTimeout(previewValidationTimerRef.current);
         previewValidationTimerRef.current = setTimeout(() => {
@@ -285,9 +295,14 @@ export default function App() {
             });
         }, 800);
       }).catch((e) => {
+        markProfilerDuration("preview.markdown-write", previewStartedAt, path);
         console.error("write_preview_sidecar_content failed:", JSON.stringify(e), e);
         useEditorStore.getState().setPreviewError(String(e));
       });
+      return;
+    }
+    if (path.endsWith(".typ")) {
+      markProfilerDuration("preview.sidecar-watch", previewStartedAt, path);
       return;
     }
     // Typst — in-process compile path (e.g. for non-sidecar setups).
@@ -296,6 +311,8 @@ export default function App() {
       console.error("update_preview_source failed:", JSON.stringify(e), e);
       useEditorStore.getState().setPreviewError(String(e));
       useEditorStore.getState().setPreviewLoading(false);
+    }).finally(() => {
+      markProfilerDuration("preview.source-update", previewStartedAt, path);
     });
   }, []);
 
@@ -567,6 +584,7 @@ export default function App() {
                 outline: <TableOfContents />,
                 pdf: <PDFViewerPanel />,
                 bibliography: <ReferencesPanel />,
+                profiler: <ProfilerPanel />,
               }}
             />
           </div>
@@ -813,7 +831,11 @@ const PreviewPanelControls = memo(function PreviewPanelControls({
   const loading = useEditorStore((s) => s.previewLoading);
   const activeTabPath = useEditorStore((s) => s.activeTabPath);
   const compileStatus = useEditorStore((s) => s.compileStatus);
-  const isTypst = activeTabPath?.endsWith(".typ") ?? false;
+  const isPreviewable =
+    activeTabPath?.endsWith(".typ") ||
+    activeTabPath?.endsWith(".md") ||
+    activeTabPath?.endsWith(".markdown") ||
+    false;
 
   const handleRefresh = useCallback(async () => {
     const tab = useEditorStore.getState().activeTab();
@@ -824,6 +846,13 @@ const PreviewPanelControls = memo(function PreviewPanelControls({
       await invoke("write_file", { path: tab.path, contents: tab.content });
       useEditorStore.getState().markTabClean(tab.path);
       const { setPreviewLoading, setPreviewError } = useEditorStore.getState();
+      if (tabIsMd) {
+        await invoke("write_preview_sidecar_content", { path: tab.path, content: tab.content });
+        invoke<string | null>("validate_preview_sidecar_content", { path: tab.path, content: tab.content })
+          .then((diagnostic) => setPreviewError(diagnostic || null))
+          .catch((e: unknown) => setPreviewError(String(e)));
+        return;
+      }
       setPreviewLoading(true);
       invoke("trigger_preview_compile", { path: tab.path })
         .catch((e: unknown) => { setPreviewError(String(e)); setPreviewLoading(false); });
@@ -839,7 +868,7 @@ const PreviewPanelControls = memo(function PreviewPanelControls({
       <button
         className={`preview-run-btn preview-run-btn--${runStatus}`}
         onClick={handleRefresh}
-        disabled={loading || !isTypst}
+        disabled={loading || !isPreviewable}
         title="Recompile (Cmd+S also triggers this)"
       >
         {loading ? <RefreshCw size={12} className="spin" /> : <Play size={12} />}
@@ -847,7 +876,7 @@ const PreviewPanelControls = memo(function PreviewPanelControls({
       <button
         className="preview-icon-btn"
         onClick={onExportPdf}
-        disabled={!isTypst}
+        disabled={!isPreviewable}
         title="Export PDF"
       >
         <Download size={12} />

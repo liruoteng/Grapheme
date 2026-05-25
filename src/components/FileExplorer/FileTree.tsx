@@ -25,7 +25,12 @@ export function getActiveDragSource(): string | null {
 function setCustomDragImage(e: React.DragEvent, label: string, isDir: boolean) {
   const ghost = document.createElement("div");
   ghost.className = "drag-ghost";
-  ghost.innerHTML = `<span class="drag-ghost-icon">${isDir ? "▶" : "·"}</span><span>${label}</span>`;
+  const icon = document.createElement("span");
+  icon.className = "drag-ghost-icon";
+  icon.textContent = isDir ? "▶" : "·";
+  const text = document.createElement("span");
+  text.textContent = label;
+  ghost.append(icon, text);
   document.body.appendChild(ghost);
   if (typeof e.dataTransfer.setDragImage === "function") {
     e.dataTransfer.setDragImage(ghost, 12, 12);
@@ -607,7 +612,10 @@ function FileTree({ onOpenFolder }, ref) {
           }
         },
         { recursive: true }
-      ).then((stop) => { stopFn = stop; });
+      ).then((stop) => {
+        if (mounted) stopFn = stop;
+        else stop();
+      });
     });
 
     return () => {

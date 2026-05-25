@@ -268,13 +268,76 @@ function isExternalSrc(src: string) {
   return /^(https?:|data:|blob:|asset:)/i.test(src);
 }
 
-function resolveMarkdownAssetSrc(src: string) {
-  if (!src || isExternalSrc(src)) return src;
-  if (src.startsWith("/")) return convertFileSrc(src);
+function dirname(path: string) {
+  const slash = path.lastIndexOf("/");
+  return slash <= 0 ? "/" : path.slice(0, slash);
+}
 
-  const workspacePath = useEditorStore.getState().workspacePath;
-  if (!workspacePath) return src;
-  return convertFileSrc(`${workspacePath}/${src}`);
+function normalizePath(path: string) {
+  const absolute = path.startsWith("/");
+  const parts: string[] = [];
+  for (const part of path.split("/")) {
+    if (!part || part === ".") continue;
+    if (part === "..") {
+      if (parts.length > 0 && parts[parts.length - 1] !== "..") {
+        parts.pop();
+      } else if (!absolute) {
+        parts.push(part);
+      }
+      continue;
+    }
+    parts.push(part);
+  }
+  return `${absolute ? "/" : ""}${parts.join("/")}` || (absolute ? "/" : ".");
+}
+
+function relativePath(fromDir: string, toPath: string) {
+  const from = normalizePath(fromDir).split("/").filter(Boolean);
+  const to = normalizePath(toPath).split("/").filter(Boolean);
+  let common = 0;
+  while (common < from.length && common < to.length && from[common] === to[common]) {
+    common += 1;
+  }
+  return [...Array(from.length - common).fill(".."), ...to.slice(common)].join("/") || ".";
+}
+
+function activeMarkdownDir() {
+  const activePath = useEditorStore.getState().activeTabPath;
+  if (activePath) return dirname(activePath);
+  return useEditorStore.getState().workspacePath ?? "";
+}
+
+function ancestorDirs(path: string) {
+  const dirs: string[] = [];
+  let current = normalizePath(path);
+  while (current) {
+    dirs.push(current);
+    if (current === "/") break;
+    current = dirname(current);
+  }
+  return dirs;
+}
+
+function uniqueValues(values: string[]) {
+  return [...new Set(values)];
+}
+
+function markdownAssetSrcCandidates(src: string) {
+  if (!src || isExternalSrc(src)) return [src];
+  if (src.startsWith("/")) return [convertFileSrc(src)];
+
+  const baseDir = activeMarkdownDir();
+  if (!baseDir) return [src];
+  return uniqueValues(
+    ancestorDirs(baseDir).map((dir) => convertFileSrc(normalizePath(`${dir}/${src}`)))
+  );
+}
+
+function markdownImagePathForFile(path: string) {
+  if (!path.startsWith("/")) return path;
+  const baseDir = activeMarkdownDir();
+  if (!baseDir) return path;
+  return relativePath(baseDir, path);
 }
 
 function snippetOffset(snippet: string, offset: number) {
@@ -1418,6 +1481,47 @@ class MarkdownImageWidget extends WidgetType {
       this.image.title === other.image.title;
   }
 
+  updateDOM(dom: HTMLElement): boolean {
+    this.updateFigure(dom, this.image);
+    return true;
+  }
+
+  private updateFigure(figure: HTMLElement, image: MarkdownImage) {
+    figure.dataset.imageFrom = String(image.from);
+    figure.dataset.imageTo = String(image.to);
+    figure.dataset.imageSrc = image.src;
+
+    const candidates = markdownAssetSrcCandidates(image.src);
+    const nextCandidates = JSON.stringify(candidates);
+    const img = figure.querySelector("img");
+    if (img) {
+      if (figure.dataset.imageSrcCandidates !== nextCandidates) {
+        figure.dataset.imageSrcCandidates = nextCandidates;
+        figure.dataset.imageSrcIndex = "0";
+        img.src = candidates[0];
+      }
+      img.alt = image.alt;
+      img.title = image.title || image.alt || image.src;
+    }
+
+    const broken = figure.querySelector(".cm-md-image-broken");
+    if (broken) {
+      broken.textContent = image.src ? `Image not found: ${image.src}` : "Image path is empty";
+    }
+
+    let caption = figure.querySelector(".cm-md-image-caption");
+    if (image.alt) {
+      if (!caption) {
+        caption = document.createElement("figcaption");
+        caption.className = "cm-md-image-caption";
+        figure.appendChild(caption);
+      }
+      caption.textContent = image.alt;
+    } else {
+      caption?.remove();
+    }
+  }
+
   toDOM(view: EditorView) {
     const figure = document.createElement("figure");
     figure.className = "cm-md-image-render";
@@ -1431,9 +1535,12 @@ class MarkdownImageWidget extends WidgetType {
     edit.addEventListener("mousedown", (event) => event.preventDefault());
     edit.addEventListener("click", (event) => {
       event.preventDefault();
+      const imageFrom = Number(figure.dataset.imageFrom);
+      const imageTo = Number(figure.dataset.imageTo);
+      if (!Number.isFinite(imageFrom) || !Number.isFinite(imageTo)) return;
       view.dispatch({
-        effects: editImageSourceEffect.of({ from: this.image.from, to: this.image.to }),
-        selection: EditorSelection.range(this.image.from, this.image.to),
+        effects: editImageSourceEffect.of({ from: imageFrom, to: imageTo }),
+        selection: EditorSelection.range(imageFrom, imageTo),
         scrollIntoView: false,
       });
       view.focus();
@@ -1442,10 +1549,15 @@ class MarkdownImageWidget extends WidgetType {
     figure.appendChild(actions);
 
     const img = document.createElement("img");
-    img.src = resolveMarkdownAssetSrc(this.image.src);
-    img.alt = this.image.alt;
-    img.title = this.image.title || this.image.alt || this.image.src;
     img.addEventListener("error", () => {
+      const imageSrcCandidates = JSON.parse(figure.dataset.imageSrcCandidates ?? "[]") as string[];
+      const imageSrcIndex = Number(figure.dataset.imageSrcIndex ?? "0");
+      if (imageSrcIndex < imageSrcCandidates.length - 1) {
+        const nextImageSrcIndex = imageSrcIndex + 1;
+        figure.dataset.imageSrcIndex = String(nextImageSrcIndex);
+        img.src = imageSrcCandidates[nextImageSrcIndex];
+        return;
+      }
       figure.classList.add("cm-md-image-render--broken");
       view.requestMeasure();
     });
@@ -1457,15 +1569,7 @@ class MarkdownImageWidget extends WidgetType {
 
     const broken = document.createElement("figcaption");
     broken.className = "cm-md-image-broken";
-    broken.textContent = this.image.src ? `Image not found: ${this.image.src}` : "Image path is empty";
     figure.appendChild(broken);
-
-    if (this.image.alt) {
-      const caption = document.createElement("figcaption");
-      caption.className = "cm-md-image-caption";
-      caption.textContent = this.image.alt;
-      figure.appendChild(caption);
-    }
 
     figure.addEventListener("mousedown", (event) => {
       if ((event.target as HTMLElement).closest("button")) return;
@@ -1473,6 +1577,7 @@ class MarkdownImageWidget extends WidgetType {
       view.focus();
     });
 
+    this.updateFigure(figure, this.image);
     return figure;
   }
 }
@@ -2572,7 +2677,10 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
           event.preventDefault();
           event.stopPropagation();
           copyImageFilesToAssets(imageFiles, workspacePath)
-            .then((names) => insertImageMarkdown(view, names.map((name) => `assets/${name}`), dropPos))
+            .then((names) => {
+              const paths = names.map((name) => markdownImagePathForFile(`${workspacePath}/assets/${name}`));
+              insertImageMarkdown(view, paths, dropPos);
+            })
             .catch((err: unknown) => console.error("image drop error", err));
           return true;
         }
@@ -2581,10 +2689,7 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
         if (dragPath && /\.(png|jpg|jpeg|gif|svg|webp|bmp)$/i.test(dragPath)) {
           event.preventDefault();
           event.stopPropagation();
-          const relativePath = dragPath.startsWith(workspacePath)
-            ? dragPath.slice(workspacePath.length + 1)
-            : dragPath;
-          insertImageMarkdown(view, [relativePath], dropPos);
+          insertImageMarkdown(view, [markdownImagePathForFile(dragPath)], dropPos);
           return true;
         }
 
