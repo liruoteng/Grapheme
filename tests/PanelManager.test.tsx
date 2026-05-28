@@ -35,7 +35,7 @@ describe("PanelManager", () => {
     expect(screen.getByText("Editor content")).toBeInTheDocument();
   });
 
-  it("stops row resizing if the mouseup is missed", () => {
+  it("stops row resizing if pointer release is missed", () => {
     useEditorStore.setState({
       activePanels: ["editor", "preview"],
       panelLayout: "vertical",
@@ -45,14 +45,14 @@ describe("PanelManager", () => {
     const handle = container.querySelector(".pm-row-handle");
 
     expect(handle).toBeInTheDocument();
-    fireEvent.mouseDown(handle!, { clientY: 100, buttons: 1 });
+    fireEvent.pointerDown(handle!, { clientY: 100, buttons: 1, pointerId: 1 });
     expect(document.body).toHaveClass("pm-resizing-row");
 
-    fireEvent.mouseMove(window, { clientY: 120, buttons: 0 });
+    fireEvent.pointerMove(window, { clientY: 120, buttons: 0, pointerId: 1 });
     expect(document.body).not.toHaveClass("pm-resizing-row");
   });
 
-  it("stops column resizing if the mouseup is missed", () => {
+  it("stops column resizing if pointer release is missed", () => {
     useEditorStore.setState({
       activePanels: ["editor", "preview"],
       panelLayout: "horizontal",
@@ -62,10 +62,10 @@ describe("PanelManager", () => {
     const handle = container.querySelector(".pm-col-handle");
 
     expect(handle).toBeInTheDocument();
-    fireEvent.mouseDown(handle!, { clientX: 100, buttons: 1 });
+    fireEvent.pointerDown(handle!, { clientX: 100, buttons: 1, pointerId: 1 });
     expect(document.body).toHaveClass("pm-resizing-col");
 
-    fireEvent.mouseMove(window, { clientX: 120, buttons: 0 });
+    fireEvent.pointerMove(window, { clientX: 120, buttons: 0, pointerId: 1 });
     expect(document.body).not.toHaveClass("pm-resizing-col");
   });
 });

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { createRef } from "react";
 
 const invokeMock = vi.fn();
 
@@ -15,7 +16,7 @@ vi.mock("@tauri-apps/plugin-fs", () => ({
   watch: () => Promise.resolve(() => {}),
 }));
 
-import { FileTree } from "./FileTree";
+import { FileTree, type FileTreeHandle } from "./FileTree";
 import { getFileIconMeta } from "./fileIcons";
 import { useEditorStore } from "../../stores/editorStore";
 
@@ -90,6 +91,18 @@ describe("FileTree DnD", () => {
     // Allow any pending promise microtasks to drain
     await new Promise((r) => setTimeout(r, 0));
     expect(invokeMock).not.toHaveBeenCalledWith("rename_path", expect.anything());
+  });
+
+  it("aligns the new-file input with file labels", async () => {
+    const ref = createRef<FileTreeHandle>();
+    const { container } = render(<FileTree ref={ref} onOpenFolder={() => {}} />);
+    await waitFor(() => expect(screen.getByText("a.typ")).toBeInTheDocument());
+
+    ref.current?.newFile();
+
+    const input = await screen.findByPlaceholderText("filename.typ");
+    expect(input.closest(".new-item-row")?.querySelector(".new-item-icon-spacer")).toBeInTheDocument();
+    expect(container.querySelector(".tree-label")).toBeInTheDocument();
   });
 });
 

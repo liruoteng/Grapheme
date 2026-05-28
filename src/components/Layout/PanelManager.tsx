@@ -104,12 +104,12 @@ function Panel({ id, idx, label, isTopRight, isSideBySide, titleSuffix, headerEx
 }
 
 // ── Resize handles ────────────────────────────────────────────────────────────
-function RowHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => void }) {
-  return <div className="pm-row-handle" onMouseDown={onMouseDown} />;
+function RowHandle({ onPointerDown }: { onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void }) {
+  return <div className="pm-row-handle" onPointerDown={onPointerDown} />;
 }
 
-function ColHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => void }) {
-  return <div className="pm-col-handle" onMouseDown={onMouseDown} />;
+function ColHandle({ onPointerDown }: { onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void }) {
+  return <div className="pm-col-handle" onPointerDown={onPointerDown} />;
 }
 
 // ── Panel selector dropdown ───────────────────────────────────────────────────
@@ -233,8 +233,9 @@ export function PanelManager({ contents, headerExtras, headerExtrasLeft, titleSu
 
   // Returns a mousedown handler that resizes the two flex items above/below a row handle.
   const rowResizer = (topId: string, botId: string, colRef: RefObject<HTMLDivElement | null>) =>
-    (e: React.MouseEvent) => {
+    (e: React.PointerEvent<HTMLDivElement>) => {
       e.preventDefault();
+      e.currentTarget.setPointerCapture?.(e.pointerId);
       const y0   = e.clientY;
       const h    = colRef.current?.getBoundingClientRect().height ?? 600;
       const top0 = sz(topId);
@@ -245,12 +246,12 @@ export function PanelManager({ contents, headerExtras, headerExtrasLeft, titleSu
         if (!isResizing) return;
         isResizing = false;
         document.body.classList.remove("pm-resizing-row");
-        window.removeEventListener("mousemove", move);
-        window.removeEventListener("mouseup", stop);
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", stop);
+        window.removeEventListener("pointercancel", stop);
         window.removeEventListener("blur", stop);
-        document.removeEventListener("mouseup", stop);
       };
-      const move = (ev: MouseEvent) => {
+      const move = (ev: PointerEvent) => {
         if (ev.buttons === 0) {
           stop();
           return;
@@ -263,14 +264,15 @@ export function PanelManager({ contents, headerExtras, headerExtrasLeft, titleSu
         }));
       };
       document.body.classList.add("pm-resizing-row");
-      window.addEventListener("mousemove", move);
-      window.addEventListener("mouseup", stop);
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", stop);
+      window.addEventListener("pointercancel", stop);
       window.addEventListener("blur", stop);
-      document.addEventListener("mouseup", stop);
     };
 
-  const handleColResize = useCallback((e: React.MouseEvent) => {
+  const handleColResize = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
+    e.currentTarget.setPointerCapture?.(e.pointerId);
     const x0  = e.clientX;
     const w   = rowRef.current?.getBoundingClientRect().width ?? 800;
     const fr0 = colFr;
@@ -279,12 +281,12 @@ export function PanelManager({ contents, headerExtras, headerExtrasLeft, titleSu
       if (!isResizing) return;
       isResizing = false;
       document.body.classList.remove("pm-resizing-col");
-      window.removeEventListener("mousemove", move);
-      window.removeEventListener("mouseup", stop);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
       window.removeEventListener("blur", stop);
-      document.removeEventListener("mouseup", stop);
     };
-    const move = (ev: MouseEvent) => {
+    const move = (ev: PointerEvent) => {
       if (ev.buttons === 0) {
         stop();
         return;
@@ -292,10 +294,10 @@ export function PanelManager({ contents, headerExtras, headerExtrasLeft, titleSu
       setColFr(Math.max(0.1, Math.min(0.9, fr0 + (ev.clientX - x0) / w)));
     };
     document.body.classList.add("pm-resizing-col");
-    window.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", stop);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
     window.addEventListener("blur", stop);
-    document.addEventListener("mouseup", stop);
   }, [colFr]);
 
   // ── Layout computation ────────────────────────────────────────────────────
@@ -339,7 +341,7 @@ export function PanelManager({ contents, headerExtras, headerExtrasLeft, titleSu
         <div ref={singleColRef} className="pm-flex-col">
           {activePanels.map((id, i) => (
             <Fragment key={id}>
-              {i > 0 && <RowHandle key={`h${i}`} onMouseDown={rowResizer(activePanels[i - 1], id, singleColRef)} />}
+              {i > 0 && <RowHandle key={`h${i}`} onPointerDown={rowResizer(activePanels[i - 1], id, singleColRef)} />}
               {makePanel(id, i, i === 0, n === 1)}
             </Fragment>
           ))}
@@ -367,20 +369,20 @@ export function PanelManager({ contents, headerExtras, headerExtrasLeft, titleSu
           <div ref={leftColRef} className="pm-flex-col" style={{ flex: `${colFr} 1 0`, minWidth: 0, overflow: "hidden" }}>
             {leftIds.map((id, i) => (
               <Fragment key={id}>
-                {i > 0 && <RowHandle key={`lh${i}`} onMouseDown={rowResizer(leftIds[i - 1], id, leftColRef)} />}
+                {i > 0 && <RowHandle key={`lh${i}`} onPointerDown={rowResizer(leftIds[i - 1], id, leftColRef)} />}
                 {makePanel(id, activePanels.indexOf(id), false, false)}
               </Fragment>
             ))}
           </div>
 
           {/* Column resize handle */}
-          <ColHandle onMouseDown={handleColResize} />
+          <ColHandle onPointerDown={handleColResize} />
 
           {/* Right column */}
           <div ref={rightColRef} className="pm-flex-col" style={{ flex: `${1 - colFr} 1 0`, minWidth: 0, overflow: "hidden" }}>
             {rightIds.map((id, i) => (
               <Fragment key={id}>
-                {i > 0 && <RowHandle key={`rh${i}`} onMouseDown={rowResizer(rightIds[i - 1], id, rightColRef)} />}
+                {i > 0 && <RowHandle key={`rh${i}`} onPointerDown={rowResizer(rightIds[i - 1], id, rightColRef)} />}
                 {makePanel(id, activePanels.indexOf(id), i === 0, false)}
               </Fragment>
             ))}
@@ -390,7 +392,7 @@ export function PanelManager({ contents, headerExtras, headerExtrasLeft, titleSu
         {/* Wide panel at bottom (n=3 or n=5) */}
         {wideId && (
           <Fragment key={wideId}>
-            <RowHandle onMouseDown={rowResizer("__top__", wideId, outerRef)} />
+            <RowHandle onPointerDown={rowResizer("__top__", wideId, outerRef)} />
             {makePanel(wideId, activePanels.indexOf(wideId), false, true)}
           </Fragment>
         )}

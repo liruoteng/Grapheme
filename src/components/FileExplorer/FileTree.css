@@ -44,6 +44,15 @@
   min-width: 0;
 }
 
+.new-item-input--rename {
+  margin-left: -3px;
+}
+
+.new-item-icon-spacer {
+  visibility: hidden;
+  margin-right: -8px;
+}
+
 .file-tree-body {
   flex: 1;
   overflow-y: auto;

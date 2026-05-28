@@ -280,6 +280,7 @@
   cursor: row-resize;
   position: relative;
   z-index: 5;
+  touch-action: none;
 }
 .pm-row-handle::after {
   content: "";
@@ -305,6 +306,7 @@
   cursor: col-resize;
   position: relative;
   z-index: 5;
+  touch-action: none;
 }
 .pm-col-handle::after {
   content: "";
@@ -342,7 +344,7 @@ body.pm-resizing-row * { cursor: row-resize !important; user-select: none !impor
   border-radius: 10px;
   margin: 2px;
   border: 1px solid var(--border);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 0 0 1px rgba(0, 0, 0, 0.02);
+  border-bottom-color: transparent;
 }
 
 .pm-panel--dragging {

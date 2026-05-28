@@ -216,7 +216,7 @@ function DirNode({ path, name, depth, onRefreshParent, onSelectDir, onClearDirSe
           <span className="dir-arrow">▶</span>
           <input
             ref={renameInputRef}
-            className="new-item-input"
+            className="new-item-input new-item-input--rename"
             value={renamingTo}
             onChange={(e) => setRenamingTo(e.target.value)}
             onKeyDown={(e) => {
@@ -404,7 +404,7 @@ function FileNode({ path, name, depth, onRefreshParent, highlighted, onClearDirS
         <FileIcon name={renamingTo || name} isDir={false} />
         <input
           ref={renameInputRef}
-          className="new-item-input"
+          className="new-item-input new-item-input--rename"
           value={renamingTo}
           onChange={(e) => setRenamingTo(e.target.value)}
           onKeyDown={(e) => {
@@ -450,7 +450,7 @@ function InlineCreateInput({ pendingCreate, depth }: { pendingCreate: PendingCre
   useEffect(() => { inputRef.current?.focus(); }, []);
   return (
     <div className="new-item-row tree-row" style={{ paddingLeft: `${depth * 12 + 8}px` }}>
-      <FileIcon name={pendingCreate.type === "folder" ? "/" : pendingCreate.name || "file"} isDir={pendingCreate.type === "folder"} />
+      <span className="file-icon new-item-icon-spacer" aria-hidden />
       <input
         ref={inputRef}
         className="new-item-input"

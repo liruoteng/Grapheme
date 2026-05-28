@@ -51,9 +51,12 @@
   background: transparent;
 }
 
-.markdown-wysiwyg .cm-selectionBackground,
-.markdown-wysiwyg .cm-content ::selection {
+.markdown-wysiwyg .cm-selectionBackground {
   background: rgba(139, 92, 246, 0.28) !important;
+}
+
+.markdown-wysiwyg .cm-content ::selection {
+  background: transparent !important;
 }
 
 .markdown-wysiwyg .cm-focused {
@@ -1004,7 +1007,10 @@
   display: block;
 }
 
-[data-theme="claude"] .markdown-wysiwyg .cm-selectionBackground,
-[data-theme="claude"] .markdown-wysiwyg .cm-content ::selection {
+[data-theme="claude"] .markdown-wysiwyg .cm-selectionBackground {
   background: rgba(124, 58, 237, 0.15) !important;
+}
+
+[data-theme="claude"] .markdown-wysiwyg .cm-content ::selection {
+  background: transparent !important;
 }
