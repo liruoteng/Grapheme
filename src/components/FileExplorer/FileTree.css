@@ -50,7 +50,7 @@
 
 .new-item-icon-spacer {
   visibility: hidden;
-  margin-right: -8px;
+  margin-right: -3px;
 }
 
 .file-tree-body {
@@ -141,11 +141,15 @@
 
 /* Directory */
 .dir-arrow {
-  font-size: 8px;
+  font-size: 10px;
   color: var(--text-secondary);
   transition: transform 0.15s;
   transform: rotate(0deg);
   flex-shrink: 0;
+  width: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .dir-arrow.open { transform: rotate(90deg); }
 
