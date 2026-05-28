@@ -289,6 +289,7 @@ pub fn markdown_to_typst(content: &str) -> (String, Vec<String>) {
             typst_citations: true,
             preview_safe: false,
             image_base_dir: None,
+            footnotes: HashMap::new(),
         },
     )
 }
@@ -305,6 +306,7 @@ pub fn markdown_to_typst_preview(content: &str, md_path: &Path) -> (String, Vec<
             typst_citations: false,
             preview_safe: true,
             image_base_dir,
+            footnotes: HashMap::new(),
         },
     )
 }
@@ -314,14 +316,17 @@ struct MarkdownOptions {
     typst_citations: bool,
     preview_safe: bool,
     image_base_dir: Option<PathBuf>,
+    footnotes: HashMap<String, String>,
 }
 
 fn markdown_to_typst_with_options(
     content: &str,
-    options: MarkdownOptions,
+    mut options: MarkdownOptions,
 ) -> (String, Vec<String>) {
     let (body, _) = strip_front_matter(content);
-    let expanded = expand_references(body);
+    let (body_without_footnotes, footnotes) = extract_footnotes(body);
+    options.footnotes = footnotes;
+    let expanded = expand_references(&body_without_footnotes);
     let content = expanded.as_str();
     let mut out = String::with_capacity(content.len());
     let mut warnings: Vec<String> = Vec::new();
@@ -694,6 +699,55 @@ fn leading_whitespace(line: &str) -> &str {
         .find_map(|(idx, ch)| if ch.is_whitespace() { None } else { Some(idx) })
         .unwrap_or(line.len());
     &line[..end]
+}
+
+fn parse_footnote_def(line: &str) -> Option<(String, String)> {
+    let trimmed = line.trim_start();
+    if line.len() - trimmed.len() > 3 || !trimmed.starts_with("[^") {
+        return None;
+    }
+
+    let label_end = trimmed.find("]:")?;
+    let label = trimmed[2..label_end].trim();
+    if label.is_empty() {
+        return None;
+    }
+
+    Some((
+        label.to_lowercase(),
+        trimmed[label_end + 2..].trim_start().to_string(),
+    ))
+}
+
+fn extract_footnotes(content: &str) -> (String, HashMap<String, String>) {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut out = String::with_capacity(content.len());
+    let mut footnotes = HashMap::new();
+    let mut i = 0;
+
+    while i < lines.len() {
+        if let Some((label, first_line)) = parse_footnote_def(lines[i]) {
+            let mut body = vec![first_line];
+            i += 1;
+            while i < lines.len() && (lines[i].starts_with("    ") || lines[i].starts_with('\t')) {
+                body.push(
+                    lines[i]
+                        .trim_start_matches('\t')
+                        .trim_start_matches("    ")
+                        .to_string(),
+                );
+                i += 1;
+            }
+            footnotes.insert(label, body.join("\n").trim().to_string());
+            continue;
+        }
+
+        out.push_str(lines[i]);
+        out.push('\n');
+        i += 1;
+    }
+
+    (out, footnotes)
 }
 
 fn collect_table<'a>(lines: &[&'a str], start: usize) -> (Vec<Vec<&'a str>>, usize) {
@@ -1887,6 +1941,21 @@ fn inline_with_options(text: &str, options: &MarkdownOptions) -> String {
             }
         }
 
+        // Footnote reference: [^label] -> #footnote[definition body]
+        if chars[i] == '[' && i + 1 < chars.len() && chars[i + 1] == '^' {
+            if let Some(close) = find_closing_char(&chars, i + 2, ']') {
+                let label: String = chars[i + 2..close].iter().collect();
+                let key = label.trim().to_lowercase();
+                if let Some(body) = options.footnotes.get(&key) {
+                    result.push_str("#footnote[");
+                    result.push_str(&inline_with_options(body, options));
+                    result.push(']');
+                    i = close + 1;
+                    continue;
+                }
+            }
+        }
+
         // Image: ![alt](url)
         if chars[i] == '!' && i + 1 < chars.len() && chars[i + 1] == '[' {
             if let Some((alt, url, end)) = parse_link(&chars, i + 1) {
@@ -2114,6 +2183,9 @@ fn parse_link(chars: &[char], start: usize) -> Option<(String, String, usize)> {
 fn parse_ref_def(line: &str) -> Option<(String, String)> {
     let line = line.trim();
     if !line.starts_with('[') {
+        return None;
+    }
+    if line.starts_with("[^") {
         return None;
     }
     let bracket_end = line.find("]:")?;
@@ -2627,6 +2699,36 @@ mod tests {
         let out = convert("See [@smith2020; @jones2021].\n");
         assert!(out.contains("@smith2020"), "got: {out}");
         assert!(out.contains("@jones2021"), "got: {out}");
+    }
+
+    // ── Footnotes ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn footnote_reference_renders_definition() {
+        let out = convert("Text with a note.[^1]\n\n[^1]: Footnote body\n");
+        assert!(
+            out.contains("Text with a note.#footnote[Footnote body]"),
+            "got: {out}"
+        );
+        assert!(!out.contains("[^1]"), "got: {out}");
+        assert!(!out.contains("[^1]:"), "got: {out}");
+    }
+
+    #[test]
+    fn preview_footnote_reference_renders_definition() {
+        let out = preview("Text with a note.[^1]\n\n[^1]: Footnote body\n");
+        assert!(out.contains("#footnote[Footnote body]"), "got: {out}");
+        assert!(!out.contains("[^1]:"), "got: {out}");
+    }
+
+    #[test]
+    fn footnote_definition_supports_indented_continuation() {
+        let out = convert("Text.[^long]\n\n[^long]: First line\n    second line\n");
+        assert!(
+            out.contains("#footnote[First line\nsecond line]"),
+            "got: {out}"
+        );
+        assert!(!out.contains("[^long]:"), "got: {out}");
     }
 
     // ── Inline math ───────────────────────────────────────────────────────────

@@ -1075,6 +1075,23 @@ mod markdown_preview_tests {
     }
 
     #[test]
+    fn fast_markdown_preview_compiles_footnotes() {
+        let dir = temp_test_dir("markdown-preview-footnotes");
+        let md_path = dir.join("footnotes.md");
+        let md = "Paragraph with a footnote.[^1]\n\n[^1]: Footnote body with *emphasis*.\n";
+
+        write_markdown_preview_source_fast(&md_path.to_string_lossy(), md).unwrap();
+        let preview_path = md_preview_typ_path(&md_path.to_string_lossy());
+        let source = fs::read_to_string(&preview_path).unwrap();
+
+        assert!(source.contains("#footnote["), "got: {source}");
+        assert!(!source.contains("[^1]:"), "got: {source}");
+        validate_typst_source(&preview_path, &source).unwrap();
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn fast_markdown_preview_compiles_latex_math_coverage() {
         let dir = temp_test_dir("markdown-preview-math-coverage");
         let md_path = dir.join("math-coverage.md");

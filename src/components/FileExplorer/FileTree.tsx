@@ -449,7 +449,7 @@ function InlineCreateInput({ pendingCreate, depth }: { pendingCreate: PendingCre
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => { inputRef.current?.focus(); }, []);
   return (
-    <div className="new-item-row" style={{ paddingLeft: `${depth * 12 + 8}px` }}>
+    <div className="new-item-row tree-row" style={{ paddingLeft: `${depth * 12 + 8}px` }}>
       <FileIcon name={pendingCreate.type === "folder" ? "/" : pendingCreate.name || "file"} isDir={pendingCreate.type === "folder"} />
       <input
         ref={inputRef}

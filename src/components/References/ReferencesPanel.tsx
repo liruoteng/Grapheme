@@ -70,12 +70,15 @@ function formatBibEntry(ref: Reference): string {
 
 // ── Add citation panel ────────────────────────────────────────────────────────
 
+type AddCitationMode = "closed" | "doi" | "manual";
+
 interface AddCitationPanelProps {
   onAdd: (ref: Omit<Reference, "id" | "addedAt">) => void;
+  mode: AddCitationMode;
+  onModeChange: (mode: AddCitationMode) => void;
 }
 
-function AddCitationPanel({ onAdd }: AddCitationPanelProps) {
-  const [mode, setMode] = useState<"closed" | "doi" | "manual">("closed");
+function AddCitationPanel({ onAdd, mode, onModeChange }: AddCitationPanelProps) {
   const [doi, setDoi] = useState("");
   const [doiLoading, setDoiLoading] = useState(false);
   const [doiErr, setDoiErr] = useState<string | null>(null);
@@ -108,13 +111,13 @@ function AddCitationPanel({ onAdd }: AddCitationPanelProps) {
         year: result.year || undefined,
       });
       setDoi("");
-      setMode("closed");
+      onModeChange("closed");
     } catch (e) {
       setDoiErr(String(e));
     } finally {
       setDoiLoading(false);
     }
-  }, [doi, onAdd]);
+  }, [doi, onAdd, onModeChange]);
 
   const handleManual = useCallback(() => {
     const key = manualKey.trim() || manualTitle.toLowerCase().replace(/\s+/g, "").slice(0, 20);
@@ -135,16 +138,11 @@ function AddCitationPanel({ onAdd }: AddCitationPanelProps) {
     setManualAuthors("");
     setManualYear("");
     setManualVenue("");
-    setMode("closed");
-  }, [manualKey, manualTitle, manualAuthors, manualYear, onAdd]);
+    onModeChange("closed");
+  }, [manualKey, manualTitle, manualAuthors, manualYear, onAdd, onModeChange]);
 
   if (mode === "closed") {
-    return (
-      <div className="ref-add-bar">
-        <button className="ref-add-btn" onClick={() => setMode("doi")}>+ DOI</button>
-        <button className="ref-add-btn" onClick={() => setMode("manual")}>+ Manual</button>
-      </div>
-    );
+    return null;
   }
 
   if (mode === "doi") {
@@ -152,7 +150,7 @@ function AddCitationPanel({ onAdd }: AddCitationPanelProps) {
       <div className="ref-add-form">
         <div className="ref-add-form-header">
           <span>Fetch by DOI</span>
-          <button className="ref-add-form-close" onClick={() => { setMode("closed"); setDoiErr(null); }}><X size={12} /></button>
+          <button className="ref-add-form-close" onClick={() => { onModeChange("closed"); setDoiErr(null); }}><X size={12} /></button>
         </div>
         <div className="ref-add-row">
           <input
@@ -176,7 +174,7 @@ function AddCitationPanel({ onAdd }: AddCitationPanelProps) {
     <div className="ref-add-form">
       <div className="ref-add-form-header">
         <span>Manual entry</span>
-          <button className="ref-add-form-close" onClick={() => setMode("closed")}><X size={12} /></button>
+          <button className="ref-add-form-close" onClick={() => onModeChange("closed")}><X size={12} /></button>
       </div>
       <input className="ref-add-input" placeholder="Citation key (e.g. smith2024)" value={manualKey} onChange={(e) => setManualKey(e.target.value)} />
       <input className="ref-add-input" placeholder="Title" value={manualTitle} onChange={(e) => setManualTitle(e.target.value)} />
@@ -217,6 +215,7 @@ export function ReferencesPanel() {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"all" | "cited" | "uncited">("all");
+  const [addMode, setAddMode] = useState<AddCitationMode>("closed");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const citedKeys = useMemo(() => {
@@ -437,9 +436,25 @@ export function ReferencesPanel() {
           <strong>Drop or choose reference papers</strong>
           <span>PDFs are saved to <code>references/</code>; .bib files are parsed</span>
         </div>
+        <div className="ref-add-bar" aria-label="Add reference">
+          <button
+            className={`ref-add-btn${addMode === "doi" ? " active" : ""}`}
+            onClick={(e) => { e.stopPropagation(); setAddMode("doi"); }}
+            type="button"
+          >
+            DOI Fetch
+          </button>
+          <button
+            className={`ref-add-btn${addMode === "manual" ? " active" : ""}`}
+            onClick={(e) => { e.stopPropagation(); setAddMode("manual"); }}
+            type="button"
+          >
+            Manual
+          </button>
+        </div>
       </div>
 
-      <AddCitationPanel onAdd={addReference} />
+      <AddCitationPanel onAdd={addReference} mode={addMode} onModeChange={setAddMode} />
 
       <div className="references-tools">
         <label className="references-search">
@@ -491,14 +506,27 @@ export function ReferencesPanel() {
                 <span className={`reference-kind reference-kind--${ref.kind}`}>{ref.kind.toUpperCase()}</span>
                 {ref.bibKey && <span className="reference-key">@{ref.bibKey}</span>}
                 {ref.bibKey && citedKeys.has(ref.bibKey) && <span className="reference-cited">CITED</span>}
-                <button
-                  className="reference-card-remove"
-                  onClick={() => removeReference(ref.id)}
-                  title="Remove"
-                  aria-label="Remove"
-                >
-                  <X size={12} />
-                </button>
+                <div className="reference-card-actions">
+                  <button className="reference-action" onClick={() => insertCite(ref)} disabled={!ref.bibKey} title="Insert [@key] at cursor">
+                    Cite
+                  </button>
+                  <button className="reference-action" onClick={() => copyBibEntry(ref)} title="Copy BibTeX entry">
+                    {copiedKey === ref.id ? "Copied" : "BibTeX"}
+                  </button>
+                  {ref.kind === "pdf" && ref.path && (
+                    <button className="reference-action" onClick={() => openPdf(ref)} title="Open PDF">
+                      Open
+                    </button>
+                  )}
+                  <button
+                    className="reference-card-remove"
+                    onClick={() => removeReference(ref.id)}
+                    title="Remove"
+                    aria-label="Remove"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
               </div>
               <div className="reference-card-title" title={ref.title || ref.name}>
                 {ref.title || ref.name}
@@ -509,19 +537,6 @@ export function ReferencesPanel() {
                   {ref.year ? ` · ${ref.year}` : ""}
                 </div>
               )}
-              <div className="reference-card-actions">
-                <button className="reference-action" onClick={() => insertCite(ref)} disabled={!ref.bibKey} title="Insert [@key] at cursor">
-                  Cite
-                </button>
-                <button className="reference-action" onClick={() => copyBibEntry(ref)} title="Copy BibTeX entry">
-                  {copiedKey === ref.id ? "Copied" : "BibTeX"}
-                </button>
-                {ref.kind === "pdf" && ref.path && (
-                  <button className="reference-action" onClick={() => openPdf(ref)} title="Open PDF">
-                    Open
-                  </button>
-                )}
-              </div>
             </div>
           ))
         )}

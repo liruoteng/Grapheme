@@ -137,6 +137,10 @@ export default function App() {
     } catch {
       useEditorStore.getState().openTempTab(kind);
     }
+    const store = useEditorStore.getState();
+    if (!store.activePanels.includes("editor")) {
+      store.setActivePanels(["editor", ...store.activePanels].slice(0, 5));
+    }
   }, []);
 
   // ── Cmd+N — new untitled file ────────────────────────────────────────────
@@ -901,7 +905,7 @@ function WelcomeScreen({ onNewFile, onOpenFolder }: { onNewFile: (kind?: "typ" |
     <div className="welcome-screen">
       <div className="welcome-inner">
         <h1 className="welcome-title">Grapheme</h1>
-        <p className="welcome-subtitle">A Typst writing environment</p>
+        <p className="welcome-subtitle">Welcome back. What would you like to write today?</p>
         <div className="welcome-actions">
           <button className="welcome-action" onClick={() => onNewFile("typ")}>
             <span className="welcome-action-icon"><Plus size={16} /></span>

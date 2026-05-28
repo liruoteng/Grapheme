@@ -66,6 +66,34 @@ describe("MarkdownWysiwygEditor", () => {
     });
   });
 
+  it("shows inline markdown syntax at decorated text boundaries", async () => {
+    const source = "**bold**\n";
+    const path = "/workspace/examples/markdown/bold.md";
+    useEditorStore.getState().openTab(path, "bold.md", source);
+
+    const { container } = render(<MarkdownWysiwygEditor />);
+
+    const content = await waitFor(() => {
+      const element = container.querySelector(".cm-content") as HTMLElement | null;
+      expect(element).toBeInTheDocument();
+      return element!;
+    });
+    const view = EditorView.findFromDOM(content);
+    expect(view).toBeTruthy();
+
+    view!.dispatch({ selection: EditorSelection.cursor(0) });
+
+    await waitFor(() => {
+      expect(container.querySelector(".cm-md-marker--active")).toBeInTheDocument();
+    });
+
+    view!.dispatch({ selection: EditorSelection.cursor(source.trimEnd().length) });
+
+    await waitFor(() => {
+      expect(container.querySelector(".cm-md-marker--active")).toBeInTheDocument();
+    });
+  });
+
   it("syntax highlights active LaTeX math source", async () => {
     const path = "/workspace/examples/markdown/math.md";
     useEditorStore.getState().openTab(path, "math.md", "$\\frac{a}{b} + \\alpha$\n");
@@ -312,6 +340,18 @@ describe("MarkdownWysiwygEditor", () => {
 
     expect(container.querySelector(".cm-md-image-render")).toBeInTheDocument();
     expect(container.querySelector(".cm-md-image-source")).not.toBeInTheDocument();
+  });
+
+  it("renders footnote references and definitions in WYSIWYG mode", async () => {
+    const path = "/workspace/examples/markdown/footnotes.md";
+    useEditorStore.getState().openTab(path, "footnotes.md", "Text with a note.[^1]\n\n[^1]: Footnote body\n");
+
+    const { container } = render(<MarkdownWysiwygEditor />);
+
+    await waitFor(() => {
+      expect(container.querySelector(".cm-md-footnote-ref")).toHaveTextContent("1");
+      expect(container.querySelector(".cm-md-footnote-def")).toHaveTextContent("Footnote body");
+    });
   });
 
   it("shows markdown image source only from the edit source button", async () => {

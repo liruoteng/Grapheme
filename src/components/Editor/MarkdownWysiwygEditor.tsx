@@ -157,6 +157,13 @@ type MarkdownFrontmatter = {
   rows: Array<{ key: string; value: string }>;
 };
 
+type MarkdownFootnoteDefinition = {
+  from: number;
+  to: number;
+  label: string;
+  value: string;
+};
+
 type CitationOption = {
   key: string;
   label: string;
@@ -356,7 +363,7 @@ function inlineMarkerActive(markers: InlineRange[], cursorFrom: number, cursorTo
   if (cursorFrom !== cursorTo) {
     return markers.some((marker) => cursorFrom === marker.from && cursorTo === marker.to);
   }
-  return markers.some((marker) => cursorTo > marker.from && cursorFrom < marker.to);
+  return markers.some((marker) => cursorTo >= marker.from && cursorFrom <= marker.to);
 }
 
 function rangeActive(range: InlineRange, cursorFrom: number, cursorTo: number, selectionEmpty: boolean) {
@@ -580,6 +587,29 @@ function frontmatterAtTop(source: MarkdownDocSource): MarkdownFrontmatter | null
     to: close.to,
     value,
     rows,
+  };
+}
+
+function footnoteDefinitionAt(source: MarkdownDocSource, lineNumber: number): MarkdownFootnoteDefinition | null {
+  const doc = markdownDoc(source);
+  const openLine = doc.line(lineNumber);
+  const match = openLine.text.match(/^(\s{0,3})\[\^([^\]\n]+)\]:[ \t]?(.*)$/);
+  if (!match) return null;
+
+  const lines = [match[3]];
+  let lastLine = openLine;
+  for (let nextLineNumber = lineNumber + 1; nextLineNumber <= doc.lines; nextLineNumber += 1) {
+    const line = doc.line(nextLineNumber);
+    if (!/^(?: {4}|\t)/.test(line.text)) break;
+    lines.push(line.text.replace(/^(?: {4}|\t)/, ""));
+    lastLine = line;
+  }
+
+  return {
+    from: openLine.from,
+    to: lastLine.to,
+    label: match[2].trim(),
+    value: lines.join("\n").trim(),
   };
 }
 
@@ -1618,6 +1648,72 @@ class CitationWidget extends WidgetType {
   }
 }
 
+class FootnoteReferenceWidget extends WidgetType {
+  constructor(
+    private readonly label: string,
+    private readonly from: number,
+    private readonly to: number,
+  ) {
+    super();
+  }
+
+  eq(other: FootnoteReferenceWidget) {
+    return this.label === other.label && this.from === other.from && this.to === other.to;
+  }
+
+  toDOM(view: EditorView) {
+    const sup = document.createElement("sup");
+    sup.className = "cm-md-footnote-ref";
+    sup.textContent = this.label;
+    sup.title = `Footnote: ${this.label}`;
+    sup.contentEditable = "false";
+    sup.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      selectRangePreservingScroll(view, this.from, this.to);
+      view.focus();
+    });
+    return sup;
+  }
+}
+
+class FootnoteDefinitionWidget extends WidgetType {
+  constructor(private readonly footnote: MarkdownFootnoteDefinition) {
+    super();
+  }
+
+  eq(other: FootnoteDefinitionWidget) {
+    return (
+      this.footnote.from === other.footnote.from &&
+      this.footnote.to === other.footnote.to &&
+      this.footnote.label === other.footnote.label &&
+      this.footnote.value === other.footnote.value
+    );
+  }
+
+  toDOM(view: EditorView) {
+    const item = document.createElement("div");
+    item.className = "cm-md-footnote-def";
+
+    const label = document.createElement("sup");
+    label.className = "cm-md-footnote-def-label";
+    label.textContent = this.footnote.label;
+    item.appendChild(label);
+
+    const body = document.createElement("span");
+    body.className = "cm-md-footnote-def-body";
+    body.textContent = this.footnote.value || "Empty footnote";
+    item.appendChild(body);
+
+    item.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      selectRangePreservingScroll(view, this.footnote.from, this.footnote.to);
+      view.focus();
+    });
+
+    return item;
+  }
+}
+
 class MathWidget extends WidgetType {
   constructor(
     private readonly value: string,
@@ -2040,6 +2136,24 @@ function addInlineDecorations(
     }
   }
 
+  const footnoteRefRe = /\[\^([^\]\n]+)\]/g;
+  footnoteRefRe.lastIndex = fromOffset;
+  while ((match = footnoteRefRe.exec(lineText)) !== null) {
+    const start = lineFrom + match.index;
+    const end = start + match[0].length;
+    const active = inlineMarkerActive([{ from: start, to: end }], cursorFrom, cursorTo);
+    if (active) {
+      ranges.push({ from: start, to: end, className: "cm-md-footnote-source" });
+    } else {
+      ranges.push({
+        from: start,
+        to: end,
+        replace: true,
+        widget: new FootnoteReferenceWidget(match[1].trim(), start, end),
+      });
+    }
+  }
+
   const emojiRe = /\p{Extended_Pictographic}(?:\uFE0F|\uFE0E)?(?:\u200D\p{Extended_Pictographic}(?:\uFE0F|\uFE0E)?)*|\p{Regional_Indicator}{2}/gu;
   emojiRe.lastIndex = fromOffset;
   while ((match = emojiRe.exec(lineText)) !== null) {
@@ -2230,6 +2344,29 @@ function buildMarkdownDecorations(state: EditorState) {
           widget: new MarkdownImageWidget(image),
         });
       }
+      continue;
+    }
+
+    const footnoteDefinition = footnoteDefinitionAt(state, line.number);
+    if (footnoteDefinition) {
+      const activeFootnote = rangeActive(footnoteDefinition, cursorFrom, cursorTo, selectionEmpty);
+      const lastFootnoteLineNumber = doc.lineAt(footnoteDefinition.to).number;
+      if (activeFootnote) {
+        for (let footnoteLineNumber = line.number; footnoteLineNumber <= lastFootnoteLineNumber; footnoteLineNumber += 1) {
+          const footnoteLine = doc.line(footnoteLineNumber);
+          ranges.push({ from: footnoteLine.from, to: footnoteLine.to, className: "cm-md-footnote-source" });
+        }
+      } else {
+        ranges.push({
+          from: footnoteDefinition.from,
+          to: footnoteDefinition.to,
+          replace: true,
+          block: true,
+          widget: new FootnoteDefinitionWidget(footnoteDefinition),
+        });
+      }
+
+      lineNumber = lastFootnoteLineNumber;
       continue;
     }
 
@@ -2660,7 +2797,9 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
       if (update.docChanged) handleChange(update.view);
 
       if (update.selectionSet || update.docChanged) {
-        if (update.selectionSet && !update.docChanged) preservePointerScroll(update.view);
+        if (update.selectionSet && !update.docChanged && pointerSelectionActiveRef.current && !update.state.selection.main.empty) {
+          preservePointerScroll(update.view);
+        }
 
         const selection = update.state.selection.main;
         if (selection.empty) {

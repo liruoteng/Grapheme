@@ -35,6 +35,14 @@
   overflow-anchor: none;
 }
 
+.markdown-wysiwyg .cm-cursor {
+  border-left-color: var(--accent-bright);
+}
+
+.markdown-wysiwyg--dark .cm-cursor {
+  border-left-color: #f4c7a4;
+}
+
 .markdown-wysiwyg .cm-line {
   padding: 0;
 }
@@ -45,7 +53,7 @@
 
 .markdown-wysiwyg .cm-selectionBackground,
 .markdown-wysiwyg .cm-content ::selection {
-  background: rgba(225, 163, 111, 0.2) !important;
+  background: rgba(139, 92, 246, 0.28) !important;
 }
 
 .markdown-wysiwyg .cm-focused {
@@ -184,8 +192,7 @@
   height: 2.6em;
   margin: 0;
   border: none;
-  border-top: 1.5px solid var(--border);
-  transform: translateY(1.3em);
+  background: linear-gradient(var(--border), var(--border)) center / 100% 1.5px no-repeat;
   opacity: 0.55;
 }
 
@@ -347,11 +354,58 @@
 
 .markdown-wysiwyg .cm-md-frontmatter-source,
 .markdown-wysiwyg .cm-md-image-source,
-.markdown-wysiwyg .cm-md-citation-source {
+.markdown-wysiwyg .cm-md-citation-source,
+.markdown-wysiwyg .cm-md-footnote-source {
   color: var(--text-secondary);
   font-family: "JetBrains Mono", "Fira Code", "Menlo", monospace;
   font-size: 0.88em;
   text-decoration: none !important;
+}
+
+.markdown-wysiwyg .cm-md-footnote-ref {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.45em;
+  height: 1.45em;
+  margin-inline: 0.08em;
+  padding: 0 0.28em;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent-bright);
+  font-family: "JetBrains Mono", "Fira Code", "Menlo", monospace;
+  font-size: 0.68em;
+  font-weight: 700;
+  line-height: 1;
+  vertical-align: super;
+  cursor: pointer;
+}
+
+.markdown-wysiwyg .cm-md-footnote-def {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.6em;
+  margin: 0.7em 0 0;
+  padding: 0.35em 0;
+  color: color-mix(in srgb, var(--markdown-wysiwyg-text) 82%, var(--text-secondary));
+  font-size: 0.9em;
+  line-height: 1.55;
+  cursor: pointer;
+}
+
+.markdown-wysiwyg .cm-md-footnote-def-label {
+  min-width: 1.8em;
+  color: var(--accent-bright);
+  font-family: "JetBrains Mono", "Fira Code", "Menlo", monospace;
+  font-size: 0.78em;
+  font-weight: 700;
+  text-align: right;
+}
+
+.markdown-wysiwyg .cm-md-footnote-def-body {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .markdown-wysiwyg .cm-md-citation {
