@@ -1,4 +1,10 @@
 import "@testing-library/jest-dom/vitest";
+import { afterAll, afterEach, beforeAll } from "vitest";
+import { server } from "./mocks/server";
+
+beforeAll(() => server.listen({ onUnhandledRequest: "bypass" }));
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
 
 // jsdom v29 provides localStorage, but it's keyed to a file path that isn't
 // available in test environments. Replace with a simple in-memory mock.
