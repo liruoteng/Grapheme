@@ -128,7 +128,7 @@ describe("AI chat sessions", () => {
 
   it("createChatSession generates non-empty string IDs with session- prefix", () => {
     const id = createSession();
-    expect(id).toMatch(/^session-\d+$/);
+    expect(id).toMatch(/^session-\d+-[a-z0-9]+$/);
   });
 
   it("setActiveChatSession switches active session", () => {

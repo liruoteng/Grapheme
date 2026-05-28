@@ -260,11 +260,15 @@ function schedulePersist(getState: () => EditorState) {
   }, 150);
 }
 
+function createSessionId() {
+  return `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 export const useEditorStore = create<EditorState>((set, get) => ({
   chatSessions: [],
   activeChatSessionId: null,
   createChatSession: () => {
-    const id = `session-${Date.now()}`;
+    const id = createSessionId();
     const session: AiChatSession = { id, title: "New chat", messages: [], createdAt: Date.now() };
     set((s) => ({ chatSessions: [...s.chatSessions, session], activeChatSessionId: id }));
     schedulePersist(get);
@@ -304,7 +308,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   forkChatSession: (id) => {
     const original = get().chatSessions.find((s) => s.id === id);
     if (!original) return;
-    const newId = `session-${Date.now()}`;
+    const newId = createSessionId();
     const forked: AiChatSession = {
       id: newId,
       title: `Fork of ${original.title}`,

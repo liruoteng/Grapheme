@@ -35,6 +35,7 @@ export function usePointerDrag<T extends HTMLElement>({
 }: UsePointerDragOptions<T>) {
   const optionsRef = useRef({ bodyClassName, cursor, onStart, onMove, onEnd });
   const stateRef = useRef<{ startX: number; startY: number } | null>(null);
+  const moveRef = useRef<(event: PointerEvent) => void>(() => {});
   const previousBodyStyleRef = useRef<{ cursor: string; userSelect: string } | null>(null);
 
   optionsRef.current = { bodyClassName, cursor, onStart, onMove, onEnd };
@@ -51,7 +52,7 @@ export function usePointerDrag<T extends HTMLElement>({
       previousBodyStyleRef.current = null;
     }
 
-    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointermove", moveRef.current);
     window.removeEventListener("pointerup", stop);
     window.removeEventListener("pointercancel", stop);
     window.removeEventListener("blur", stop);
@@ -74,6 +75,7 @@ export function usePointerDrag<T extends HTMLElement>({
       deltaY: event.clientY - state.startY,
     });
   }, [stop]);
+  moveRef.current = move;
 
   const onPointerDown = useCallback((event: ReactPointerEvent<T>) => {
     if (preventDefault) event.preventDefault();

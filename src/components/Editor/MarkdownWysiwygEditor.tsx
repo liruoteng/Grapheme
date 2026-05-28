@@ -29,7 +29,14 @@ import { copyImageFilesToAssets } from "../../lib/utils";
 import { getActiveDragSource } from "../FileExplorer/fileDrag";
 import { SlashMenu, type SlashCommand } from "./SlashMenu";
 import { WidthHandle } from "./WidthHandle";
-import { normalizeTableDelimiterEscapes } from "./markdownEscapeUtil";
+import {
+  insertColumnIntoTable,
+  insertRowIntoTable,
+  serializeTable,
+  tableAt,
+  tableSnippet,
+  type MarkdownTable,
+} from "./markdownTable";
 import "katex/dist/katex.min.css";
 import "./MarkdownWysiwygEditor.css";
 
@@ -113,14 +120,6 @@ const imageSourceEditRangeField = StateField.define<InlineRange | null>({
     return value;
   },
 });
-
-type MarkdownTable = {
-  from: number;
-  to: number;
-  header: string[];
-  alignments: Array<"left" | "center" | "right" | null>;
-  rows: string[][];
-};
 
 type MarkdownCodeBlock = {
   from: number;
@@ -424,130 +423,6 @@ function inlineMathRanges(lineText: string, lineFrom: number, fromOffset: number
   }
 
   return matches.sort((a, b) => a.from - b.from || a.to - b.to);
-}
-
-function splitTableRow(text: string) {
-  const normalized = normalizeTableDelimiterEscapes(text).trim();
-  const body = normalized
-    .replace(/^\|/, "")
-    .replace(/\|$/, "");
-  const cells: string[] = [];
-  let current = "";
-
-  for (let index = 0; index < body.length; index += 1) {
-    const char = body[index];
-    const next = body[index + 1];
-    if (char === "\\" && next === "|") {
-      current += "|";
-      index += 1;
-      continue;
-    }
-    if (char === "|") {
-      cells.push(current.trim());
-      current = "";
-      continue;
-    }
-    current += char;
-  }
-  cells.push(current.trim());
-  return cells;
-}
-
-function escapeTableCell(cell: string) {
-  return cell.replace(/\|/g, "\\|");
-}
-
-function formatTableRow(cells: string[]) {
-  return `| ${cells.map(escapeTableCell).join(" | ")} |`;
-}
-
-function tableSnippet(snippet: string) {
-  return snippet.split("\n").map(normalizeTableDelimiterEscapes).join("\n");
-}
-
-function serializeTable(table: Pick<MarkdownTable, "header" | "alignments" | "rows">) {
-  const separator = table.alignments.map((align) => {
-    if (align === "left") return ":---";
-    if (align === "center") return ":---:";
-    if (align === "right") return "---:";
-    return "---";
-  });
-
-  return [
-    formatTableRow(table.header),
-    formatTableRow(separator),
-    ...table.rows.map(formatTableRow),
-  ].join("\n");
-}
-
-function insertRowIntoTable(table: MarkdownTable) {
-  return serializeTable({
-    header: table.header,
-    alignments: table.alignments,
-    rows: [...table.rows, table.header.map(() => "")],
-  });
-}
-
-function insertColumnIntoTable(table: MarkdownTable) {
-  const nextColumn = `Column ${table.header.length + 1}`;
-  return serializeTable({
-    header: [...table.header, nextColumn],
-    alignments: [...table.alignments, null],
-    rows: table.rows.map((row) => [...row, ""]),
-  });
-}
-
-function parseTableAlignment(separator: string) {
-  const cells = splitTableRow(separator);
-  if (cells.length < 2 || cells.some((cell) => !/^:?-+:?$/.test(cell.replace(/\s+/g, "")))) return null;
-
-  return cells.map((cell) => {
-    const compact = cell.replace(/\s+/g, "");
-    const left = compact.startsWith(":");
-    const right = compact.endsWith(":");
-    if (left && right) return "center";
-    if (right) return "right";
-    if (left) return "left";
-    return null;
-  });
-}
-
-function isTableRow(text: string) {
-  return normalizeTableDelimiterEscapes(text).includes("|") && splitTableRow(text).length >= 2;
-}
-
-function tableAt(source: MarkdownDocSource, lineNumber: number): MarkdownTable | null {
-  const doc = markdownDoc(source);
-  if (lineNumber >= doc.lines) return null;
-
-  const headerLine = doc.line(lineNumber);
-  const separatorLine = doc.line(lineNumber + 1);
-  if (!isTableRow(headerLine.text)) return null;
-
-  const alignments = parseTableAlignment(separatorLine.text);
-  if (!alignments) return null;
-
-  const header = splitTableRow(headerLine.text);
-  if (header.length !== alignments.length) return null;
-
-  const rows: string[][] = [];
-  let lastLine = separatorLine;
-  let nextLineNumber = lineNumber + 2;
-  while (nextLineNumber <= doc.lines) {
-    const rowLine = doc.line(nextLineNumber);
-    if (!isTableRow(rowLine.text)) break;
-    rows.push(splitTableRow(rowLine.text));
-    lastLine = rowLine;
-    nextLineNumber += 1;
-  }
-
-  return {
-    from: headerLine.from,
-    to: lastLine.to,
-    header,
-    alignments,
-    rows,
-  };
 }
 
 function frontmatterAtTop(source: MarkdownDocSource): MarkdownFrontmatter | null {
@@ -971,7 +846,7 @@ function addLatexSyntaxTokenDecorations(
       }
     }
 
-    if (/[\[\]{}()]/.test(char)) {
+    if (/[[\]{}()]/.test(char)) {
       pushToken(index, index + 1, "cm-md-token-punctuation");
       index += 1;
       continue;
@@ -2371,7 +2246,7 @@ function buildMarkdownDecorations(state: EditorState) {
       continue;
     }
 
-    const table = tableAt(state, line.number);
+    const table = tableAt(doc, line.number);
     if (table) {
       const activeTable = !!tableSourceEditRange && tableSourceEditRange.to >= table.from && tableSourceEditRange.from <= table.to;
       const lastTableLineNumber = doc.lineAt(table.to).number;

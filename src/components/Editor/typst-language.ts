@@ -44,8 +44,8 @@ export function registerTypstLanguage(monaco: typeof Monaco) {
       },
     },
     indentationRules: {
-      increaseIndentPattern: /^\s*[^\/].*[{(\[]\s*$/,
-      decreaseIndentPattern: /^\s*[}\]\)]/,
+      increaseIndentPattern: /^\s*[^/].*[{([]\s*$/,
+      decreaseIndentPattern: /^\s*[}\])]/,
     },
   });
 
@@ -115,7 +115,7 @@ export function registerTypstLanguage(monaco: typeof Monaco) {
         ],
 
         // Brackets
-        [/[{}()\[\]]/, "@brackets"],
+        [/[{}()[\]]/, "@brackets"],
 
         // Operators
         [/[=+\-*/<>!]+/, "operator"],
@@ -137,7 +137,7 @@ export function registerTypstLanguage(monaco: typeof Monaco) {
         [/\$/, { token: "string.math", bracket: "@close", next: "@pop" }],
         [/[a-zA-Z_]\w*/, "variable.math"],
         [/\d+(\.\d+)?/, "number"],
-        [/[\\^_{}()\[\]]/, "operator.math"],
+        [/[\\^_{}()[\]]/, "operator.math"],
         [/./, "string.math"],
       ],
 

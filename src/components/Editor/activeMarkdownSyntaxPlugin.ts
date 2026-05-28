@@ -358,7 +358,7 @@ function findStandaloneInlineMarkdownMatch(text: string): InlineMarkdownMatch | 
     };
   }
 
-  const linkMatch = text.match(/^\[([^\]\n]+)\]\(([^\)\n]+)\)$/);
+  const linkMatch = text.match(/^\[([^\]\n]+)\]\(([^)\n]+)\)$/);
   if (!linkMatch) return null;
 
   return {

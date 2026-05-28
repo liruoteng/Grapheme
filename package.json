@@ -14,7 +14,9 @@
     "test:stress:frontend": "vitest run --config vitest.stress.config.ts",
     "test:preview-pipeline:rust": "cargo test --manifest-path src-tauri/Cargo.toml markdown_preview",
     "test:stress:rust": "cargo test --manifest-path src-tauri/Cargo.toml stress",
-    "test:coverage": "vitest run --coverage",
+    "test:coverage": "npm run test:coverage:frontend && npm run test:coverage:rust",
+    "test:coverage:frontend": "vitest run --coverage",
+    "test:coverage:rust": "node scripts/rust-coverage.mjs",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
     "format": "prettier --write src"

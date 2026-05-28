@@ -15,8 +15,8 @@ import {
 } from "lucide-react";
 import { StatusBar } from "./components/Layout/StatusBar";
 import { FloatingSidebar } from "./components/Layout/FloatingSidebar";
-import { PanelManager, ALL_PANELS } from "./components/Layout/PanelManager";
-import type { PanelId } from "./components/Layout/PanelManager";
+import { PanelManager } from "./components/Layout/PanelManager";
+import { ALL_PANELS, type PanelId } from "./components/Layout/panelDefinitions";
 import { MonacoEditor } from "./components/Editor/MonacoEditor";
 import { MarkdownWysiwygEditor } from "./components/Editor/MarkdownWysiwygEditor";
 import { SidecarPreviewPanel } from "./components/Preview/SidecarPreviewPanel";
@@ -358,8 +358,6 @@ export default function App() {
         }
       }
     }
-    // writingMode only — intentional
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [writingMode]);
 
   // ── Recompile when preview panel is added ────────────────────────────────

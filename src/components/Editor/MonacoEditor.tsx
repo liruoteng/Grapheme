@@ -433,7 +433,7 @@ export function MonacoEditor({ onSave, onSnapshot, onNewFile, onPreviewTrigger, 
         zoneIdsRef.current = [];
       });
     }
-  }, [writingMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [writingMode]);
 
   // Recompute writing-mode decorations and heading spacing zones when mode/file changes
   useEffect(() => {
@@ -492,7 +492,6 @@ export function MonacoEditor({ onSave, onSnapshot, onNewFile, onPreviewTrigger, 
         zoneIdsRef.current = [];
       });
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [writingMode, editorFile?.path]);
 
   const handleMount: OnMount = (editor, monaco) => {
