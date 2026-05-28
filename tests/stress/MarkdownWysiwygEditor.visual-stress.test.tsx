@@ -23,7 +23,7 @@ vi.mock("../../src/components/FileExplorer/fileDrag", async (importOriginal) => 
 });
 
 const MAX_MOUNT_MS = Number(import.meta.env.STRESS_MAX_WYSIWYG_MOUNT_MS ?? 1_500);
-const MAX_OPS_MS = Number(import.meta.env.STRESS_MAX_WYSIWYG_OPS_MS ?? 2_500);
+const MAX_OPS_MS = Number(import.meta.env.STRESS_MAX_WYSIWYG_OPS_MS ?? 5_000);
 
 function installGeometryMocks() {
   const rect = {

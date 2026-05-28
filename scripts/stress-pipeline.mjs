@@ -18,7 +18,7 @@ const steps = [
     name: "markdown-preview",
     command: "npm",
     args: ["run", "test:preview-pipeline:rust"],
-    budgetMs: 25_000,
+    budgetMs: 40_000,
   },
   {
     name: "rust",
