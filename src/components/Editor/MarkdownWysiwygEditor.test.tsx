@@ -94,6 +94,33 @@ describe("MarkdownWysiwygEditor", () => {
     });
   });
 
+  it("waits until mouse release before revealing markdown syntax for pointer selection changes", async () => {
+    const source = "# Heading\n\n**bold**\n";
+    const path = "/workspace/examples/markdown/reveal-on-release.md";
+    useEditorStore.getState().openTab(path, "reveal-on-release.md", source);
+
+    const { container } = render(<MarkdownWysiwygEditor />);
+
+    const content = await waitFor(() => {
+      const element = container.querySelector(".cm-content") as HTMLElement | null;
+      expect(element).toBeInTheDocument();
+      return element!;
+    });
+    const view = EditorView.findFromDOM(content);
+    expect(view).toBeTruthy();
+
+    fireEvent.mouseDown(content, { button: 0, clientX: 20, clientY: 20 });
+    view!.dispatch({ selection: EditorSelection.cursor(3) });
+
+    expect(container.querySelector(".cm-md-marker--active")).not.toBeInTheDocument();
+
+    fireEvent.mouseUp(content, { button: 0, clientX: 20, clientY: 20 });
+
+    await waitFor(() => {
+      expect(container.querySelector(".cm-md-marker--active")).toBeInTheDocument();
+    });
+  });
+
   it("syntax highlights active LaTeX math source", async () => {
     const path = "/workspace/examples/markdown/math.md";
     useEditorStore.getState().openTab(path, "math.md", "$\\frac{a}{b} + \\alpha$\n");

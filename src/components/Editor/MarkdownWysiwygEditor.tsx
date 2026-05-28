@@ -66,6 +66,7 @@ type ScrollSnapshot = {
 
 const editTableSourceEffect = StateEffect.define<InlineRange | null>();
 const editImageSourceEffect = StateEffect.define<InlineRange | null>();
+const revealMarkdownSyntaxEffect = StateEffect.define<null>();
 
 const tableSourceEditRangeField = StateField.define<InlineRange | null>({
   create: () => null,
@@ -2504,17 +2505,6 @@ function buildMarkdownImageAtomicRanges(state: EditorState) {
   return Decoration.set(ranges, true);
 }
 
-const markdownWysiwygDecorationField = StateField.define<DecorationSet>({
-  create: buildMarkdownDecorations,
-  update(value, transaction) {
-    if (transaction.docChanged || transaction.selection) {
-      return buildMarkdownDecorations(transaction.state);
-    }
-    return value;
-  },
-  provide: (field) => EditorView.decorations.from(field),
-});
-
 const markdownImageAtomicRangeField = StateField.define<DecorationSet>({
   create: buildMarkdownImageAtomicRanges,
   update(value, transaction) {
@@ -2524,8 +2514,27 @@ const markdownImageAtomicRangeField = StateField.define<DecorationSet>({
   provide: (field) => EditorView.atomicRanges.of((view) => view.state.field(field)),
 });
 
-function markdownWysiwygDecorations(): Extension {
-  return [markdownWysiwygDecorationField, markdownImageAtomicRangeField];
+function markdownWysiwygDecorations(isPointerSelectionActive?: () => boolean): Extension {
+  const decorationField = StateField.define<DecorationSet>({
+    create: buildMarkdownDecorations,
+    update(value, transaction) {
+      if (
+        transaction.docChanged ||
+        transaction.effects.some((effect) => effect.is(revealMarkdownSyntaxEffect)) ||
+        (transaction.selection && !isPointerSelectionActive?.())
+      ) {
+        return buildMarkdownDecorations(transaction.state);
+      }
+      return value;
+    },
+    provide: (field) => EditorView.decorations.from(field),
+  });
+
+  return [decorationField, markdownImageAtomicRangeField];
+}
+
+function revealMarkdownSyntax(view: EditorView) {
+  view.dispatch({ effects: revealMarkdownSyntaxEffect.of(null) });
 }
 
 function CitationMenu({
@@ -2766,7 +2775,7 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
     syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
     tableSourceEditRangeField,
     imageSourceEditRangeField,
-    markdownWysiwygDecorations(),
+    markdownWysiwygDecorations(() => pointerSelectionActiveRef.current),
     EditorView.lineWrapping,
     keymap.of([
       {
@@ -2840,8 +2849,9 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
         }, 3000);
         return false;
       },
-      mouseup() {
+      mouseup(_event, view) {
         releasePointerScrollSnapshot();
+        revealMarkdownSyntax(view);
         return false;
       },
       click(event, view) {
@@ -2897,6 +2907,7 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
         return false;
       },
       keyup(event, view) {
+        revealMarkdownSyntax(view);
         if (event.key !== "/") return false;
         const cursor = view.state.selection.main.head;
         const line = view.state.doc.lineAt(cursor);

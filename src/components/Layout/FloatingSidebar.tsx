@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useEditorStore, type FileEntry } from "../../stores/editorStore";
+import { usePointerDrag } from "../../hooks/usePointerDrag";
 import { FileTree, type FileTreeHandle } from "../FileExplorer/FileTree";
 import "./FloatingSidebar.css";
 
@@ -81,6 +82,7 @@ export function FloatingSidebar({ onOpenFolder }: FloatingSidebarProps) {
   const fileTreeRef = useRef<FileTreeHandle>(null);
   const [sidebarWidth, setSidebarWidth] = useState(220);
   const widthRef = useRef(220);
+  const resizeStartWidthRef = useRef(220);
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -159,24 +161,22 @@ export function FloatingSidebar({ onOpenFolder }: FloatingSidebarProps) {
 
   const asideRef = useRef<HTMLElement>(null);
 
-  const handleResizeMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    asideRef.current?.classList.add("fsb--resizing");
-    const startX = e.clientX;
-    const startWidth = widthRef.current;
-    const onMove = (ev: MouseEvent) => {
-      const w = Math.max(140, Math.min(520, startWidth + ev.clientX - startX));
+  const handleResizePointerDown = usePointerDrag<HTMLDivElement>({
+    cursor: "col-resize",
+    onStart: () => {
+      resizeStartWidthRef.current = widthRef.current;
+      asideRef.current?.classList.add("fsb--resizing");
+    },
+    onMove: ({ deltaX }) => {
+      const startWidth = resizeStartWidthRef.current;
+      const w = Math.max(140, Math.min(520, startWidth + deltaX));
       widthRef.current = w;
       setSidebarWidth(w);
-    };
-    const onUp = () => {
+    },
+    onEnd: () => {
       asideRef.current?.classList.remove("fsb--resizing");
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  }, []);
+    },
+  });
 
   return (
     <aside
@@ -283,7 +283,7 @@ export function FloatingSidebar({ onOpenFolder }: FloatingSidebarProps) {
 
       {/* ── Resize handle (right edge, only when open) ───────── */}
       {sidebarOpen && (
-        <div className="fsb-resize-handle" onMouseDown={handleResizeMouseDown} />
+        <div className="fsb-resize-handle" onPointerDown={handleResizePointerDown} />
       )}
     </aside>
   );

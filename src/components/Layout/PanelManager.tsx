@@ -1,6 +1,7 @@
-import { useState, useRef, useCallback, Fragment, type RefObject, type ReactNode } from "react";
+import { useState, useRef, useCallback, Fragment, type Dispatch, type RefObject, type ReactNode, type SetStateAction } from "react";
 import { X, Check } from "lucide-react";
 import { useEditorStore } from "../../stores/editorStore";
+import { usePointerDrag } from "../../hooks/usePointerDrag";
 import "./PanelManager.css";
 
 export type PanelId = "editor" | "preview" | "diff" | "outline" | "ai" | "pdf" | "bibliography" | "profiler";
@@ -104,11 +105,64 @@ function Panel({ id, idx, label, isTopRight, isSideBySide, titleSuffix, headerEx
 }
 
 // ── Resize handles ────────────────────────────────────────────────────────────
-function RowHandle({ onPointerDown }: { onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void }) {
+interface RowHandleProps {
+  topId: string;
+  botId: string;
+  colRef: RefObject<HTMLDivElement | null>;
+  sizeFor: (id: string) => number;
+  setPanelSizes: Dispatch<SetStateAction<Record<string, number>>>;
+}
+
+function RowHandle({ topId, botId, colRef, sizeFor, setPanelSizes }: RowHandleProps) {
+  const startRef = useRef({ height: 600, top: 1, bottom: 1, total: 2 });
+  const onPointerDown = usePointerDrag<HTMLDivElement>({
+    bodyClassName: "pm-resizing-row",
+    onStart: () => {
+      const top = sizeFor(topId);
+      const bottom = sizeFor(botId);
+      startRef.current = {
+        height: colRef.current?.getBoundingClientRect().height ?? 600,
+        top,
+        bottom,
+        total: top + bottom,
+      };
+    },
+    onMove: ({ deltaY }) => {
+      const start = startRef.current;
+      const dy = (deltaY / start.height) * start.total;
+      setPanelSizes((sizes) => ({
+        ...sizes,
+        [topId]: Math.max(start.total * 0.05, start.top + dy),
+        [botId]: Math.max(start.total * 0.05, start.bottom - dy),
+      }));
+    },
+  });
+
   return <div className="pm-row-handle" onPointerDown={onPointerDown} />;
 }
 
-function ColHandle({ onPointerDown }: { onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void }) {
+interface ColHandleProps {
+  colFr: number;
+  rowRef: RefObject<HTMLDivElement | null>;
+  setColFr: Dispatch<SetStateAction<number>>;
+}
+
+function ColHandle({ colFr, rowRef, setColFr }: ColHandleProps) {
+  const startRef = useRef({ width: 800, fraction: 0.5 });
+  const onPointerDown = usePointerDrag<HTMLDivElement>({
+    bodyClassName: "pm-resizing-col",
+    onStart: () => {
+      startRef.current = {
+        width: rowRef.current?.getBoundingClientRect().width ?? 800,
+        fraction: colFr,
+      };
+    },
+    onMove: ({ deltaX }) => {
+      const start = startRef.current;
+      setColFr(Math.max(0.1, Math.min(0.9, start.fraction + deltaX / start.width)));
+    },
+  });
+
   return <div className="pm-col-handle" onPointerDown={onPointerDown} />;
 }
 
@@ -231,75 +285,6 @@ export function PanelManager({ contents, headerExtras, headerExtrasLeft, titleSu
   // ── Resize helpers ────────────────────────────────────────────────────────
   const sz = (id: string) => Math.max(0.05, panelSizes[id] ?? 1);
 
-  // Returns a mousedown handler that resizes the two flex items above/below a row handle.
-  const rowResizer = (topId: string, botId: string, colRef: RefObject<HTMLDivElement | null>) =>
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      e.preventDefault();
-      e.currentTarget.setPointerCapture?.(e.pointerId);
-      const y0   = e.clientY;
-      const h    = colRef.current?.getBoundingClientRect().height ?? 600;
-      const top0 = sz(topId);
-      const bot0 = sz(botId);
-      const total = top0 + bot0;
-      let isResizing = true;
-      const stop = () => {
-        if (!isResizing) return;
-        isResizing = false;
-        document.body.classList.remove("pm-resizing-row");
-        window.removeEventListener("pointermove", move);
-        window.removeEventListener("pointerup", stop);
-        window.removeEventListener("pointercancel", stop);
-        window.removeEventListener("blur", stop);
-      };
-      const move = (ev: PointerEvent) => {
-        if (ev.buttons === 0) {
-          stop();
-          return;
-        }
-        const dy = (ev.clientY - y0) / h * total;
-        setPanelSizes(p => ({
-          ...p,
-          [topId]: Math.max(total * 0.05, top0 + dy),
-          [botId]: Math.max(total * 0.05, bot0 - dy),
-        }));
-      };
-      document.body.classList.add("pm-resizing-row");
-      window.addEventListener("pointermove", move);
-      window.addEventListener("pointerup", stop);
-      window.addEventListener("pointercancel", stop);
-      window.addEventListener("blur", stop);
-    };
-
-  const handleColResize = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.currentTarget.setPointerCapture?.(e.pointerId);
-    const x0  = e.clientX;
-    const w   = rowRef.current?.getBoundingClientRect().width ?? 800;
-    const fr0 = colFr;
-    let isResizing = true;
-    const stop = () => {
-      if (!isResizing) return;
-      isResizing = false;
-      document.body.classList.remove("pm-resizing-col");
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", stop);
-      window.removeEventListener("pointercancel", stop);
-      window.removeEventListener("blur", stop);
-    };
-    const move = (ev: PointerEvent) => {
-      if (ev.buttons === 0) {
-        stop();
-        return;
-      }
-      setColFr(Math.max(0.1, Math.min(0.9, fr0 + (ev.clientX - x0) / w)));
-    };
-    document.body.classList.add("pm-resizing-col");
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", stop);
-    window.addEventListener("pointercancel", stop);
-    window.addEventListener("blur", stop);
-  }, [colFr]);
-
   // ── Layout computation ────────────────────────────────────────────────────
   const n       = activePanels.length;
   const isHoriz = panelLayout === "horizontal" && n > 1;
@@ -341,7 +326,16 @@ export function PanelManager({ contents, headerExtras, headerExtrasLeft, titleSu
         <div ref={singleColRef} className="pm-flex-col">
           {activePanels.map((id, i) => (
             <Fragment key={id}>
-              {i > 0 && <RowHandle key={`h${i}`} onPointerDown={rowResizer(activePanels[i - 1], id, singleColRef)} />}
+              {i > 0 && (
+                <RowHandle
+                  key={`h${i}`}
+                  topId={activePanels[i - 1]}
+                  botId={id}
+                  colRef={singleColRef}
+                  sizeFor={sz}
+                  setPanelSizes={setPanelSizes}
+                />
+              )}
               {makePanel(id, i, i === 0, n === 1)}
             </Fragment>
           ))}
@@ -369,20 +363,38 @@ export function PanelManager({ contents, headerExtras, headerExtrasLeft, titleSu
           <div ref={leftColRef} className="pm-flex-col" style={{ flex: `${colFr} 1 0`, minWidth: 0, overflow: "hidden" }}>
             {leftIds.map((id, i) => (
               <Fragment key={id}>
-                {i > 0 && <RowHandle key={`lh${i}`} onPointerDown={rowResizer(leftIds[i - 1], id, leftColRef)} />}
+                {i > 0 && (
+                  <RowHandle
+                    key={`lh${i}`}
+                    topId={leftIds[i - 1]}
+                    botId={id}
+                    colRef={leftColRef}
+                    sizeFor={sz}
+                    setPanelSizes={setPanelSizes}
+                  />
+                )}
                 {makePanel(id, activePanels.indexOf(id), false, false)}
               </Fragment>
             ))}
           </div>
 
           {/* Column resize handle */}
-          <ColHandle onPointerDown={handleColResize} />
+          <ColHandle colFr={colFr} rowRef={rowRef} setColFr={setColFr} />
 
           {/* Right column */}
           <div ref={rightColRef} className="pm-flex-col" style={{ flex: `${1 - colFr} 1 0`, minWidth: 0, overflow: "hidden" }}>
             {rightIds.map((id, i) => (
               <Fragment key={id}>
-                {i > 0 && <RowHandle key={`rh${i}`} onPointerDown={rowResizer(rightIds[i - 1], id, rightColRef)} />}
+                {i > 0 && (
+                  <RowHandle
+                    key={`rh${i}`}
+                    topId={rightIds[i - 1]}
+                    botId={id}
+                    colRef={rightColRef}
+                    sizeFor={sz}
+                    setPanelSizes={setPanelSizes}
+                  />
+                )}
                 {makePanel(id, activePanels.indexOf(id), i === 0, false)}
               </Fragment>
             ))}
@@ -392,7 +404,7 @@ export function PanelManager({ contents, headerExtras, headerExtrasLeft, titleSu
         {/* Wide panel at bottom (n=3 or n=5) */}
         {wideId && (
           <Fragment key={wideId}>
-            <RowHandle onPointerDown={rowResizer("__top__", wideId, outerRef)} />
+            <RowHandle topId="__top__" botId={wideId} colRef={outerRef} sizeFor={sz} setPanelSizes={setPanelSizes} />
             {makePanel(wideId, activePanels.indexOf(wideId), false, true)}
           </Fragment>
         )}
