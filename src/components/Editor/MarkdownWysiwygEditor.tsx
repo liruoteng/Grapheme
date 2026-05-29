@@ -1322,6 +1322,17 @@ class FrontmatterWidget extends WidgetType {
     count.textContent = `${this.frontmatter.rows.length}`;
     header.appendChild(count);
 
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.className = "cm-md-frontmatter-edit";
+    edit.textContent = "Edit source";
+    edit.addEventListener("click", (event) => {
+      event.preventDefault();
+      selectCursorPreservingScroll(view, this.frontmatter.to);
+      view.focus();
+    });
+    header.appendChild(edit);
+
     const body = document.createElement("div");
     body.className = "cm-md-frontmatter-body";
     body.hidden = true;
@@ -1349,17 +1360,6 @@ class FrontmatterWidget extends WidgetType {
         body.appendChild(item);
       }
     }
-
-    const edit = document.createElement("button");
-    edit.type = "button";
-    edit.className = "cm-md-frontmatter-edit";
-    edit.textContent = "Edit source";
-    edit.addEventListener("click", (event) => {
-      event.preventDefault();
-      selectCursorPreservingScroll(view, this.frontmatter.to);
-      view.focus();
-    });
-    body.appendChild(edit);
 
     header.addEventListener("mousedown", (event) => event.preventDefault());
     header.addEventListener("click", () => {
