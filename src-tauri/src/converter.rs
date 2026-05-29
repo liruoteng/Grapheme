@@ -826,10 +826,24 @@ fn typst_raw(text: &str, lang: Option<&str>, block: bool) -> String {
 }
 
 fn is_preview_typst_math_safe(expr: &str) -> bool {
-    !expr.contains('\\')
+    has_only_typst_math_linebreaks(expr)
         && !expr.contains('#')
         && !expr.contains('[')
         && !expr.contains(']')
+}
+
+fn has_only_typst_math_linebreaks(expr: &str) -> bool {
+    let chars: Vec<char> = expr.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '\\' {
+            if !chars.get(i + 1).is_some_and(|ch| ch.is_whitespace()) {
+                return false;
+            }
+        }
+        i += 1;
+    }
+    true
 }
 
 fn is_typst_math_identifier(word: &str) -> bool {
@@ -1690,7 +1704,7 @@ fn translate_latex_math_for_preview(expr: &str) -> String {
     for command in commands {
         out = out.replace(command.latex, command.typst);
     }
-    out = out.replace("\\\\", "\n");
+    out = out.replace("\\\\", "\\\n");
     out
 }
 
@@ -1839,6 +1853,13 @@ fn preview_math(expr: &str, block: bool) -> String {
     let safe_expr = translated.trim();
     if is_preview_typst_math_safe(safe_expr) {
         let normalized = normalize_preview_typst_math(safe_expr);
+        if normalized.trim().is_empty() {
+            let mut raw = typst_raw(trimmed, Some("latex"), block);
+            if block {
+                raw.push_str("\n\n");
+            }
+            return raw;
+        }
         if block {
             format!("$ {normalized} $\n\n")
         } else {
@@ -2785,6 +2806,13 @@ mod tests {
     }
 
     #[test]
+    fn preview_empty_inline_math_falls_back_to_raw() {
+        let out = preview("Empty math: $\\,$\n");
+        assert!(out.contains("#raw(\"\\\\,\""), "got: {out}");
+        assert!(!out.contains("$$"), "got: {out}");
+    }
+
+    #[test]
     fn preview_renders_simple_block_math_as_typst_math() {
         let out = preview("$$\nE = m c^2\n$$\n");
         assert!(out.contains("$ E = m c^2 $"), "got: {out}");
@@ -2829,7 +2857,7 @@ mod tests {
     #[test]
     fn preview_preserves_latex_align_pivots() {
         let out = preview("$$\n\\begin{align}\na &= b + c \\\\\nd &= e + f\n\\end{align}\n$$\n");
-        assert!(out.contains("a &= b + c"), "got: {out}");
+        assert!(out.contains("a &= b + c \\"), "got: {out}");
         assert!(out.contains("d &= e + f"), "got: {out}");
         assert!(!out.contains("#raw("), "got: {out}");
     }

@@ -1907,7 +1907,7 @@ function addInlineDecorations(
   cursorFrom: number,
   cursorTo: number,
 ) {
-  const re = /\*\*\*([^*\n]+?)\*\*\*|\*\*([^*\n]+?)\*\*|__([^_\n]+?)__|~~([^~\n]+?)~~|`([^`\n]+?)`|\[([^\]\n]+?)\]\(([^)\n]+?)\)|_([^_\n]+?)_|\*([^*\n]+?)\*/g;
+  const re = /\*\*\*([^*\n]+?)\*\*\*|\*\*([^*\n]+?)\*\*|__([^_\n]+?)__|~~([^~\n]+?)~~|`([^`\n]+?)`|\[([^\]\n]+?)\]\(([^)\n]+?)\)|\[([^\]\n]+?)\]\[([^\]\n]*)\]|_([^_\n]+?)_|\*([^*\n]+?)\*/g;
   re.lastIndex = fromOffset;
 
   let match: RegExpExecArray | null;
@@ -1941,7 +1941,13 @@ function addInlineDecorations(
       ranges.push(markerRange(start, start + 1, active, "cm-md-active-link-marker"));
       ranges.push({ from: start + 1, to: labelEnd, className: "cm-md-link" });
       ranges.push(markerRange(labelEnd, end, active, "cm-md-active-link-marker"));
-    } else if (match[8] !== undefined || match[9] !== undefined) {
+    } else if (match[8] !== undefined && match[9] !== undefined) {
+      const labelEnd = start + 1 + match[8].length;
+      const active = inlineMarkerActive([{ from: start, to: end }], cursorFrom, cursorTo);
+      ranges.push(markerRange(start, start + 1, active, "cm-md-active-link-marker"));
+      ranges.push({ from: start + 1, to: labelEnd, className: "cm-md-link" });
+      ranges.push(markerRange(labelEnd, end, active, "cm-md-active-link-marker"));
+    } else if (match[10] !== undefined || match[11] !== undefined) {
       const active = inlineMarkerActive([{ from: start, to: end }], cursorFrom, cursorTo);
       ranges.push(markerRange(start, start + 1, active));
       ranges.push({ from: start + 1, to: end - 1, className: "cm-md-italic" });
@@ -2041,14 +2047,26 @@ function addInlineDecorations(
 
 function linkAtPosition(view: EditorView, pos: number) {
   const line = view.state.doc.lineAt(pos);
-  const linkRe = /!?\[([^\]\n]+?)\]\(([^)\s]+)(?:\s+"[^"]+")?\)/g;
+  const fullLinkRe = /!?\[([^\]\n]+?)\]\(([^)\s]+)(?:\s+"[^"]+")?\)/g;
+  const refLinkRe = /!?\[([^\]\n]+?)\]\[([^\]\n]*)\]/g;
   let match: RegExpExecArray | null;
-  while ((match = linkRe.exec(line.text)) !== null) {
+
+  while ((match = fullLinkRe.exec(line.text)) !== null) {
     if (match[0].startsWith("!")) continue;
     const from = line.from + match.index;
     const to = from + match[0].length;
     if (pos >= from && pos <= to) return { from, to, href: match[2] };
   }
+
+  while ((match = refLinkRe.exec(line.text)) !== null) {
+    if (match[0].startsWith("!")) continue;
+    const from = line.from + match.index;
+    const to = from + match[0].length;
+    if (pos >= from && pos <= to) {
+      return { from, to, href: `[${match[2]}]` };
+    }
+  }
+
   return null;
 }
 

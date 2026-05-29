@@ -1089,7 +1089,7 @@ mod markdown_preview_tests {
         let preview_path = md_preview_typ_path(&md_path.to_string_lossy());
         let source = fs::read_to_string(&preview_path).unwrap();
 
-        assert!(source.contains("a &= b + c"), "got: {source}");
+        assert!(source.contains("a &= b + c \\"), "got: {source}");
         assert!(source.contains("d &= e + f"), "got: {source}");
         validate_typst_source(&preview_path, &source).unwrap();
 
@@ -1121,7 +1121,7 @@ mod markdown_preview_tests {
         let preview_path = md_preview_typ_path(&md_path.to_string_lossy());
         let source = fs::read_to_string(&preview_path).unwrap();
 
-        assert!(source.contains("a &= b + c"), "got: {source}");
+        assert!(source.contains("a &= b + c \\"), "got: {source}");
         assert!(source.contains("d &= e + f"), "got: {source}");
         validate_typst_source(&preview_path, &source).unwrap();
 
