@@ -163,6 +163,16 @@
   padding-right: 0.22em;
 }
 
+.markdown-wysiwyg .cm-md-escape {
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+.markdown-wysiwyg .cm-md-ref-definition {
+  opacity: 0.55;
+  font-size: 0.85em;
+}
+
 .markdown-wysiwyg .cm-md-code {
   font-family: "JetBrains Mono", "Fira Code", "Menlo", monospace;
   font-size: 0.82em;

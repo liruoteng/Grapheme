@@ -1907,7 +1907,7 @@ function addInlineDecorations(
   cursorFrom: number,
   cursorTo: number,
 ) {
-  const re = /\*\*\*([^*\n]+?)\*\*\*|\*\*([^*\n]+?)\*\*|__([^_\n]+?)__|~~([^~\n]+?)~~|`([^`\n]+?)`|\[([^\]\n]+?)\]\(([^)\n]+?)\)|\[([^\]\n]+?)\]\[([^\]\n]*)\]|_([^_\n]+?)_|\*([^*\n]+?)\*/g;
+  const re = /\*\*\*([^*\n]+?)\*\*\*|\*\*([^*\n]+?)\*\*|__([^_\n]+?)__|~~([^~\n]+?)~~|`([^`\n]+?)`|\[([^\]\n]+?)\]\(([^)\n]+?)\)|\[([^\]\n]+?)\]\[([^\]\n]*)\]|_([^_\n]+?)_|\*([^*\n]+?)\*|\\([\\`*{}\[\]()#+\-.!|>])|<([a-zA-Z]+:\/\/[^\s>]+)>|<([a-zA-Z][a-zA-Z0-9.]+@[a-zA-Z0-9.]+)>|\[([^\]\n]*)\]:\s*<?([^>\s]+)>?\s*$/g;
   re.lastIndex = fromOffset;
 
   let match: RegExpExecArray | null;
@@ -1952,6 +1952,18 @@ function addInlineDecorations(
       ranges.push(markerRange(start, start + 1, active));
       ranges.push({ from: start + 1, to: end - 1, className: "cm-md-italic" });
       ranges.push(markerRange(end - 1, end, active));
+    } else if (match[12] !== undefined) {
+      ranges.push({ from: start + 1, to: end, className: "cm-md-escape" });
+    } else if (match[13] !== undefined) {
+      ranges.push(markerRange(start, start + 1, false, "cm-md-active-link-marker"));
+      ranges.push({ from: start + 1, to: end - 1, className: "cm-md-link" });
+      ranges.push(markerRange(end - 1, end, false, "cm-md-active-link-marker"));
+    } else if (match[14] !== undefined) {
+      ranges.push(markerRange(start, start + 1, false, "cm-md-active-link-marker"));
+      ranges.push({ from: start + 1, to: end - 1, className: "cm-md-link" });
+      ranges.push(markerRange(end - 1, end, false, "cm-md-active-link-marker"));
+    } else if (match[15] !== undefined) {
+      ranges.push({ from: start, to: end, className: "cm-md-link cm-md-ref-definition" });
     }
   }
 
@@ -2049,6 +2061,8 @@ function linkAtPosition(view: EditorView, pos: number) {
   const line = view.state.doc.lineAt(pos);
   const fullLinkRe = /!?\[([^\]\n]+?)\]\(([^)\s]+)(?:\s+"[^"]+")?\)/g;
   const refLinkRe = /!?\[([^\]\n]+?)\]\[([^\]\n]*)\]/g;
+  const refDefRe = /\[[^\]\n]*\]:\s*<?([^>\s]+)>?\s*$/g;
+  const autolinkRe = /<([a-zA-Z][a-zA-Z0-9.]+@[a-zA-Z0-9.]+|[a-zA-Z]+:\/\/[^\s>]+)>/g;
   let match: RegExpExecArray | null;
 
   while ((match = fullLinkRe.exec(line.text)) !== null) {
@@ -2065,6 +2079,21 @@ function linkAtPosition(view: EditorView, pos: number) {
     if (pos >= from && pos <= to) {
       return { from, to, href: `[${match[2]}]` };
     }
+  }
+
+  while ((match = autolinkRe.exec(line.text)) !== null) {
+    const href = match[1].startsWith("http") || match[1].startsWith("ftp")
+      ? match[1]
+      : `mailto:${match[1]}`;
+    const from = line.from + match.index;
+    const to = from + match[0].length;
+    if (pos >= from && pos <= to) return { from, to, href };
+  }
+
+  while ((match = refDefRe.exec(line.text)) !== null) {
+    const from = line.from + match.index;
+    const to = from + match[0].length;
+    if (pos >= from && pos <= to) return { from, to, href: match[1] };
   }
 
   return null;
