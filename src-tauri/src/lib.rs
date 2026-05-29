@@ -1075,6 +1075,60 @@ mod markdown_preview_tests {
     }
 
     #[test]
+    fn fast_markdown_preview_compiles_syntax_test() {
+        let syntax_path = Path::new("../examples/markdown/test_syntax.md");
+        if !syntax_path.exists() {
+            return;
+        }
+
+        let dir = temp_test_dir("markdown-preview-fast-syntax");
+        let md_path = dir.join("test_syntax.md");
+        let md = fs::read_to_string(syntax_path).unwrap();
+
+        write_markdown_preview_source_fast(&md_path.to_string_lossy(), &md).unwrap();
+        let preview_path = md_preview_typ_path(&md_path.to_string_lossy());
+        let source = fs::read_to_string(&preview_path).unwrap();
+
+        assert!(source.contains("a &= b + c"), "got: {source}");
+        assert!(source.contains("d &= e + f"), "got: {source}");
+        validate_typst_source(&preview_path, &source).unwrap();
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn fast_markdown_preview_compiles_gaussian_integral_math() {
+        let dir = temp_test_dir("markdown-preview-gaussian-integral");
+        let md_path = dir.join("gaussian.md");
+        let md = "$$\n\\int_0^\\infty e^{-x^2} dx = \\frac{\\sqrt{\\pi}}{2}\n$$\n";
+
+        write_markdown_preview_source_fast(&md_path.to_string_lossy(), md).unwrap();
+        let preview_path = md_preview_typ_path(&md_path.to_string_lossy());
+        let source = fs::read_to_string(&preview_path).unwrap();
+
+        validate_typst_source(&preview_path, &source).unwrap();
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn fast_markdown_preview_compiles_align_math_with_pivots() {
+        let dir = temp_test_dir("markdown-preview-align-math");
+        let md_path = dir.join("align.md");
+        let md = "$$\n\\begin{align}\na &= b + c \\\\\nd &= e + f\n\\end{align}\n$$\n";
+
+        write_markdown_preview_source_fast(&md_path.to_string_lossy(), md).unwrap();
+        let preview_path = md_preview_typ_path(&md_path.to_string_lossy());
+        let source = fs::read_to_string(&preview_path).unwrap();
+
+        assert!(source.contains("a &= b + c"), "got: {source}");
+        assert!(source.contains("d &= e + f"), "got: {source}");
+        validate_typst_source(&preview_path, &source).unwrap();
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn fast_markdown_preview_compiles_footnotes() {
         let dir = temp_test_dir("markdown-preview-footnotes");
         let md_path = dir.join("footnotes.md");

@@ -827,7 +827,6 @@ fn typst_raw(text: &str, lang: Option<&str>, block: bool) -> String {
 
 fn is_preview_typst_math_safe(expr: &str) -> bool {
     !expr.contains('\\')
-        && !expr.contains('&')
         && !expr.contains('#')
         && !expr.contains('[')
         && !expr.contains(']')
@@ -988,7 +987,7 @@ fn normalize_math_subscripts(expr: &str) -> String {
     while i < chars.len() {
         if (chars[i] == '_' || chars[i] == '^') && i + 1 < chars.len() && chars[i + 1] == '{' {
             out.push(chars[i]);
-            out.push('{');
+            out.push('(');
             i += 2;
             let start = i;
             let mut depth = 1;
@@ -1005,7 +1004,7 @@ fn normalize_math_subscripts(expr: &str) -> String {
             let content: String = chars[start..i].iter().collect();
             out.push_str(&space_alphanumeric(&content));
             if i < chars.len() {
-                out.push('}');
+                out.push(')');
                 i += 1;
             }
         } else {
@@ -1692,7 +1691,6 @@ fn translate_latex_math_for_preview(expr: &str) -> String {
         out = out.replace(command.latex, command.typst);
     }
     out = out.replace("\\\\", "\n");
-    out = out.replace('&', "");
     out
 }
 
@@ -2028,6 +2026,21 @@ fn inline_with_options(text: &str, options: &MarkdownOptions) -> String {
             }
         }
 
+        // Strikethrough: ~~text~~
+        if i + 1 < chars.len() && chars[i] == '~' && chars[i + 1] == '~' {
+            let start = i + 2;
+            if let Some(end) = find_double_closing(&chars, start, '~') {
+                if end > start {
+                    let inner: String = chars[start..end].iter().collect();
+                    result.push_str("#strike[");
+                    result.push_str(&inline_with_options(&inner, options));
+                    result.push(']');
+                    i = end + 2;
+                    continue;
+                }
+            }
+        }
+
         // Bold: **text** or __text__
         let bold_marker: Option<char> = if i + 1 < chars.len() {
             if chars[i] == '*' && chars[i + 1] == '*' {
@@ -2102,7 +2115,7 @@ fn inline_with_options(text: &str, options: &MarkdownOptions) -> String {
 
         // Typst special chars that need escaping in plain text
         match chars[i] {
-            '\\' | '<' | '>' | '[' | ']' | '{' | '}' if options.preview_safe => {
+            '\\' | '$' | '<' | '>' | '[' | ']' | '{' | '}' if options.preview_safe => {
                 result.push('\\');
                 result.push(chars[i]);
             }
@@ -2386,6 +2399,24 @@ mod tests {
     fn italic_single_underscore() {
         let out = convert("_italic_\n");
         assert!(out.contains("_italic_"));
+    }
+
+    #[test]
+    fn strikethrough() {
+        let out = convert("~~deleted~~\n");
+        assert!(out.contains("#strike[deleted]"));
+    }
+
+    #[test]
+    fn strikethrough_with_nested_formatting() {
+        let out = convert("~~**deleted** and _old_~~\n");
+        assert!(out.contains("#strike[*deleted* and _old_]"));
+    }
+
+    #[test]
+    fn preview_strikethrough() {
+        let out = preview("~~deleted~~\n");
+        assert!(out.contains("#strike[deleted]"));
     }
 
     #[test]
@@ -2747,6 +2778,13 @@ mod tests {
     }
 
     #[test]
+    fn preview_escapes_unmatched_plain_text_dollar() {
+        let out = preview("Plain $ text before math.\n\n$$\nE = mc^2\n$$\n");
+        assert!(out.contains("Plain \\$ text before math."), "got: {out}");
+        assert!(out.contains("$ E = m c^2 $"), "got: {out}");
+    }
+
+    #[test]
     fn preview_renders_simple_block_math_as_typst_math() {
         let out = preview("$$\nE = m c^2\n$$\n");
         assert!(out.contains("$ E = m c^2 $"), "got: {out}");
@@ -2772,9 +2810,27 @@ mod tests {
             "$$\n\\lim_{n \\to \\infty} \\left(1 + \\frac{1}{n}\\right)^n = e\n$$\n",
         );
         assert!(
-            out.contains("$ lim_{n -> infinity} (1 + (1)/(n))^n = e $"),
+            out.contains("$ lim_(n -> infinity) (1 + (1)/(n))^n = e $"),
             "got: {out}"
         );
+        assert!(!out.contains("#raw("), "got: {out}");
+    }
+
+    #[test]
+    fn preview_translates_grouped_latex_superscripts() {
+        let out = preview("$$\n\\int_0^\\infty e^{-x^2} dx = \\frac{\\sqrt{\\pi}}{2}\n$$\n");
+        assert!(
+            out.contains("$ integral_0^infinity e^(-x^2) d x = (sqrt(pi))/(2) $"),
+            "got: {out}"
+        );
+        assert!(!out.contains("#raw("), "got: {out}");
+    }
+
+    #[test]
+    fn preview_preserves_latex_align_pivots() {
+        let out = preview("$$\n\\begin{align}\na &= b + c \\\\\nd &= e + f\n\\end{align}\n$$\n");
+        assert!(out.contains("a &= b + c"), "got: {out}");
+        assert!(out.contains("d &= e + f"), "got: {out}");
         assert!(!out.contains("#raw("), "got: {out}");
     }
 
