@@ -1,0 +1,7 @@
+{
+  "id": "neurips-2026",
+  "name": "NeurIPS 2026",
+  "description": "Official-style NeurIPS 2026 paper template with anonymous review formatting and bibliography support.",
+  "category": "ML / AI",
+  "main": "content.md"
+}

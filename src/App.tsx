@@ -83,6 +83,9 @@ export default function App() {
     const unlistenWarnings = listen<string[]>("converter-warnings", (e) => {
       useEditorStore.getState().setConverterWarnings(e.payload);
     });
+    const unlistenGeneratedFile = listen<{ path: string; content: string }>("generated-file-updated", (e) => {
+      useEditorStore.getState().syncCleanTabContent(e.payload.path, e.payload.content);
+    });
     const unlisten3 = listen("menu:toggle-sidecar-preview", () => {
       const { useSidecarPreview, setUseSidecarPreview } = useEditorStore.getState();
       setUseSidecarPreview(!useSidecarPreview);
@@ -91,6 +94,7 @@ export default function App() {
       unlisten1.then((f) => f());
       unlisten2.then((f) => f());
       unlistenWarnings.then((f) => f());
+      unlistenGeneratedFile.then((f) => f());
       unlisten3.then((f) => f());
     };
   }, []);

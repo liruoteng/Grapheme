@@ -1,0 +1,7 @@
+{
+  "id": "icml-2025",
+  "name": "ICML 2025",
+  "description": "Official-style ICML 2025 paper template with two-column review formatting and bibliography support.",
+  "category": "ML / AI",
+  "main": "content.md"
+}

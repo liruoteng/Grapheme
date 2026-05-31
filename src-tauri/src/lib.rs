@@ -501,6 +501,12 @@ pub struct PreviewError {
 }
 
 #[derive(Clone, Serialize)]
+pub struct GeneratedFileUpdate {
+    pub path: String,
+    pub content: String,
+}
+
+#[derive(Clone, Serialize)]
 pub struct PerfMetric {
     pub name: String,
     pub duration_ms: Option<f64>,
@@ -874,9 +880,14 @@ fn write_markdown_preview_source_resilient(
     }
 }
 
-fn write_markdown_preview_source_fast(md_path: &str, md_content: &str) -> Result<(), String> {
-    if resolve_md_hybrid(Path::new(md_path), md_content).is_some() {
-        return Ok(());
+fn write_markdown_preview_source_fast(
+    md_path: &str,
+    md_content: &str,
+) -> Result<Option<(String, String)>, String> {
+    if let Some((_, _, sibling_path, sibling_content)) =
+        resolve_md_hybrid(Path::new(md_path), md_content)
+    {
+        return Ok(Some((sibling_path, sibling_content)));
     }
 
     let path = Path::new(md_path);
@@ -886,9 +897,10 @@ fn write_markdown_preview_source_fast(md_path: &str, md_content: &str) -> Result
         .map(|existing| existing == typst_content)
         .unwrap_or(false)
     {
-        return Ok(());
+        return Ok(None);
     }
-    fs::write(preview_path, typst_content).map_err(|e| e.to_string())
+    fs::write(preview_path, typst_content).map_err(|e| e.to_string())?;
+    Ok(None)
 }
 
 fn validate_preview_sidecar_content_blocking(
@@ -905,7 +917,7 @@ fn validate_preview_sidecar_content_blocking(
             };
         }
 
-        write_markdown_preview_source_fast(&path, &content)?;
+        let _ = write_markdown_preview_source_fast(&path, &content)?;
         let temp_path = md_preview_typ_path(&path);
         let preview_source = fs::read_to_string(&temp_path).map_err(|e| e.to_string())?;
         match validate_typst_source_quiet(&temp_path, &preview_source) {
@@ -1583,7 +1595,7 @@ async fn start_sidecar_preview(
             target_path
         } else {
             let temp = md_preview_typ_path(&path);
-            write_markdown_preview_source_fast(&path, &md_content)?;
+            let _ = write_markdown_preview_source_fast(&path, &md_content)?;
             temp.to_string_lossy().to_string()
         };
         let _ = app_handle.emit(
@@ -1618,9 +1630,9 @@ async fn stop_sidecar_preview(state: tauri::State<'_, AppState>) -> Result<(), S
 }
 
 /// Update the sidecar preview's content without restarting the process.
-/// For markdown: converts the in-memory content to Typst and writes to the
-/// temp .preview.typ file; tinymist's file watcher detects the change and
-/// recompiles automatically.
+/// For markdown: converts the in-memory content to Typst and writes to either
+/// the generated hybrid sibling or the temp .preview.typ file; tinymist's file
+/// watcher detects the change and recompiles automatically.
 /// For .typ files: no-op (auto-save handles writing to disk directly).
 #[tauri::command]
 async fn write_preview_sidecar_content(
@@ -1632,19 +1644,28 @@ async fn write_preview_sidecar_content(
     let detail = path.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         if is_markdown_path(Path::new(&path)) {
-            write_markdown_preview_source_fast(&path, &content)?;
+            return write_markdown_preview_source_fast(&path, &content);
         }
-        Ok(())
+        Ok(None)
     })
     .await
     .map_err(|e| e.to_string())?;
+    if let Ok(Some((path, content))) = &result {
+        let _ = app_handle.emit(
+            "generated-file-updated",
+            GeneratedFileUpdate {
+                path: path.clone(),
+                content: content.clone(),
+            },
+        );
+    }
     emit_perf_metric(
         &app_handle,
         "preview.markdown-write",
         started_at.elapsed(),
         Some(detail),
     );
-    result
+    result.map(|_| ())
 }
 
 /// Debounced idle validation for Markdown sidecar preview content.
@@ -1747,6 +1768,16 @@ pub struct TemplateInfo {
 }
 
 fn templates_dir(app: &tauri::AppHandle) -> std::path::PathBuf {
+    #[cfg(debug_assertions)]
+    {
+        let source_templates = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("resources")
+            .join("templates");
+        if source_templates.exists() {
+            return source_templates;
+        }
+    }
+
     if let Ok(res) = app.path().resource_dir() {
         let p = res.join("resources").join("templates");
         if p.exists() {

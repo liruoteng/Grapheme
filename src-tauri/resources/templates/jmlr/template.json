@@ -1,0 +1,7 @@
+{
+  "id": "jmlr",
+  "name": "JMLR",
+  "description": "Journal of Machine Learning Research starter with journal typography and bibliography support.",
+  "category": "ML / AI",
+  "main": "content.md"
+}

@@ -316,6 +316,21 @@ describe("tabs", () => {
     expect(useEditorStore.getState().tabs[1].isDirty).toBe(false);
     expect(useEditorStore.getState().tabs[1].content).toBe("B");
   });
+
+  it("syncCleanTabContent refreshes a clean generated-file tab", () => {
+    useEditorStore.getState().openTab("/content.typ", "content.typ", "old");
+    useEditorStore.getState().syncCleanTabContent("/content.typ", "generated");
+    const tab = useEditorStore.getState().tabs[0];
+    expect(tab.content).toBe("generated");
+    expect(tab.isDirty).toBe(false);
+  });
+
+  it("syncCleanTabContent preserves unsaved tab edits", () => {
+    useEditorStore.getState().openTab("/content.typ", "content.typ", "old");
+    useEditorStore.getState().updateTabContent("/content.typ", "manual edit");
+    useEditorStore.getState().syncCleanTabContent("/content.typ", "generated");
+    expect(useEditorStore.getState().tabs[0].content).toBe("manual edit");
+  });
 });
 
 // ── activeTab() helper ─────────────────────────────────────────────────────

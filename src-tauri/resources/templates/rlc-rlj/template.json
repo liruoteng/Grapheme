@@ -1,0 +1,7 @@
+{
+  "id": "rlc-rlj",
+  "name": "RLC / RLJ",
+  "description": "Reinforcement Learning Conference and Journal starter with review cover page and bibliography support.",
+  "category": "ML / AI",
+  "main": "content.md"
+}

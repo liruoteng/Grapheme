@@ -1,5 +1,6 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { Search } from "lucide-react";
 import { useEditorStore } from "../../stores/editorStore";
 import "./TemplatePickerDialog.css";
 
@@ -19,7 +20,10 @@ const CATEGORY_COLORS: Record<string, string> = {
 };
 
 function TemplateThumbnail({ template }: { template: TemplateInfo }) {
-  const isTwo = template.id === "ieee-conference" || template.id === "cvpr-2025";
+  const isTwo =
+    template.id === "ieee-conference" ||
+    template.id === "cvpr-2025" ||
+    template.id === "icml-2025";
   const lines = [90, 70, 80, 60, 75, 65, 70, 55];
 
   return (
@@ -53,6 +57,8 @@ function TemplateThumbnail({ template }: { template: TemplateInfo }) {
 export function TemplatePickerDialog({ onClose }: { onClose: () => void }) {
   const [templates, setTemplates] = useState<TemplateInfo[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
+  const [category, setCategory] = useState("All");
+  const [query, setQuery] = useState("");
   const [projectName, setProjectName] = useState("my-paper");
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -75,6 +81,33 @@ export function TemplatePickerDialog({ onClose }: { onClose: () => void }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  const categories = useMemo(
+    () => ["All", ...Array.from(new Set(templates.map((template) => template.category)))],
+    [templates],
+  );
+  const visibleTemplates = useMemo(
+    () => {
+      const normalizedQuery = query.trim().toLowerCase();
+      return templates.filter((template) => {
+        if (category !== "All" && template.category !== category) return false;
+        if (!normalizedQuery) return true;
+        return [template.name, template.description, template.category, template.id]
+          .some((value) => value.toLowerCase().includes(normalizedQuery));
+      });
+    },
+    [category, query, templates],
+  );
+
+  useEffect(() => {
+    if (visibleTemplates.length === 0) {
+      setSelected(null);
+      return;
+    }
+    if (!visibleTemplates.some((template) => template.id === selected)) {
+      setSelected(visibleTemplates[0].id);
+    }
+  }, [selected, visibleTemplates]);
 
   const handleCreate = useCallback(async () => {
     if (!selected) return;
@@ -131,28 +164,58 @@ export function TemplatePickerDialog({ onClose }: { onClose: () => void }) {
             <div className="template-loading">No templates found.</div>
           )}
           {!loading && templates.length > 0 && (
-            <div className="template-grid">
-              {templates.map((t) => (
-                <button
-                  key={t.id}
-                  className={`template-card${selected === t.id ? " selected" : ""}`}
-                  onClick={() => setSelected(t.id)}
-                  onDoubleClick={handleCreate}
-                >
-                  <TemplateThumbnail template={t} />
-                  <div className="template-card-info">
-                    <div className="template-card-name">{t.name}</div>
-                    <div className="template-card-desc">{t.description}</div>
-                    <span
-                      className="template-badge"
-                      style={{ background: CATEGORY_COLORS[t.category] ?? "var(--template-badge-general)" }}
+            <>
+              <div className="template-filter" role="tablist" aria-label="Template category">
+                {categories.map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    role="tab"
+                    aria-selected={category === item}
+                    className={`template-filter-option${category === item ? " selected" : ""}`}
+                    onClick={() => setCategory(item)}
+                  >
+                    {item}
+                  </button>
+                ))}
+              </div>
+              <label className="template-search">
+                <Search size={14} />
+                <input
+                  type="search"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Search templates"
+                  aria-label="Search templates"
+                />
+              </label>
+              {visibleTemplates.length === 0 ? (
+                <div className="template-loading">No matching templates.</div>
+              ) : (
+                <div className="template-grid">
+                  {visibleTemplates.map((t) => (
+                    <button
+                      key={t.id}
+                      className={`template-card${selected === t.id ? " selected" : ""}`}
+                      onClick={() => setSelected(t.id)}
+                      onDoubleClick={handleCreate}
                     >
-                      {t.category}
-                    </span>
-                  </div>
-                </button>
-              ))}
-            </div>
+                      <TemplateThumbnail template={t} />
+                      <div className="template-card-info">
+                        <div className="template-card-name">{t.name}</div>
+                        <div className="template-card-desc">{t.description}</div>
+                        <span
+                          className="template-badge"
+                          style={{ background: CATEGORY_COLORS[t.category] ?? "var(--template-badge-general)" }}
+                        >
+                          {t.category}
+                        </span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </div>
 

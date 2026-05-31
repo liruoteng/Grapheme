@@ -136,6 +136,7 @@ interface EditorState {
   closeTab: (path: string) => void;
   setActiveTab: (path: string) => void;
   updateTabContent: (path: string, content: string) => void;
+  syncCleanTabContent: (path: string, content: string) => void;
   markTabClean: (path: string) => void;
 
   // Active PDF Panel Path
@@ -471,6 +472,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.path === path ? { ...t, content, isDirty: true } : t
+      ),
+    })),
+
+  syncCleanTabContent: (path, content) =>
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.path === path && !t.isDirty ? { ...t, content } : t
       ),
     })),
 

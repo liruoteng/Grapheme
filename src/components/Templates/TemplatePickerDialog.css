@@ -53,6 +53,68 @@
   padding: 40px 0;
 }
 
+.template-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 14px;
+}
+
+.template-filter-option {
+  background: var(--bg-secondary, #252525);
+  border: 1px solid var(--border-color, #444);
+  border-radius: 5px;
+  color: var(--text-secondary, #aaa);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 9px;
+}
+
+.template-filter-option:hover {
+  border-color: var(--border-hover, #555);
+  color: var(--text-primary, #e0e0e0);
+}
+
+.template-filter-option.selected {
+  background: var(--accent, #4a9eff);
+  border-color: var(--accent, #4a9eff);
+  color: #fff;
+}
+
+.template-search {
+  align-items: center;
+  background: var(--bg-secondary, #252525);
+  border: 1px solid var(--border-color, #444);
+  border-radius: 6px;
+  color: var(--text-secondary, #aaa);
+  display: flex;
+  gap: 7px;
+  margin-bottom: 14px;
+  padding: 0 9px;
+}
+
+.template-search:focus-within {
+  border-color: var(--accent, #4a9eff);
+}
+
+.template-search input {
+  background: transparent;
+  border: 0;
+  color: var(--text-primary, #e0e0e0);
+  flex: 1;
+  font-family: inherit;
+  font-size: 12px;
+  min-width: 0;
+  outline: none;
+  padding: 7px 0;
+}
+
+.template-search input::placeholder {
+  color: var(--text-secondary, #888);
+}
+
 .template-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
