@@ -1852,7 +1852,7 @@ class ListMarkerWidget extends WidgetType {
   toDOM() {
     const span = document.createElement("span");
     span.className = `cm-md-list-marker cm-md-list-marker--${this.kind}`;
-    span.textContent = this.kind === "ordered" ? this.label : "";
+    span.textContent = this.kind === "ordered" ? `${this.label} ` : "";
     return span;
   }
 }

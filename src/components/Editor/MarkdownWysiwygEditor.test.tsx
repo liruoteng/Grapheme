@@ -66,6 +66,17 @@ describe("MarkdownWysiwygEditor", () => {
     });
   });
 
+  it("preserves the source spacing in rendered ordered list markers", async () => {
+    const path = "/workspace/examples/markdown/ordered-list.md";
+    useEditorStore.getState().openTab(path, "ordered-list.md", "10. Ordered item\n");
+
+    const { container } = render(<MarkdownWysiwygEditor />);
+
+    await waitFor(() => {
+      expect(container.querySelector(".cm-md-list-marker--ordered")?.textContent).toBe("10. ");
+    });
+  });
+
   it("shows inline markdown syntax at decorated text boundaries", async () => {
     const source = "**bold**\n";
     const path = "/workspace/examples/markdown/bold.md";
