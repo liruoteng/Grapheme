@@ -54,6 +54,10 @@
   --scrollbar-thumb: #3f3f46;
 }
 
+.dark {
+  --accent: #E1A36F;
+}
+
 /* ── Theme: Claude (MiniMax-inspired white light) ─────────────────────────── */
 [data-theme="claude"] {
   --bg-base: #ffffff;

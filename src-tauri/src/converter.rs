@@ -319,6 +319,61 @@ struct MarkdownOptions {
     footnotes: HashMap<String, String>,
 }
 
+fn process_blockquote_lines(lines: &[&str], options: &MarkdownOptions) -> String {
+    let stripped: Vec<&str> = lines
+        .iter()
+        .map(|l| {
+            l.strip_prefix("> ")
+                .or_else(|| l.strip_prefix(">"))
+                .unwrap_or("")
+        })
+        .collect();
+
+    let mut body = String::new();
+    let mut j = 0;
+    while j < stripped.len() {
+        let sl = stripped[j];
+        if sl.starts_with("> ") || sl.starts_with('>') {
+            let start = j;
+            while j < stripped.len()
+                && (stripped[j].starts_with("> ") || stripped[j].starts_with('>'))
+            {
+                j += 1;
+            }
+            let inner = process_blockquote_lines(&stripped[start..j], options);
+            if !body.is_empty() {
+                body.push_str("\n\n");
+            }
+            body.push_str(&inner);
+        } else if sl.trim().is_empty() {
+            if !body.is_empty() {
+                body.push_str("\n\n");
+            }
+            j += 1;
+        } else {
+            let start = j;
+            while j < stripped.len()
+                && !stripped[j].starts_with("> ")
+                && !stripped[j].starts_with('>')
+                && !stripped[j].trim().is_empty()
+            {
+                j += 1;
+            }
+            let text: String = stripped[start..j]
+                .iter()
+                .map(|l| inline_with_options(l.trim(), options))
+                .collect::<Vec<_>>()
+                .join("\n");
+            if !body.is_empty() {
+                body.push_str("\n\n");
+            }
+            body.push_str(&text);
+        }
+    }
+
+    format!("#quote(block: true)[{body}]")
+}
+
 fn markdown_to_typst_with_options(
     content: &str,
     mut options: MarkdownOptions,
@@ -584,13 +639,15 @@ fn markdown_to_typst_with_options(
         }
 
         // ── Blockquote ────────────────────────────────────────────────────────
-        if let Some(rest) = line.strip_prefix("> ").or_else(|| line.strip_prefix(">")) {
-            out.push_str(&format!(
-                "#quote[{}]\n\n",
-                inline_with_options(rest.trim(), &options)
-            ));
+        if line.starts_with("> ") || line.starts_with('>') {
+            let start = i;
+            while i < lines.len() && (lines[i].starts_with("> ") || lines[i].starts_with('>')) {
+                i += 1;
+            }
+            let bq_lines = &lines[start..i];
+            out.push_str(&process_blockquote_lines(bq_lines, &options));
+            out.push_str("\n\n");
             prev_blank = true;
-            i += 1;
             continue;
         }
 
@@ -2576,13 +2633,31 @@ mod tests {
     #[test]
     fn blockquote() {
         let out = convert("> quoted text\n");
-        assert!(out.contains("#quote[quoted text]"));
+        assert!(out.contains("#quote(block: true)[quoted text]"));
     }
 
     #[test]
     fn blockquote_no_space() {
         let out = convert(">no space\n");
-        assert!(out.contains("#quote[no space]"));
+        assert!(out.contains("#quote(block: true)[no space]"));
+    }
+
+    #[test]
+    fn blockquote_nested() {
+        let out = convert("> level 1\n> > level 2\n");
+        assert!(out.contains("#quote(block: true)[level 1\n\n#quote(block: true)[level 2]]"));
+    }
+
+    #[test]
+    fn blockquote_nested_deep() {
+        let out = convert("> l1\n> > l2\n> > > l3\n");
+        assert!(out.contains("#quote(block: true)[l1\n\n#quote(block: true)[l2\n\n#quote(block: true)[l3]]]"));
+    }
+
+    #[test]
+    fn blockquote_multiline_same_level() {
+        let out = convert("> line 1\n> line 2\n");
+        assert!(out.contains("#quote(block: true)[line 1\nline 2]"));
     }
 
     #[test]

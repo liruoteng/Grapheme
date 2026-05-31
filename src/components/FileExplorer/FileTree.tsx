@@ -225,6 +225,10 @@ function DirNode({ path, name, depth, onRefreshParent, onSelectDir, onClearDirSe
             }}
             onBlur={() => setRenamingTo(null)}
             autoFocus
+            spellCheck={false}
+            autoCorrect="off"
+            autoCapitalize="off"
+            autoComplete="off"
           />
         </div>
       ) : (
@@ -413,6 +417,10 @@ function FileNode({ path, name, depth, onRefreshParent, highlighted, onClearDirS
           }}
           onBlur={() => setRenamingTo(null)}
           autoFocus
+          spellCheck={false}
+          autoCorrect="off"
+          autoCapitalize="off"
+          autoComplete="off"
         />
       </div>
     );
@@ -462,6 +470,10 @@ function InlineCreateInput({ pendingCreate, depth }: { pendingCreate: PendingCre
         }}
         onBlur={pendingCreate.onCancel}
         placeholder={pendingCreate.type === "file" ? "filename.typ" : "folder name"}
+        spellCheck={false}
+        autoCorrect="off"
+        autoCapitalize="off"
+        autoComplete="off"
       />
     </div>
   );

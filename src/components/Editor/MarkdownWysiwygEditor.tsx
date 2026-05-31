@@ -1739,6 +1739,27 @@ class HtmlBlockWidget extends WidgetType {
     wrapper.dataset.htmlFrom = String(this.block.from);
     wrapper.dataset.htmlTo = String(this.block.to);
 
+    const actions = document.createElement("div");
+    actions.className = "cm-md-html-block-actions";
+
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.textContent = "</>";
+    editBtn.addEventListener("mousedown", (event) => event.preventDefault());
+    editBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      const htmlFrom = Number(wrapper.dataset.htmlFrom);
+      const htmlTo = Number(wrapper.dataset.htmlTo);
+      if (!Number.isFinite(htmlFrom) || !Number.isFinite(htmlTo)) return;
+      dispatchPreservingScroll(view, {
+        effects: editHtmlBlockEffect.of({ from: htmlFrom, to: htmlTo }),
+        selection: EditorSelection.cursor(htmlFrom),
+      }, htmlFrom);
+      view.focus();
+    });
+    actions.appendChild(editBtn);
+    wrapper.appendChild(actions);
+
     const inner = document.createElement("div");
     inner.className = "cm-md-html-block-inner";
 
@@ -1757,11 +1778,10 @@ class HtmlBlockWidget extends WidgetType {
       const htmlFrom = Number(wrapper.dataset.htmlFrom);
       const htmlTo = Number(wrapper.dataset.htmlTo);
       if (!Number.isFinite(htmlFrom) || !Number.isFinite(htmlTo)) return;
-      view.dispatch({
+      dispatchPreservingScroll(view, {
         effects: editHtmlBlockEffect.of({ from: htmlFrom, to: htmlTo }),
-        selection: EditorSelection.range(htmlFrom, htmlTo),
-        scrollIntoView: false,
-      });
+        selection: EditorSelection.cursor(htmlFrom),
+      }, htmlFrom);
       view.focus();
     });
 
@@ -1771,6 +1791,7 @@ class HtmlBlockWidget extends WidgetType {
 
 class HtmlCommentWidget extends WidgetType {
   constructor(
+    private readonly content: string,
     private readonly from: number,
     private readonly to: number,
   ) {
@@ -1778,13 +1799,14 @@ class HtmlCommentWidget extends WidgetType {
   }
 
   eq(other: HtmlCommentWidget) {
-    return this.from === other.from && this.to === other.to;
+    return this.content === other.content && this.from === other.from && this.to === other.to;
   }
 
   toDOM() {
     const span = document.createElement("span");
     span.className = "cm-md-html-comment";
     span.contentEditable = "false";
+    span.textContent = this.content;
     return span;
   }
 }
@@ -2307,7 +2329,7 @@ function addInlineDecorations(
       from: commentStart,
       to: commentEnd,
       replace: true,
-      widget: new HtmlCommentWidget(commentStart, commentEnd),
+      widget: new HtmlCommentWidget(commentMatch[0], commentStart, commentEnd),
     });
   }
 
@@ -2589,7 +2611,7 @@ function buildMarkdownDecorations(state: EditorState) {
         from: htmlComment.from,
         to: htmlComment.to,
         replace: true,
-        widget: new HtmlCommentWidget(htmlComment.from, htmlComment.to),
+        widget: new HtmlCommentWidget(doc.sliceString(htmlComment.from, htmlComment.to), htmlComment.from, htmlComment.to),
       });
       lineNumber = lastCommentLineNumber;
       continue;
@@ -3317,6 +3339,10 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
       extensions,
     });
     const view = new EditorView({ state, parent: container });
+    const fm = frontmatterAtTop(view.state);
+    if (fm && view.state.selection.main.from <= fm.to) {
+      view.dispatch({ selection: { anchor: fm.to + 1 } });
+    }
     viewRef.current = view;
     pathRef.current = editorFile.path;
     const scroller = view.scrollDOM;
