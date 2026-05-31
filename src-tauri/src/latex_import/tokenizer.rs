@@ -102,8 +102,23 @@ pub fn tokenize(src: &str) -> Vec<Token> {
                         continue;
                     }
                     // Escaped special characters (\%, \&, \$, \#, \_, \{, \}, \~, \^, \\)
-                    if matches!(n, '%' | '&' | '$' | '#' | '_' | '{' | '}' | '~' | '^' | '\\' | ' ' | ',' | ';' | ':' | '!')
-                        && !n.is_ascii_alphabetic()
+                    if matches!(
+                        n,
+                        '%' | '&'
+                            | '$'
+                            | '#'
+                            | '_'
+                            | '{'
+                            | '}'
+                            | '~'
+                            | '^'
+                            | '\\'
+                            | ' '
+                            | ','
+                            | ';'
+                            | ':'
+                            | '!'
+                    ) && !n.is_ascii_alphabetic()
                     {
                         // Emit as a command with single-char name so the converter can map it.
                         flush(&mut text, &mut out);
@@ -297,7 +312,9 @@ mod tests {
     fn tokenizes_environment() {
         let t = tokenize("\\begin{figure}[t]\\end{figure}");
         assert_eq!(t.len(), 2);
-        assert!(matches!(&t[0], Token::BeginEnv { name, opt, .. } if name == "figure" && opt == &vec!["t".to_string()]));
+        assert!(
+            matches!(&t[0], Token::BeginEnv { name, opt, .. } if name == "figure" && opt == &vec!["t".to_string()])
+        );
         assert!(matches!(&t[1], Token::EndEnv(n) if n == "figure"));
     }
 
@@ -311,13 +328,17 @@ mod tests {
     #[test]
     fn tokenizes_display_math_brackets() {
         let t = tokenize("before \\[ a = b \\] after");
-        assert!(t.iter().any(|tok| matches!(tok, Token::Math { display: true, body } if body.trim() == "a = b")));
+        assert!(t.iter().any(
+            |tok| matches!(tok, Token::Math { display: true, body } if body.trim() == "a = b")
+        ));
     }
 
     #[test]
     fn tokenizes_comment() {
         let t = tokenize("a % comment\nb");
-        assert!(t.iter().any(|tok| matches!(tok, Token::Comment(c) if c == " comment")));
+        assert!(t
+            .iter()
+            .any(|tok| matches!(tok, Token::Comment(c) if c == " comment")));
     }
 
     #[test]

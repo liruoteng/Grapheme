@@ -23,8 +23,12 @@ pub fn extract_to_temp(zip_path: &Path) -> Result<PathBuf, String> {
     fs::create_dir_all(&out).map_err(|e| format!("mkdir temp: {e}"))?;
 
     for i in 0..archive.len() {
-        let mut entry = archive.by_index(i).map_err(|e| format!("zip entry {i}: {e}"))?;
-        let Some(rel) = sanitize(entry.mangled_name().as_path()) else { continue };
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| format!("zip entry {i}: {e}"))?;
+        let Some(rel) = sanitize(entry.mangled_name().as_path()) else {
+            continue;
+        };
         let dest = out.join(&rel);
 
         if entry.is_dir() {
@@ -50,7 +54,11 @@ fn sanitize(p: &Path) -> Option<PathBuf> {
             _ => return None,
         }
     }
-    if clean.as_os_str().is_empty() { None } else { Some(clean) }
+    if clean.as_os_str().is_empty() {
+        None
+    } else {
+        Some(clean)
+    }
 }
 
 #[cfg(test)]

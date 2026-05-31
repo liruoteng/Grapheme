@@ -11,7 +11,9 @@ use super::Profile;
 pub struct CvprProfile;
 
 impl Profile for CvprProfile {
-    fn name(&self) -> &'static str { "cvpr" }
+    fn name(&self) -> &'static str {
+        "cvpr"
+    }
 
     fn matches(&self, preamble: &str) -> bool {
         preamble.contains("{cvpr}") || preamble.contains("\\usepackage{cvpr}")

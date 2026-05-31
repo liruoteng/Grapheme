@@ -37,10 +37,7 @@ pub async fn run_lsp_bridge(tinymist_path: String) {
 }
 
 /// Handle one WebSocket connection: spawn Tinymist and wire up the pipes.
-async fn handle_connection(
-    stream: tokio::net::TcpStream,
-    tinymist_path: String,
-) {
+async fn handle_connection(stream: tokio::net::TcpStream, tinymist_path: String) {
     let ws_stream = match tokio_tungstenite::accept_async(stream).await {
         Ok(ws) => ws,
         Err(e) => {

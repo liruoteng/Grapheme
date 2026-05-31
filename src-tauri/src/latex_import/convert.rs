@@ -23,11 +23,7 @@ pub struct EnvMap(pub HashMap<String, (String, String)>);
 
 // ── Public entry point ────────────────────────────────────────────────────
 
-pub fn run(
-    extracted: &Path,
-    dest: &Path,
-    profile: &dyn Profile,
-) -> Result<ImportReport, String> {
+pub fn run(extracted: &Path, dest: &Path, profile: &dyn Profile) -> Result<ImportReport, String> {
     if dest.exists() {
         return Err(format!("Destination already exists: {}", dest.display()));
     }
@@ -35,15 +31,14 @@ pub fn run(
 
     // Copy figures / assets (anything that isn't .tex/.sty/.cls/.bib/.bst).
     let mut bib_file: Option<String> = None;
-    copy_assets(extracted, dest, &mut bib_file)
-        .map_err(|e| format!("copy assets: {e}"))?;
+    copy_assets(extracted, dest, &mut bib_file).map_err(|e| format!("copy assets: {e}"))?;
 
     // Find the main .tex file.
-    let main_tex = find_main_tex(extracted)
-        .ok_or_else(|| "No .tex file found in bundle.".to_string())?;
+    let main_tex =
+        find_main_tex(extracted).ok_or_else(|| "No .tex file found in bundle.".to_string())?;
 
-    let src = fs::read_to_string(&main_tex)
-        .map_err(|e| format!("read {}: {e}", main_tex.display()))?;
+    let src =
+        fs::read_to_string(&main_tex).map_err(|e| format!("read {}: {e}", main_tex.display()))?;
 
     let tex_root = main_tex.parent().unwrap_or(Path::new("."));
 
@@ -76,7 +71,10 @@ pub fn run(
     main_src.push_str(profile.main_preamble());
     main_src.push_str("\n#show: doc => template(\n");
     main_src.push_str(&format!("  title: [{}],\n", meta.title));
-    main_src.push_str(&format!("  authors: ({}),\n", format_authors_typst(&meta.authors)));
+    main_src.push_str(&format!(
+        "  authors: ({}),\n",
+        format_authors_typst(&meta.authors)
+    ));
     if !meta.abstract_text.is_empty() {
         main_src.push_str(&format!("  abstract: [\n{}\n  ],\n", meta.abstract_text));
     }
@@ -152,7 +150,11 @@ fn extract_metadata(src: &str, cmd_map: &CommandMap) -> DocMeta {
     // Process abstract through emit_arg for proper formatting.
     let abstract_text = emit_arg_with_map(&abstract_text, cmd_map);
 
-    DocMeta { title, authors, abstract_text }
+    DocMeta {
+        title,
+        authors,
+        abstract_text,
+    }
 }
 
 /// Parse \author{...} block into individual AuthorEntry records.
@@ -168,7 +170,9 @@ fn parse_authors(raw: &str, cmd_map: &CommandMap) -> Vec<AuthorEntry> {
                 .collect();
             let name = lines.first().cloned().unwrap_or_default();
             // Heuristic: last line that looks like an email is the email.
-            let email = lines.iter().rev()
+            let email = lines
+                .iter()
+                .rev()
                 .find(|l| l.contains('@'))
                 .cloned()
                 .unwrap_or_default();
@@ -179,7 +183,11 @@ fn parse_authors(raw: &str, cmd_map: &CommandMap) -> Vec<AuthorEntry> {
                 .cloned()
                 .collect::<Vec<_>>()
                 .join(", ");
-            AuthorEntry { name, affiliation, email }
+            AuthorEntry {
+                name,
+                affiliation,
+                email,
+            }
         })
         .filter(|a| !a.name.is_empty())
         .collect()
@@ -226,8 +234,19 @@ fn expand_inputs(src: &str, root: &Path, depth: usize) -> String {
     let mut rest = src;
     while !rest.is_empty() {
         // Find next \input or \include.
-        let input_pos = rest.find("\\input{").or_else(|| rest.find("\\include{"))
-            .map(|p| (p, if rest[p..].starts_with("\\input{") { 7 } else { 9 }));
+        let input_pos = rest
+            .find("\\input{")
+            .or_else(|| rest.find("\\include{"))
+            .map(|p| {
+                (
+                    p,
+                    if rest[p..].starts_with("\\input{") {
+                        7
+                    } else {
+                        9
+                    },
+                )
+            });
 
         let Some((pos, cmd_len)) = input_pos else {
             out.push_str(rest);
@@ -239,7 +258,10 @@ fn expand_inputs(src: &str, root: &Path, depth: usize) -> String {
         let line_prefix = rest[line_start..pos].trim_start();
         if line_prefix.starts_with('%') {
             // Skip to end of this line and continue.
-            let end_of_line = rest[pos..].find('\n').map(|p| pos + p + 1).unwrap_or(rest.len());
+            let end_of_line = rest[pos..]
+                .find('\n')
+                .map(|p| pos + p + 1)
+                .unwrap_or(rest.len());
             out.push_str(&rest[..end_of_line]);
             rest = &rest[end_of_line..];
             continue;
@@ -251,12 +273,18 @@ fn expand_inputs(src: &str, root: &Path, depth: usize) -> String {
         // Read the filename until '}'.
         let close = rest.find('}').unwrap_or(rest.len());
         let filename = rest[..close].trim().to_string();
-        rest = if close < rest.len() { &rest[close + 1..] } else { "" };
+        rest = if close < rest.len() {
+            &rest[close + 1..]
+        } else {
+            ""
+        };
 
         // Try to find and read the referenced file.
         let expanded = try_read_input(root, &filename)
             .map(|content| expand_inputs(&content, root, depth + 1))
-            .unwrap_or_else(|| format!("/* TODO(latex): \\input{{{filename}}} — file not found */\n"));
+            .unwrap_or_else(|| {
+                format!("/* TODO(latex): \\input{{{filename}}} — file not found */\n")
+            });
         out.push_str(&expanded);
     }
     out
@@ -286,9 +314,10 @@ fn find_main_tex(root: &Path) -> Option<std::path::PathBuf> {
     // Prefer files named "main.tex" or "paper.tex" that have a real \begin{document}.
     let priority_names = ["main.tex", "paper.tex", "manuscript.tex", "article.tex"];
     for name in priority_names {
-        if let Some(p) = candidates.iter().find(|p| {
-            p.file_name().and_then(|n| n.to_str()) == Some(name) && has_real_document(p)
-        }) {
+        if let Some(p) = candidates
+            .iter()
+            .find(|p| p.file_name().and_then(|n| n.to_str()) == Some(name) && has_real_document(p))
+        {
             return Some(p.clone());
         }
     }
@@ -303,7 +332,9 @@ fn find_main_tex(root: &Path) -> Option<std::path::PathBuf> {
 
 /// True if the file has `\begin{document}` on a non-comment line.
 fn has_real_document(path: &Path) -> bool {
-    let Ok(txt) = fs::read_to_string(path) else { return false };
+    let Ok(txt) = fs::read_to_string(path) else {
+        return false;
+    };
     txt.lines().any(|line| {
         let trimmed = line.trim_start();
         !trimmed.starts_with('%') && trimmed.contains("\\begin{document}")
@@ -311,7 +342,9 @@ fn has_real_document(path: &Path) -> bool {
 }
 
 fn collect_tex_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else { return };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
     let mut dirs = Vec::new();
     let mut files = Vec::new();
     for entry in entries.flatten() {
@@ -332,7 +365,18 @@ fn collect_tex_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
 
 // ── Asset copy ────────────────────────────────────────────────────────────
 
-static SKIP_EXTS: &[&str] = &["tex", "sty", "cls", "bst", "log", "aux", "toc", "out", "fls", "fdb_latexmk"];
+static SKIP_EXTS: &[&str] = &[
+    "tex",
+    "sty",
+    "cls",
+    "bst",
+    "log",
+    "aux",
+    "toc",
+    "out",
+    "fls",
+    "fdb_latexmk",
+];
 
 fn copy_assets(
     src_root: &Path,
@@ -431,7 +475,7 @@ fn core_command_map() -> CommandMap {
     m.insert("~".into(), "#sym.tilde".into());
 
     // Spacing commands.
-    m.insert(" ".into(), " ".into());   // \  (backslash-space)
+    m.insert(" ".into(), " ".into()); // \  (backslash-space)
     m.insert(",".into(), "#h(0.16em)".into());
     m.insert(";".into(), "#h(0.28em)".into());
     m.insert(":".into(), "#h(0.22em)".into());
@@ -440,9 +484,29 @@ fn core_command_map() -> CommandMap {
     // Legacy LaTeX2e font/style declarations (used as switches inside {}).
     // Map to empty — they appear inside {} groups as toggles; without full
     // group-scope tracking the safest output is to drop them silently.
-    for sw in &["bf","it","em","rm","tt","sc","sl","sf","up","cal","mit",
-                "tiny","scriptsize","footnotesize","small","normalsize",
-                "large","Large","LARGE","huge","Huge"] {
+    for sw in &[
+        "bf",
+        "it",
+        "em",
+        "rm",
+        "tt",
+        "sc",
+        "sl",
+        "sf",
+        "up",
+        "cal",
+        "mit",
+        "tiny",
+        "scriptsize",
+        "footnotesize",
+        "small",
+        "normalsize",
+        "large",
+        "Large",
+        "LARGE",
+        "huge",
+        "Huge",
+    ] {
         m.insert(sw.to_string(), String::new());
     }
 
@@ -456,7 +520,7 @@ fn core_command_map() -> CommandMap {
     m.insert("vs".into(), "vs.".into());
 
     // Booktabs table rules — strip them; Typst uses stroke rules instead.
-    for rule in &["toprule","midrule","bottomrule","hline","cline"] {
+    for rule in &["toprule", "midrule", "bottomrule", "hline", "cline"] {
         m.insert(rule.to_string(), String::new());
     }
 
@@ -465,16 +529,19 @@ fn core_command_map() -> CommandMap {
 
 fn core_env_map() -> EnvMap {
     let mut m = HashMap::new();
-    m.insert("itemize".into(),    ("#list(\n".into(), ")".into()));
-    m.insert("enumerate".into(),  ("#enum(\n".into(), ")".into()));
-    m.insert("description".into(),("#terms(\n".into(), ")".into()));
-    m.insert("quote".into(),      ("#quote[".into(), "]".into()));
-    m.insert("quotation".into(),  ("#quote[".into(), "]".into()));
-    m.insert("verbatim".into(),   ("```\n".into(), "\n```".into()));
+    m.insert("itemize".into(), ("#list(\n".into(), ")".into()));
+    m.insert("enumerate".into(), ("#enum(\n".into(), ")".into()));
+    m.insert("description".into(), ("#terms(\n".into(), ")".into()));
+    m.insert("quote".into(), ("#quote[".into(), "]".into()));
+    m.insert("quotation".into(), ("#quote[".into(), "]".into()));
+    m.insert("verbatim".into(), ("```\n".into(), "\n```".into()));
     // Alignment envs: just pass body through (alignment handled by page settings).
-    m.insert("center".into(),     ("#align(center)[\n".into(), "]\n".into()));
-    m.insert("flushleft".into(),  ("#align(left)[\n".into(),   "]\n".into()));
-    m.insert("flushright".into(), ("#align(right)[\n".into(),  "]\n".into()));
+    m.insert("center".into(), ("#align(center)[\n".into(), "]\n".into()));
+    m.insert("flushleft".into(), ("#align(left)[\n".into(), "]\n".into()));
+    m.insert(
+        "flushright".into(),
+        ("#align(right)[\n".into(), "]\n".into()),
+    );
     EnvMap(m)
 }
 
@@ -576,18 +643,54 @@ fn emit_command(
     // Commands that we handle structurally elsewhere or that are preamble-only.
     if matches!(
         name,
-        "title" | "author" | "date" | "maketitle" | "bibliographystyle"
-            | "usepackage" | "documentclass" | "bibliography" | "thanks"
-            | "newtheorem" | "theoremstyle" | "setcounter" | "pagenumbering"
-            | "pagestyle" | "thispagestyle" | "setlength" | "addtolength"
-            | "geometry" | "definecolor" | "colorlet" | "hypersetup"
-            | "def" | "let" | "renewcommand" | "providecommand"
-            | "input" | "include" | "includeonly"
-            | "small" | "large" | "Large" | "LARGE" | "huge" | "Huge"
-            | "normalsize" | "normalfont" | "selectfont"
-            | "centering" | "raggedright" | "raggedleft"
-            | "hfill" | "vfill" | "medskip" | "bigskip" | "smallskip"
-            | "appendix" | "tableofcontents" | "listoffigures"
+        "title"
+            | "author"
+            | "date"
+            | "maketitle"
+            | "bibliographystyle"
+            | "usepackage"
+            | "documentclass"
+            | "bibliography"
+            | "thanks"
+            | "newtheorem"
+            | "theoremstyle"
+            | "setcounter"
+            | "pagenumbering"
+            | "pagestyle"
+            | "thispagestyle"
+            | "setlength"
+            | "addtolength"
+            | "geometry"
+            | "definecolor"
+            | "colorlet"
+            | "hypersetup"
+            | "def"
+            | "let"
+            | "renewcommand"
+            | "providecommand"
+            | "input"
+            | "include"
+            | "includeonly"
+            | "small"
+            | "large"
+            | "Large"
+            | "LARGE"
+            | "huge"
+            | "Huge"
+            | "normalsize"
+            | "normalfont"
+            | "selectfont"
+            | "centering"
+            | "raggedright"
+            | "raggedleft"
+            | "hfill"
+            | "vfill"
+            | "medskip"
+            | "bigskip"
+            | "smallskip"
+            | "appendix"
+            | "tableofcontents"
+            | "listoffigures"
     ) {
         return;
     }
@@ -608,10 +711,22 @@ fn emit_command(
     }
 
     // Multi-key cite/ref commands: \cite{a,b,c} → @a @b @c
-    if matches!(name, "cite" | "citep" | "citet" | "citealp" | "citealt"
-                     | "cref" | "Cref" | "ref" | "eqref" | "autoref") {
+    if matches!(
+        name,
+        "cite"
+            | "citep"
+            | "citet"
+            | "citealp"
+            | "citealt"
+            | "cref"
+            | "Cref"
+            | "ref"
+            | "eqref"
+            | "autoref"
+    ) {
         if let Some(keys) = args.first() {
-            let refs: String = keys.split(',')
+            let refs: String = keys
+                .split(',')
                 .map(|k| format!("@{}", k.trim()))
                 .collect::<Vec<_>>()
                 .join(" ");
@@ -686,10 +801,14 @@ fn emit_env(
             out.push_str("\n#figure(\n");
             if tabular.cols == 0 {
                 out.push_str("  /* TODO(latex): tabular content */\n");
-                notes.push(format!("Table env with complex tabular — needs manual conversion."));
+                notes.push(format!(
+                    "Table env with complex tabular — needs manual conversion."
+                ));
             } else {
-                out.push_str(&format!("  table(\n    columns: {},\n    {}\n  ),\n",
-                    tabular.cols, tabular.cells));
+                out.push_str(&format!(
+                    "  table(\n    columns: {},\n    {}\n  ),\n",
+                    tabular.cols, tabular.cells
+                ));
             }
             if !caption.is_empty() {
                 out.push_str(&format!("  caption: [{}],\n", typst_escape(&caption)));
@@ -705,7 +824,9 @@ fn emit_env(
         }
 
         "itemize" | "enumerate" | "description" => {
-            let (begin_s, end_s) = env_map.0.get(name)
+            let (begin_s, end_s) = env_map
+                .0
+                .get(name)
                 .cloned()
                 .unwrap_or_else(|| ("#list(\n".into(), ")".into()));
             let list_type = name.to_string();
@@ -731,8 +852,8 @@ fn emit_env(
             state.in_list = !state.list_stack.is_empty();
         }
 
-        "equation" | "equation*" | "align" | "align*" | "gather" | "gather*"
-        | "multline" | "multline*" | "eqnarray" | "eqnarray*" => {
+        "equation" | "equation*" | "align" | "align*" | "gather" | "gather*" | "multline"
+        | "multline*" | "eqnarray" | "eqnarray*" => {
             out.push_str("\n$ ");
             out.push_str(&convert_math(&inner));
             out.push_str(" $\n");
@@ -813,18 +934,32 @@ fn token_to_source(t: &Token) -> String {
     match t {
         Token::Text(s) => s.clone(),
         Token::Comment(s) => format!("%{s}\n"),
-        Token::Math { display: true, body } => format!("\\[{body}\\]"),
-        Token::Math { display: false, body } => format!("${body}$"),
+        Token::Math {
+            display: true,
+            body,
+        } => format!("\\[{body}\\]"),
+        Token::Math {
+            display: false,
+            body,
+        } => format!("${body}$"),
         Token::Command { name, opt, args } => {
             let mut s = format!("\\{name}");
-            for o in opt { s.push_str(&format!("[{o}]")); }
-            for a in args { s.push_str(&format!("{{{a}}}")); }
+            for o in opt {
+                s.push_str(&format!("[{o}]"));
+            }
+            for a in args {
+                s.push_str(&format!("{{{a}}}"));
+            }
             s
         }
         Token::BeginEnv { name, opt, args } => {
             let mut s = format!("\\begin{{{name}}}");
-            for o in opt { s.push_str(&format!("[{o}]")); }
-            for a in args { s.push_str(&format!("{{{a}}}")); }
+            for o in opt {
+                s.push_str(&format!("[{o}]"));
+            }
+            for a in args {
+                s.push_str(&format!("{{{a}}}"));
+            }
             s
         }
         Token::EndEnv(name) => format!("\\end{{{name}}}"),
@@ -860,10 +995,16 @@ struct TabularResult {
     cells: String,
 }
 
-fn extract_table_parts(tokens: &[Token], notes: &mut Vec<String>) -> (String, String, TabularResult) {
+fn extract_table_parts(
+    tokens: &[Token],
+    notes: &mut Vec<String>,
+) -> (String, String, TabularResult) {
     let mut caption = String::new();
     let mut label = String::new();
-    let mut tabular = TabularResult { cols: 0, cells: String::new() };
+    let mut tabular = TabularResult {
+        cols: 0,
+        cells: String::new(),
+    };
 
     let mut i = 0;
     while i < tokens.len() {
@@ -876,7 +1017,10 @@ fn extract_table_parts(tokens: &[Token], notes: &mut Vec<String>) -> (String, St
             }
             Token::BeginEnv { name, args, .. } if name == "tabular" => {
                 let col_spec = args.first().map(|s| s.as_str()).unwrap_or("");
-                let ncols = col_spec.chars().filter(|c| matches!(c, 'l' | 'r' | 'c' | 'p')).count();
+                let ncols = col_spec
+                    .chars()
+                    .filter(|c| matches!(c, 'l' | 'r' | 'c' | 'p'))
+                    .count();
                 tabular.cols = ncols.max(1);
                 // Collect tabular body.
                 let (body, _) = collect_env_body(tokens, i, "tabular");
@@ -896,7 +1040,9 @@ fn convert_tabular_body(body: &str, _notes: &mut Vec<String>) -> String {
     let mut cells = String::new();
     for row in rows {
         let row = row.trim().trim_start_matches("\\hline").trim();
-        if row.is_empty() { continue; }
+        if row.is_empty() {
+            continue;
+        }
         for cell in row.split('&') {
             let cell = cell.trim();
             cells.push_str(&format!("[{}], ", typst_escape(cell)));
@@ -915,7 +1061,10 @@ fn split_items(tokens: &[Token]) -> Vec<Vec<Token>> {
     for tok in tokens {
         match tok {
             Token::Command { name, .. } if name == "item" => {
-                if !current.iter().all(|t| matches!(t, Token::Text(s) if s.trim().is_empty())) {
+                if !current
+                    .iter()
+                    .all(|t| matches!(t, Token::Text(s) if s.trim().is_empty()))
+                {
                     items.push(std::mem::take(&mut current));
                 } else {
                     current.clear();
@@ -924,7 +1073,10 @@ fn split_items(tokens: &[Token]) -> Vec<Vec<Token>> {
             t => current.push(t.clone()),
         }
     }
-    if !current.iter().all(|t| matches!(t, Token::Text(s) if s.trim().is_empty())) {
+    if !current
+        .iter()
+        .all(|t| matches!(t, Token::Text(s) if s.trim().is_empty()))
+    {
         items.push(current);
     }
     items
@@ -945,47 +1097,112 @@ fn convert_math(src: &str) -> String {
 
     // Common symbol renames.
     let sym: &[(&str, &str)] = &[
-        ("\\alpha", "alpha"), ("\\beta", "beta"), ("\\gamma", "gamma"),
-        ("\\delta", "delta"), ("\\epsilon", "epsilon"), ("\\varepsilon", "epsilon.alt"),
-        ("\\zeta", "zeta"), ("\\eta", "eta"), ("\\theta", "theta"),
-        ("\\iota", "iota"), ("\\kappa", "kappa"), ("\\lambda", "lambda"),
-        ("\\mu", "mu"), ("\\nu", "nu"), ("\\xi", "xi"),
-        ("\\pi", "pi"), ("\\rho", "rho"), ("\\sigma", "sigma"),
-        ("\\tau", "tau"), ("\\upsilon", "upsilon"), ("\\phi", "phi"),
-        ("\\varphi", "phi.alt"), ("\\chi", "chi"), ("\\psi", "psi"),
+        ("\\alpha", "alpha"),
+        ("\\beta", "beta"),
+        ("\\gamma", "gamma"),
+        ("\\delta", "delta"),
+        ("\\epsilon", "epsilon"),
+        ("\\varepsilon", "epsilon.alt"),
+        ("\\zeta", "zeta"),
+        ("\\eta", "eta"),
+        ("\\theta", "theta"),
+        ("\\iota", "iota"),
+        ("\\kappa", "kappa"),
+        ("\\lambda", "lambda"),
+        ("\\mu", "mu"),
+        ("\\nu", "nu"),
+        ("\\xi", "xi"),
+        ("\\pi", "pi"),
+        ("\\rho", "rho"),
+        ("\\sigma", "sigma"),
+        ("\\tau", "tau"),
+        ("\\upsilon", "upsilon"),
+        ("\\phi", "phi"),
+        ("\\varphi", "phi.alt"),
+        ("\\chi", "chi"),
+        ("\\psi", "psi"),
         ("\\omega", "omega"),
-        ("\\Gamma", "Gamma"), ("\\Delta", "Delta"), ("\\Theta", "Theta"),
-        ("\\Lambda", "Lambda"), ("\\Xi", "Xi"), ("\\Pi", "Pi"),
-        ("\\Sigma", "Sigma"), ("\\Upsilon", "Upsilon"), ("\\Phi", "Phi"),
-        ("\\Psi", "Psi"), ("\\Omega", "Omega"),
-        ("\\infty", "infinity"), ("\\partial", "diff"), ("\\nabla", "nabla"),
-        ("\\sum", "sum"), ("\\prod", "product"), ("\\int", "integral"),
-        ("\\oint", "integral.cont"), ("\\iint", "integral.double"),
-        ("\\leq", "<="), ("\\geq", ">="), ("\\neq", "!="),
-        ("\\approx", "approx"), ("\\equiv", "equiv"), ("\\sim", "tilde"),
-        ("\\propto", "prop"), ("\\in", "in"), ("\\notin", "in.not"),
-        ("\\subset", "subset"), ("\\supset", "supset"),
-        ("\\cup", "union"), ("\\cap", "sect"),
-        ("\\times", "times"), ("\\cdot", "dot.op"), ("\\ldots", "dots.h"),
-        ("\\cdots", "dots.c"), ("\\vdots", "dots.v"), ("\\ddots", "dots.down"),
-        ("\\to", "->"), ("\\rightarrow", "->"), ("\\leftarrow", "<-"),
-        ("\\Rightarrow", "=>"), ("\\Leftarrow", "<="),
-        ("\\leftrightarrow", "<->"), ("\\Leftrightarrow", "<=>"),
-        ("\\forall", "forall"), ("\\exists", "exists"),
-        ("\\langle", "angle.l"), ("\\rangle", "angle.r"),
-        ("\\left(", "("), ("\\right)", ")"),
-        ("\\left[", "["), ("\\right]", "]"),
-        ("\\left\\{", "{"), ("\\right\\}", "}"),
-        ("\\left|", "|"), ("\\right|", "|"),
-        ("\\|", "||"), ("\\mathbb{R}", "RR"), ("\\mathbb{N}", "NN"),
-        ("\\mathbb{Z}", "ZZ"), ("\\mathbb{Q}", "QQ"), ("\\mathbb{C}", "CC"),
-        ("\\mathbf", "bold"), ("\\mathrm", "upright"), ("\\mathit", "italic"),
-        ("\\hat", "hat"), ("\\bar", "overline"), ("\\tilde", "tilde"),
-        ("\\vec", "arrow"), ("\\overline", "overline"), ("\\underline", "underline"),
+        ("\\Gamma", "Gamma"),
+        ("\\Delta", "Delta"),
+        ("\\Theta", "Theta"),
+        ("\\Lambda", "Lambda"),
+        ("\\Xi", "Xi"),
+        ("\\Pi", "Pi"),
+        ("\\Sigma", "Sigma"),
+        ("\\Upsilon", "Upsilon"),
+        ("\\Phi", "Phi"),
+        ("\\Psi", "Psi"),
+        ("\\Omega", "Omega"),
+        ("\\infty", "infinity"),
+        ("\\partial", "diff"),
+        ("\\nabla", "nabla"),
+        ("\\sum", "sum"),
+        ("\\prod", "product"),
+        ("\\int", "integral"),
+        ("\\oint", "integral.cont"),
+        ("\\iint", "integral.double"),
+        ("\\leq", "<="),
+        ("\\geq", ">="),
+        ("\\neq", "!="),
+        ("\\approx", "approx"),
+        ("\\equiv", "equiv"),
+        ("\\sim", "tilde"),
+        ("\\propto", "prop"),
+        ("\\in", "in"),
+        ("\\notin", "in.not"),
+        ("\\subset", "subset"),
+        ("\\supset", "supset"),
+        ("\\cup", "union"),
+        ("\\cap", "sect"),
+        ("\\times", "times"),
+        ("\\cdot", "dot.op"),
+        ("\\ldots", "dots.h"),
+        ("\\cdots", "dots.c"),
+        ("\\vdots", "dots.v"),
+        ("\\ddots", "dots.down"),
+        ("\\to", "->"),
+        ("\\rightarrow", "->"),
+        ("\\leftarrow", "<-"),
+        ("\\Rightarrow", "=>"),
+        ("\\Leftarrow", "<="),
+        ("\\leftrightarrow", "<->"),
+        ("\\Leftrightarrow", "<=>"),
+        ("\\forall", "forall"),
+        ("\\exists", "exists"),
+        ("\\langle", "angle.l"),
+        ("\\rangle", "angle.r"),
+        ("\\left(", "("),
+        ("\\right)", ")"),
+        ("\\left[", "["),
+        ("\\right]", "]"),
+        ("\\left\\{", "{"),
+        ("\\right\\}", "}"),
+        ("\\left|", "|"),
+        ("\\right|", "|"),
+        ("\\|", "||"),
+        ("\\mathbb{R}", "RR"),
+        ("\\mathbb{N}", "NN"),
+        ("\\mathbb{Z}", "ZZ"),
+        ("\\mathbb{Q}", "QQ"),
+        ("\\mathbb{C}", "CC"),
+        ("\\mathbf", "bold"),
+        ("\\mathrm", "upright"),
+        ("\\mathit", "italic"),
+        ("\\hat", "hat"),
+        ("\\bar", "overline"),
+        ("\\tilde", "tilde"),
+        ("\\vec", "arrow"),
+        ("\\overline", "overline"),
+        ("\\underline", "underline"),
         ("\\text{", "\""), // handled roughly below
-        ("\\nonumber", ""), ("\\notag", ""),
-        ("\\quad", "quad"), ("\\qquad", "quad quad"),
-        ("\\,", " "), ("\\;", " "), ("\\:", " "), ("\\!", ""),
+        ("\\nonumber", ""),
+        ("\\notag", ""),
+        ("\\quad", "quad"),
+        ("\\qquad", "quad quad"),
+        ("\\,", " "),
+        ("\\;", " "),
+        ("\\:", " "),
+        ("\\!", ""),
     ];
 
     // Apply longest-match-first by sorting by length desc.
@@ -1010,11 +1227,15 @@ fn replace_frac(s: &str) -> String {
         rest = &rest[pos + 5..];
         let chars: Vec<char> = rest.chars().collect();
         let mut i = 0;
-        while i < chars.len() && chars[i] == ' ' { i += 1; }
+        while i < chars.len() && chars[i] == ' ' {
+            i += 1;
+        }
         if chars.get(i) == Some(&'{') {
             if let Some((num, after_num)) = read_brace_group(&chars, i) {
                 i = after_num;
-                while i < chars.len() && chars[i] == ' ' { i += 1; }
+                while i < chars.len() && chars[i] == ' ' {
+                    i += 1;
+                }
                 if chars.get(i) == Some(&'{') {
                     if let Some((den, after_den)) = read_brace_group(&chars, i) {
                         // Recurse so nested \frac inside num/den is also converted.
@@ -1041,15 +1262,21 @@ fn replace_sqrt(s: &str) -> String {
         rest = &rest[pos + 5..];
         let chars: Vec<char> = rest.chars().collect();
         let mut i = 0;
-        while i < chars.len() && chars[i] == ' ' { i += 1; }
+        while i < chars.len() && chars[i] == ' ' {
+            i += 1;
+        }
         // Optional [n]
         let nth = if chars.get(i) == Some(&'[') {
             if let Some(end) = rest[i + 1..].find(']') {
                 let n = rest[i + 1..i + 1 + end].to_string();
                 i += 2 + end;
                 Some(n)
-            } else { None }
-        } else { None };
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         if chars.get(i) == Some(&'{') {
             if let Some((body, after)) = read_brace_group(&chars, i) {
                 rest = &rest[after..];
@@ -1068,13 +1295,18 @@ fn replace_sqrt(s: &str) -> String {
 }
 
 fn read_brace_group(chars: &[char], start: usize) -> Option<(String, usize)> {
-    if chars.get(start)? != &'{' { return None; }
+    if chars.get(start)? != &'{' {
+        return None;
+    }
     let mut depth = 1;
     let mut i = start + 1;
     let body_start = i;
     while i < chars.len() {
         match chars[i] {
-            '\\' if i + 1 < chars.len() => { i += 2; continue; }
+            '\\' if i + 1 < chars.len() => {
+                i += 2;
+                continue;
+            }
             '{' => depth += 1,
             '}' => {
                 depth -= 1;
@@ -1101,7 +1333,12 @@ fn fix_text_macro(s: &str) -> String {
         out.push_str(&rest[..pos]);
         rest = &rest[pos + 6..];
         let chars: Vec<char> = rest.chars().collect();
-        if let Some((body, after)) = read_brace_group(&std::iter::once('{').chain(chars.iter().copied()).collect::<Vec<_>>(), 0) {
+        if let Some((body, after)) = read_brace_group(
+            &std::iter::once('{')
+                .chain(chars.iter().copied())
+                .collect::<Vec<_>>(),
+            0,
+        ) {
             out.push('"');
             out.push_str(&body);
             out.push('"');
@@ -1144,12 +1381,18 @@ pub fn emit_arg_with_map(src: &str, cmd_map: &CommandMap) -> String {
             Token::Command { name, opt, args } => {
                 emit_command(name, opt, args, cmd_map, &mut dummy, &mut out);
             }
-            Token::Math { display: false, body } => {
+            Token::Math {
+                display: false,
+                body,
+            } => {
                 out.push('$');
                 out.push_str(&convert_math(body));
                 out.push('$');
             }
-            Token::Math { display: true, body } => {
+            Token::Math {
+                display: true,
+                body,
+            } => {
                 out.push_str("$ ");
                 out.push_str(&convert_math(body));
                 out.push_str(" $");
@@ -1243,7 +1486,10 @@ fn format_authors_typst(authors: &[AuthorEntry]) -> String {
         .map(|a| {
             let mut fields = format!("(name: \"{}\"", a.name.replace('"', "'"));
             if !a.affiliation.is_empty() {
-                fields.push_str(&format!(", affiliation: \"{}\"", a.affiliation.replace('"', "'")));
+                fields.push_str(&format!(
+                    ", affiliation: \"{}\"",
+                    a.affiliation.replace('"', "'")
+                ));
             }
             if !a.email.is_empty() {
                 fields.push_str(&format!(", email: \"{}\"", a.email.replace('"', "'")));
@@ -1259,8 +1505,12 @@ fn format_authors_typst(authors: &[AuthorEntry]) -> String {
 mod tests {
     use super::*;
 
-    fn cmd_map() -> CommandMap { merged_command_map(&crate::latex_import::profiles::cvpr::CvprProfile) }
-    fn env_map()  -> EnvMap  { merged_env_map(&crate::latex_import::profiles::cvpr::CvprProfile) }
+    fn cmd_map() -> CommandMap {
+        merged_command_map(&crate::latex_import::profiles::cvpr::CvprProfile)
+    }
+    fn env_map() -> EnvMap {
+        merged_env_map(&crate::latex_import::profiles::cvpr::CvprProfile)
+    }
 
     fn emit(src: &str) -> String {
         let tokens = tokenize(src);
@@ -1288,7 +1538,10 @@ mod tests {
     fn nested_formatting() {
         let out = emit("\\textbf{very \\textit{important}}");
         assert!(out.contains("#strong["), "should have strong wrapper");
-        assert!(out.contains("#emph[important]"), "should have emph wrapper inside");
+        assert!(
+            out.contains("#emph[important]"),
+            "should have emph wrapper inside"
+        );
     }
 
     // ── sectioning ───────────────────────────────────────────────────────────
@@ -1337,7 +1590,10 @@ mod tests {
     fn display_math_passthrough() {
         let out = emit("\\[ a = b \\]");
         // Display math is emitted as $ ... $; body may have surrounding spaces.
-        assert!(out.contains("$") && out.contains("a = b"), "display math should be wrapped: {out:?}");
+        assert!(
+            out.contains("$") && out.contains("a = b"),
+            "display math should be wrapped: {out:?}"
+        );
     }
 
     #[test]
@@ -1382,7 +1638,10 @@ mod tests {
     fn itemize_converts() {
         let out = emit("\\begin{itemize}\n\\item Foo\n\\item Bar\n\\end{itemize}");
         assert!(out.contains("#list("), "should emit #list");
-        assert!(out.contains("[Foo]") || out.contains("Foo"), "items should appear");
+        assert!(
+            out.contains("[Foo]") || out.contains("Foo"),
+            "items should appear"
+        );
     }
 
     #[test]
@@ -1402,7 +1661,10 @@ mod tests {
     #[test]
     fn unknown_command_becomes_todo_comment() {
         let out = emit("\\mystrangemacro{arg}");
-        assert!(out.contains("TODO(latex)"), "unknown command should leave TODO comment");
+        assert!(
+            out.contains("TODO(latex)"),
+            "unknown command should leave TODO comment"
+        );
         assert!(out.contains("mystrangemacro"), "command name preserved");
     }
 
@@ -1439,14 +1701,20 @@ mod tests {
         let body = body_of(&expand_inputs(src, std::path::Path::new("/"), 0));
         let tokens = tokenize(&body);
         let out = emit_body(&tokens, &map, &core_env_map(), &mut vec![]);
-        assert!(out.contains("et al."), "user macro should be expanded: {out}");
+        assert!(
+            out.contains("et al."),
+            "user macro should be expanded: {out}"
+        );
     }
 
     #[test]
     fn backslash_space_emits_space() {
         // \ produces a space token; it should NOT become a TODO comment.
         let out = emit("hello\\ world");
-        assert!(!out.contains("TODO"), "backslash-space must not become a TODO: {out}");
+        assert!(
+            !out.contains("TODO"),
+            "backslash-space must not become a TODO: {out}"
+        );
         assert!(out.contains("hello"), "text before should appear: {out}");
         assert!(out.contains("world"), "text after should appear: {out}");
     }
@@ -1471,11 +1739,18 @@ mod tests {
         let dir = std::env::temp_dir().join("ts_expand_input");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("intro.tex"), "\\section{Introduction}\nHello world.").unwrap();
+        fs::write(
+            dir.join("intro.tex"),
+            "\\section{Introduction}\nHello world.",
+        )
+        .unwrap();
 
         let src = "Before\\input{intro}After";
         let out = expand_inputs(src, &dir, 0);
-        assert!(out.contains("\\section{Introduction}"), "section should be inlined");
+        assert!(
+            out.contains("\\section{Introduction}"),
+            "section should be inlined"
+        );
         assert!(out.contains("Hello world."), "text should be inlined");
 
         let _ = fs::remove_dir_all(&dir);
@@ -1490,7 +1765,10 @@ mod tests {
         let src = "normal\n% \\input{hidden}\nrest";
         let out = expand_inputs(src, &dir, 0);
         // The commented \input should not be expanded (file doesn't exist either).
-        assert!(out.contains("% \\input{hidden}"), "comment should be preserved");
+        assert!(
+            out.contains("% \\input{hidden}"),
+            "comment should be preserved"
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1501,8 +1779,16 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("sec")).unwrap();
         // preamble.tex has \begin{document} only in a comment
-        fs::write(dir.join("preamble.tex"), "% example: \\begin{document}\n\\newcommand{\\x}{}").unwrap();
-        fs::write(dir.join("main.tex"), "\\documentclass{article}\n\\begin{document}\n\\section{Intro}\n\\end{document}").unwrap();
+        fs::write(
+            dir.join("preamble.tex"),
+            "% example: \\begin{document}\n\\newcommand{\\x}{}",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("main.tex"),
+            "\\documentclass{article}\n\\begin{document}\n\\section{Intro}\n\\end{document}",
+        )
+        .unwrap();
         fs::write(dir.join("sec").join("intro.tex"), "Hello.").unwrap();
 
         let found = find_main_tex(&dir).expect("should find main.tex");
@@ -1516,9 +1802,19 @@ mod tests {
         let dir = std::env::temp_dir().join("ts_cvpr_full");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("sec")).unwrap();
-        fs::write(dir.join("preamble.tex"), "% preamble\n\\newcommand{\\etal}{et al.}").unwrap();
-        fs::write(dir.join("sec").join("intro.tex"), "\\section{Introduction}\nWe propose a method.").unwrap();
-        fs::write(dir.join("main.tex"), r#"\documentclass[10pt]{article}
+        fs::write(
+            dir.join("preamble.tex"),
+            "% preamble\n\\newcommand{\\etal}{et al.}",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("sec").join("intro.tex"),
+            "\\section{Introduction}\nWe propose a method.",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("main.tex"),
+            r#"\documentclass[10pt]{article}
 \usepackage[review]{cvpr}
 \input{preamble}
 \title{My CVPR Paper}
@@ -1526,7 +1822,9 @@ mod tests {
 \begin{document}
 \maketitle
 \input{sec/intro}
-\end{document}"#).unwrap();
+\end{document}"#,
+        )
+        .unwrap();
 
         let src = fs::read_to_string(dir.join("main.tex")).unwrap();
         let expanded = expand_inputs(&src, &dir, 0);
@@ -1537,8 +1835,14 @@ mod tests {
         let mut notes = vec![];
         let out = emit_body(&tokens, &map, &core_env_map(), &mut notes);
 
-        assert!(out.contains("= Introduction"), "section should be converted: {out:?}");
-        assert!(out.contains("We propose a method."), "body text should appear: {out:?}");
+        assert!(
+            out.contains("= Introduction"),
+            "section should be converted: {out:?}"
+        );
+        assert!(
+            out.contains("We propose a method."),
+            "body text should appear: {out:?}"
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }

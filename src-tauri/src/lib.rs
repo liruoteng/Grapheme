@@ -875,6 +875,10 @@ fn write_markdown_preview_source_resilient(
 }
 
 fn write_markdown_preview_source_fast(md_path: &str, md_content: &str) -> Result<(), String> {
+    if resolve_md_hybrid(Path::new(md_path), md_content).is_some() {
+        return Ok(());
+    }
+
     let path = Path::new(md_path);
     let (typst_content, _warnings) = compose_markdown_preview_source(path, md_content);
     let preview_path = md_preview_typ_path(md_path);
@@ -892,6 +896,15 @@ fn validate_preview_sidecar_content_blocking(
     content: String,
 ) -> Result<Option<String>, String> {
     if is_markdown_path(Path::new(&path)) {
+        if let Some((target_path, target_content, _, _)) =
+            resolve_md_hybrid(Path::new(&path), &content)
+        {
+            return match validate_typst_source_quiet(Path::new(&target_path), &target_content) {
+                Ok(()) => Ok(None),
+                Err(msg) => Ok(Some(msg)),
+            };
+        }
+
         write_markdown_preview_source_fast(&path, &content)?;
         let temp_path = md_preview_typ_path(&path);
         let preview_source = fs::read_to_string(&temp_path).map_err(|e| e.to_string())?;
@@ -971,11 +984,7 @@ mod markdown_preview_tests {
         let dir = temp_test_dir("markdown-preview-fallback-page");
         let md_path = dir.join("fallback.md");
         let md = "# Original\n\nThis *Markdown* should remain visible.";
-        let source = markdown_preview_fallback_source(
-            &md_path,
-            md,
-            "synthetic Typst diagnostic",
-        );
+        let source = markdown_preview_fallback_source(&md_path, md, "synthetic Typst diagnostic");
 
         assert!(source.contains("Markdown preview could not compile"));
         assert!(source.contains("synthetic Typst diagnostic"));
@@ -1011,6 +1020,53 @@ mod markdown_preview_tests {
         assert!(source.contains("= Heading 1"));
         assert!(source.contains("\\@"));
         validate_typst_source(&preview_path, &source).unwrap();
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn hybrid_markdown_preview_writes_body_and_skips_preview_temp() {
+        let dir = temp_test_dir("markdown-preview-hybrid");
+        let md_path = dir.join("content.md");
+        let main_path = dir.join("main.typ");
+        let body_path = dir.join("content.typ");
+        let md = "---\ncompile: main.typ\n---\n\n# Hello\n\nBody text.\n";
+
+        fs::write(&main_path, "#include \"content.typ\"\n").unwrap();
+
+        write_markdown_preview_source_fast(&md_path.to_string_lossy(), md).unwrap();
+
+        let body = fs::read_to_string(&body_path).unwrap();
+        assert!(body.contains("= Hello"));
+        assert!(body.contains("Body text."));
+        assert!(!md_preview_typ_path(&md_path.to_string_lossy()).exists());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn hybrid_markdown_validation_compiles_declared_target() {
+        let dir = temp_test_dir("markdown-preview-hybrid-validation");
+        let md_path = dir.join("content.md");
+        let main_path = dir.join("main.typ");
+        let md = "---\ncompile: main.typ\n---\n\n# Hello\n";
+
+        fs::write(
+            &main_path,
+            "#set page(margin: 2cm)\n#include \"content.typ\"\n",
+        )
+        .unwrap();
+
+        let diagnostic = validate_preview_sidecar_content_blocking(
+            md_path.to_string_lossy().to_string(),
+            md.to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(diagnostic, None);
+        assert!(fs::read_to_string(dir.join("content.typ"))
+            .unwrap()
+            .contains("= Hello"));
 
         let _ = fs::remove_dir_all(dir);
     }
@@ -1206,11 +1262,9 @@ mod markdown_preview_tests {
         let md_path = dir.join("math.md");
         let md = fs::read_to_string(math_path).unwrap();
 
-        let diagnostic = validate_preview_sidecar_content_blocking(
-            md_path.to_string_lossy().to_string(),
-            md,
-        )
-        .unwrap();
+        let diagnostic =
+            validate_preview_sidecar_content_blocking(md_path.to_string_lossy().to_string(), md)
+                .unwrap();
         let preview_path = md_preview_typ_path(&md_path.to_string_lossy());
         let source = fs::read_to_string(&preview_path).unwrap();
 
@@ -1236,16 +1290,13 @@ mod markdown_preview_tests {
         let fast_ms = fast_start.elapsed().as_millis();
 
         let resilient_start = std::time::Instant::now();
-        let diagnostic = write_markdown_preview_source_resilient(&md_path.to_string_lossy(), &md)
-            .unwrap();
+        let diagnostic =
+            write_markdown_preview_source_resilient(&md_path.to_string_lossy(), &md).unwrap();
         let resilient_ms = resilient_start.elapsed().as_millis();
 
         let fallback_start = std::time::Instant::now();
-        let fallback = markdown_preview_fallback_source(
-            &md_path,
-            &md,
-            "synthetic timing diagnostic",
-        );
+        let fallback =
+            markdown_preview_fallback_source(&md_path, &md, "synthetic timing diagnostic");
         let fallback_ms = fallback_start.elapsed().as_millis();
 
         eprintln!(
@@ -1255,7 +1306,10 @@ mod markdown_preview_tests {
         assert!(diagnostic.is_none());
         assert!(!fallback.trim().is_empty());
         assert!(fast_ms < 500, "fast preview took {fast_ms}ms");
-        assert!(resilient_ms < 3_000, "resilient preview took {resilient_ms}ms");
+        assert!(
+            resilient_ms < 3_000,
+            "resilient preview took {resilient_ms}ms"
+        );
         assert!(fallback_ms < 250, "fallback source took {fallback_ms}ms");
 
         let _ = fs::remove_dir_all(dir);
@@ -1523,15 +1577,22 @@ async fn start_sidecar_preview(
 
     let input_path = if is_markdown_path(Path::new(&path)) {
         let md_content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-        let temp = md_preview_typ_path(&path);
-        write_markdown_preview_source_fast(&path, &md_content)?;
+        let input = if let Some((target_path, _, _, _)) =
+            resolve_md_hybrid(Path::new(&path), &md_content)
+        {
+            target_path
+        } else {
+            let temp = md_preview_typ_path(&path);
+            write_markdown_preview_source_fast(&path, &md_content)?;
+            temp.to_string_lossy().to_string()
+        };
         let _ = app_handle.emit(
             "preview-error",
             PreviewError {
                 message: String::new(),
             },
         );
-        temp.to_string_lossy().to_string()
+        input
     } else {
         path.clone()
     };
@@ -1541,7 +1602,11 @@ async fn start_sidecar_preview(
         &app_handle,
         "preview.sidecar-start",
         started_at.elapsed(),
-        Some(if result.is_ok() { input_path } else { "error".to_string() }),
+        Some(if result.is_ok() {
+            input_path
+        } else {
+            "error".to_string()
+        }),
     );
     result
 }
@@ -1625,20 +1690,25 @@ fn export_pdf(
     let input_path = Path::new(&path);
     let root = input_path.parent().map(|p| p.to_string_lossy().to_string());
 
-    // For .md files, convert to Typst and compile from a temporary sibling .typ.
-    // The temp file lives next to the source so relative image paths still resolve.
+    // For plain .md files, convert to Typst and compile from a temporary sibling
+    // .typ. Hybrid Markdown (`compile: main.typ`) writes its body sibling and
+    // compiles the declared wrapper instead.
     let (compile_input, temp_to_clean) = if is_markdown_path(input_path) {
         let md_content = fs::read_to_string(input_path).map_err(|e| e.to_string())?;
-        let (typst_content, _) = compose_markdown_source(input_path, &md_content);
-        let parent = input_path.parent().unwrap_or_else(|| Path::new("."));
-        let stem = input_path
-            .file_stem()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "untitled".to_string());
-        let temp = parent.join(format!(".{stem}.export.typ"));
-        fs::write(&temp, typst_content).map_err(|e| e.to_string())?;
-        let temp_str = temp.to_string_lossy().to_string();
-        (temp_str.clone(), Some(temp_str))
+        if let Some((target_path, _, _, _)) = resolve_md_hybrid(input_path, &md_content) {
+            (target_path, None)
+        } else {
+            let (typst_content, _) = compose_markdown_source(input_path, &md_content);
+            let parent = input_path.parent().unwrap_or_else(|| Path::new("."));
+            let stem = input_path
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "untitled".to_string());
+            let temp = parent.join(format!(".{stem}.export.typ"));
+            fs::write(&temp, typst_content).map_err(|e| e.to_string())?;
+            let temp_str = temp.to_string_lossy().to_string();
+            (temp_str.clone(), Some(temp_str))
+        }
     } else {
         (path.clone(), None)
     };

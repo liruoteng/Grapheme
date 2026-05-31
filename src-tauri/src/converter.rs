@@ -1981,9 +1981,7 @@ fn inline_with_options(text: &str, options: &MarkdownOptions) -> String {
                 if options.preview_safe && !is_remote_image_src(&url) {
                     if let Some(ref base) = options.image_base_dir {
                         if let Some(path) = preview_image_typst_path(&url, base) {
-                            result.push_str(&format!(
-                                "#image(\"{path}\", alt: \"{alt}\")"
-                            ));
+                            result.push_str(&format!("#image(\"{path}\", alt: \"{alt}\")"));
                         } else {
                             result.push_str(&format!(
                                 "#link(\"{url}\")[{}]",
@@ -2516,7 +2514,10 @@ mod tests {
     #[test]
     fn nested_unordered_list_preserves_indent() {
         let out = convert("- parent\n  - child\n    - grandchild\n");
-        assert!(out.contains("- parent\n  - child\n    - grandchild"), "got: {out}");
+        assert!(
+            out.contains("- parent\n  - child\n    - grandchild"),
+            "got: {out}"
+        );
     }
 
     #[test]
@@ -2534,13 +2535,19 @@ mod tests {
     #[test]
     fn nested_ordered_list_preserves_indent() {
         let out = convert("1. parent\n   1. child\n      1. grandchild\n");
-        assert!(out.contains("+ parent\n   + child\n      + grandchild"), "got: {out}");
+        assert!(
+            out.contains("+ parent\n   + child\n      + grandchild"),
+            "got: {out}"
+        );
     }
 
     #[test]
     fn mixed_nested_lists_preserve_indent() {
         let out = convert("1. parent\n   - child\n     1. grandchild\n");
-        assert!(out.contains("+ parent\n   - child\n     + grandchild"), "got: {out}");
+        assert!(
+            out.contains("+ parent\n   - child\n     + grandchild"),
+            "got: {out}"
+        );
     }
 
     #[test]
@@ -2714,7 +2721,11 @@ mod tests {
         fs::create_dir_all(&assets_dir).unwrap();
         fs::write(assets_dir.join("photo.png"), b"not-a-real-png").unwrap();
 
-        let out = markdown_to_typst_preview("![photo.png](assets/photo.png)\n", &docs_dir.join("note.md")).0;
+        let out = markdown_to_typst_preview(
+            "![photo.png](assets/photo.png)\n",
+            &docs_dir.join("note.md"),
+        )
+        .0;
 
         assert!(out.contains("#image(\"../assets/photo.png\", alt: \"photo.png\")"));
         assert!(!out.contains("#link(\"assets/photo.png\")"));
@@ -2834,9 +2845,7 @@ mod tests {
 
     #[test]
     fn preview_translates_display_latex_operators() {
-        let out = preview(
-            "$$\n\\lim_{n \\to \\infty} \\left(1 + \\frac{1}{n}\\right)^n = e\n$$\n",
-        );
+        let out = preview("$$\n\\lim_{n \\to \\infty} \\left(1 + \\frac{1}{n}\\right)^n = e\n$$\n");
         assert!(
             out.contains("$ lim_(n -> infinity) (1 + (1)/(n))^n = e $"),
             "got: {out}"

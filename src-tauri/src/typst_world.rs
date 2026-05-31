@@ -1,7 +1,7 @@
 use std::collections::HashMap;
+use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::fs;
 
 use typst::diag::{FileError, FileResult};
 use typst::foundations::{Bytes, Datetime};
@@ -55,7 +55,8 @@ impl TypstWorld {
     pub fn set_source(&mut self, path: &Path, content: &str) -> Result<(), String> {
         let id = file_id(&self.root, path)?;
         self.main_id = id;
-        self.source_cache.insert(id, Source::new(id, content.to_string()));
+        self.source_cache
+            .insert(id, Source::new(id, content.to_string()));
         Ok(())
     }
 
@@ -63,7 +64,8 @@ impl TypstWorld {
     /// Used to keep included files (e.g. content.typ) in sync with the editor.
     pub fn cache_source(&mut self, path: &Path, content: &str) {
         if let Ok(id) = file_id(&self.root, path) {
-            self.source_cache.insert(id, Source::new(id, content.to_string()));
+            self.source_cache
+                .insert(id, Source::new(id, content.to_string()));
         }
     }
 }
@@ -128,7 +130,9 @@ fn file_id(root: &Path, path: &Path) -> Result<FileId, String> {
 
 fn id_to_path(root: &Path, id: FileId) -> FileResult<PathBuf> {
     if id.package().is_some() {
-        return Err(FileError::Other(Some("typst packages not supported".into())));
+        return Err(FileError::Other(Some(
+            "typst packages not supported".into(),
+        )));
     }
     id.vpath()
         .resolve(root)

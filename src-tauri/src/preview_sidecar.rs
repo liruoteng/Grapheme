@@ -97,10 +97,14 @@ pub async fn start(
         .arg("preview")
         .arg("--no-open")
         // Let the OS pick free ports — avoids clashes across documents / runs.
-        .arg("--data-plane-host").arg("127.0.0.1:0")
-        .arg("--control-plane-host").arg("127.0.0.1:0")
-        .arg("--root").arg(&root)
-        .arg("--invert-colors").arg(invert_colors)
+        .arg("--data-plane-host")
+        .arg("127.0.0.1:0")
+        .arg("--control-plane-host")
+        .arg("127.0.0.1:0")
+        .arg("--root")
+        .arg(&root)
+        .arg("--invert-colors")
+        .arg(invert_colors)
         .arg(input_path)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -173,7 +177,10 @@ mod tests {
     #[test]
     fn parses_data_plane_line() {
         let line = "[2026-04-20T04:39:05Z INFO  tinymist::cmd::preview] Data plane server listening on: 127.0.0.1:54321";
-        assert_eq!(parse_data_plane_addr(line).as_deref(), Some("127.0.0.1:54321"));
+        assert_eq!(
+            parse_data_plane_addr(line).as_deref(),
+            Some("127.0.0.1:54321")
+        );
     }
 
     #[test]

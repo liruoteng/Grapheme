@@ -35,12 +35,7 @@ pub struct ChatMessage {
 
 fn extended_path() -> String {
     let current = std::env::var("PATH").unwrap_or_default();
-    let extras = [
-        "/opt/homebrew/bin",
-        "/usr/local/bin",
-        "/usr/bin",
-        "/bin",
-    ];
+    let extras = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
     let mut parts: Vec<String> = extras
         .iter()
         .filter(|p| !current.contains(*p))
@@ -61,7 +56,11 @@ pub async fn check_claude_cli() -> String {
         .await
         .map(|s| s.success())
         .unwrap_or(false);
-    if ok { "ready".to_string() } else { "not_found".to_string() }
+    if ok {
+        "ready".to_string()
+    } else {
+        "not_found".to_string()
+    }
 }
 
 #[tauri::command]
@@ -105,9 +104,9 @@ pub async fn stream_claude_cli(
 
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| format!("Claude CLI not found: {e}. Install with: npm install -g @anthropic-ai/claude-code"))?;
+    let mut child = cmd.spawn().map_err(|e| {
+        format!("Claude CLI not found: {e}. Install with: npm install -g @anthropic-ai/claude-code")
+    })?;
 
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
@@ -126,8 +125,12 @@ pub async fn stream_claude_cli(
             let _ = child.kill().await;
             return Err("cancelled".to_string());
         }
-        if line.is_empty() { continue; }
-        let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
 
         match event["type"].as_str() {
             Some("assistant") => {
@@ -137,14 +140,18 @@ pub async fn stream_claude_cli(
                             Some("thinking") => {
                                 if let Some(t) = block["thinking"].as_str() {
                                     let hint: String = t.chars().take(200).collect();
-                                    let text_json = serde_json::to_string(&hint).unwrap_or_default();
-                                    let _ = on_status.send(format!(r#"{{"t":"thinking","text":{text_json}}}"#));
+                                    let text_json =
+                                        serde_json::to_string(&hint).unwrap_or_default();
+                                    let _ = on_status
+                                        .send(format!(r#"{{"t":"thinking","text":{text_json}}}"#));
                                 }
                             }
                             Some("text") => {
                                 if let Some(text) = block["text"].as_str() {
                                     if !text.is_empty() {
-                                        on_chunk.send(text.to_string()).map_err(|e| e.to_string())?;
+                                        on_chunk
+                                            .send(text.to_string())
+                                            .map_err(|e| e.to_string())?;
                                     }
                                 }
                             }
@@ -159,7 +166,9 @@ pub async fn stream_claude_cli(
                 }
                 if event["type"].as_str() == Some("result") {
                     if event["subtype"].as_str().map_or(false, |s| s != "success") {
-                        let msg = event["error"].as_str().unwrap_or("Claude CLI returned an error");
+                        let msg = event["error"]
+                            .as_str()
+                            .unwrap_or("Claude CLI returned an error");
                         return Err(msg.to_string());
                     }
                     // Emit actual token usage so the frontend can show a real context %
@@ -173,9 +182,9 @@ pub async fn stream_claude_cli(
                         .and_then(|v| v["contextWindow"].as_u64())
                         .unwrap_or(200_000);
                     if used > 0 {
-                        let _ = on_status.send(
-                            format!(r#"{{"t":"usage","used":{used},"window":{window}}}"#)
-                        );
+                        let _ = on_status.send(format!(
+                            r#"{{"t":"usage","used":{used},"window":{window}}}"#
+                        ));
                     }
                 }
             }
@@ -188,7 +197,8 @@ pub async fn stream_claude_cli(
 
     if !status.success() && new_session_id.is_none() {
         return Err(if stderr_output.trim().is_empty() {
-            "Claude CLI failed. Make sure you are authenticated — run `claude` in your terminal.".to_string()
+            "Claude CLI failed. Make sure you are authenticated — run `claude` in your terminal."
+                .to_string()
         } else {
             stderr_output.trim().to_string()
         });
@@ -305,7 +315,16 @@ pub async fn stream_ai_chat(
 ) -> Result<(), String> {
     cancel.0.store(false, Ordering::Relaxed);
     let client = Client::new();
-    stream_ollama(&client, &messages, &ollama_url, &ollama_model, &system, &on_chunk, &cancel.0).await
+    stream_ollama(
+        &client,
+        &messages,
+        &ollama_url,
+        &ollama_model,
+        &system,
+        &on_chunk,
+        &cancel.0,
+    )
+    .await
 }
 
 // ── Ollama server lifecycle ────────────────────────────────────────────────
@@ -391,7 +410,10 @@ pub async fn search_citations(query: String) -> Result<Vec<CitationResult>, Stri
         .get("https://api.semanticscholar.org/graph/v1/paper/search")
         .query(&[
             ("query", query.as_str()),
-            ("fields", "title,authors,year,abstract,citationCount,externalIds"),
+            (
+                "fields",
+                "title,authors,year,abstract,citationCount,externalIds",
+            ),
             ("limit", "6"),
         ])
         .header("User-Agent", "Grapheme/1.0")

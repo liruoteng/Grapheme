@@ -33,10 +33,7 @@ pub struct ImportReport {
 /// v1: CVPR profile only. Unknown bundles fall through with a diagnostic
 /// message and no output.
 #[tauri::command]
-pub fn import_latex_template(
-    zip_path: String,
-    dest_dir: String,
-) -> Result<ImportReport, String> {
+pub fn import_latex_template(zip_path: String, dest_dir: String) -> Result<ImportReport, String> {
     let zip = PathBuf::from(&zip_path);
     let dest = PathBuf::from(&dest_dir);
 
