@@ -31,6 +31,10 @@
 .template-header {
   padding: 18px 20px 14px;
   border-bottom: 1px solid var(--border-color, #333);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   flex-shrink: 0;
 }
 
@@ -38,6 +42,43 @@
   font-size: 15px;
   font-weight: 600;
   color: var(--text-primary, #e0e0e0);
+}
+
+.template-source {
+  display: flex;
+  gap: 2px;
+}
+
+.template-source button,
+.template-universe-link {
+  background: transparent;
+  border: 1px solid var(--border-color, #444);
+  border-radius: 5px;
+  color: var(--text-secondary, #aaa);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 9px;
+}
+
+.template-source button:hover,
+.template-universe-link:hover {
+  color: var(--text-primary, #e0e0e0);
+}
+
+.template-source button.selected {
+  background: var(--accent, #4a9eff);
+  border-color: var(--accent, #4a9eff);
+  color: #fff;
+}
+
+.template-universe-link {
+  align-items: center;
+  display: flex;
+  gap: 5px;
+  margin-bottom: 12px;
+  margin-left: auto;
 }
 
 .template-body {
@@ -224,6 +265,13 @@
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary, #e0e0e0);
+}
+
+.template-card-version {
+  color: var(--text-secondary, #888);
+  font-family: monospace;
+  font-size: 10px;
+  overflow-wrap: anywhere;
 }
 
 .template-card-desc {

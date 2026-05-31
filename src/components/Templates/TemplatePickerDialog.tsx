@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Search } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { ExternalLink, Search } from "lucide-react";
 import { useEditorStore } from "../../stores/editorStore";
 import "./TemplatePickerDialog.css";
 
@@ -11,6 +12,7 @@ interface TemplateInfo {
   category: string;
   main: string;
   thumbnail?: string;
+  version?: string;
 }
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -64,24 +66,37 @@ function TemplateThumbnail({ template }: { template: TemplateInfo }) {
 }
 
 export function TemplatePickerDialog({ onClose }: { onClose: () => void }) {
-  const [templates, setTemplates] = useState<TemplateInfo[]>([]);
+  const [source, setSource] = useState<"built-in" | "universe">("built-in");
+  const [builtInTemplates, setBuiltInTemplates] = useState<TemplateInfo[]>([]);
+  const [universeTemplates, setUniverseTemplates] = useState<TemplateInfo[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [category, setCategory] = useState("All");
   const [query, setQuery] = useState("");
   const [projectName, setProjectName] = useState("my-paper");
   const [loading, setLoading] = useState(true);
+  const [universeLoading, setUniverseLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     invoke<TemplateInfo[]>("list_templates")
       .then((list) => {
-        setTemplates(list);
+        setBuiltInTemplates(list);
         if (list.length > 0) setSelected(list[0].id);
       })
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (source !== "universe" || universeTemplates.length > 0 || universeLoading) return;
+    setUniverseLoading(true);
+    setError(null);
+    invoke<TemplateInfo[]>("list_universe_templates")
+      .then(setUniverseTemplates)
+      .catch((e) => setError(String(e)))
+      .finally(() => setUniverseLoading(false));
+  }, [source, universeLoading, universeTemplates.length]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -90,6 +105,9 @@ export function TemplatePickerDialog({ onClose }: { onClose: () => void }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  const templates = source === "built-in" ? builtInTemplates : universeTemplates;
+  const templatesLoading = source === "built-in" ? loading : universeLoading;
 
   const categories = useMemo(
     () => ["All", ...Array.from(new Set(templates.map((template) => template.category)))],
@@ -138,11 +156,22 @@ export function TemplatePickerDialog({ onClose }: { onClose: () => void }) {
         setCreating(false);
         return;
       }
-      const mainPath = await invoke<string>("create_project_from_template", {
-        templateId: selected,
-        parentPath: parentFolder,
-        projectName: name,
-      });
+      const selectedTemplate = templates.find((template) => template.id === selected);
+      if (source === "universe" && !selectedTemplate?.version) {
+        throw new Error("Select a Typst Universe template to import.");
+      }
+      const mainPath = source === "built-in"
+        ? await invoke<string>("create_project_from_template", {
+            templateId: selected,
+            parentPath: parentFolder,
+            projectName: name,
+          })
+        : await invoke<string>("create_project_from_universe_template", {
+            packageName: selected,
+            version: selectedTemplate?.version,
+            parentPath: parentFolder,
+            projectName: name,
+          });
       const projectPath = mainPath.slice(0, mainPath.lastIndexOf("/"));
       const content = await invoke<string>("read_file", { path: mainPath });
       const fileName = mainPath.split("/").pop() ?? "main";
@@ -154,7 +183,7 @@ export function TemplatePickerDialog({ onClose }: { onClose: () => void }) {
     } finally {
       setCreating(false);
     }
-  }, [selected, projectName, onClose]);
+  }, [selected, projectName, onClose, source, templates]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !creating) handleCreate();
@@ -165,15 +194,45 @@ export function TemplatePickerDialog({ onClose }: { onClose: () => void }) {
       <div className="template-dialog" onMouseDown={(e) => e.stopPropagation()}>
         <div className="template-header">
           <span className="template-title">New Project from Template</span>
+          <div className="template-source" role="tablist" aria-label="Template source">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={source === "built-in"}
+              className={source === "built-in" ? "selected" : ""}
+              onClick={() => { setSource("built-in"); setCategory("All"); }}
+            >
+              Built-in
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={source === "universe"}
+              className={source === "universe" ? "selected" : ""}
+              onClick={() => { setSource("universe"); setCategory("All"); }}
+            >
+              Typst Universe
+            </button>
+          </div>
         </div>
 
         <div className="template-body">
-          {loading && <div className="template-loading">Loading templates…</div>}
-          {!loading && templates.length === 0 && (
+          {templatesLoading && <div className="template-loading">Loading templates…</div>}
+          {!templatesLoading && templates.length === 0 && (
             <div className="template-loading">No templates found.</div>
           )}
-          {!loading && templates.length > 0 && (
+          {!templatesLoading && templates.length > 0 && (
             <>
+              {source === "universe" && (
+                <button
+                  type="button"
+                  className="template-universe-link"
+                  onClick={() => openUrl("https://typst.app/universe/search/?kind=templates")}
+                >
+                  Browse on typst.app
+                  <ExternalLink size={13} />
+                </button>
+              )}
               <div className="template-filter" role="tablist" aria-label="Template category">
                 {categories.map((item) => (
                   <button
@@ -212,6 +271,7 @@ export function TemplatePickerDialog({ onClose }: { onClose: () => void }) {
                       <TemplateThumbnail template={t} />
                       <div className="template-card-info">
                         <div className="template-card-name">{t.name}</div>
+                        {t.version && <div className="template-card-version">@preview/{t.id}:{t.version}</div>}
                         <div className="template-card-desc">{t.description}</div>
                         <span
                           className="template-badge"

@@ -6,12 +6,14 @@ mod preview_sidecar;
 mod typst_world;
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use flate2::read::GzDecoder;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use tar::Archive;
 use tauri::menu::{AboutMetadata, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{Emitter, Manager};
 
@@ -1769,6 +1771,92 @@ pub struct TemplateInfo {
     pub thumbnail: Option<String>,
 }
 
+#[derive(Clone, Deserialize)]
+struct UniverseTemplateSpec {
+    path: String,
+    entrypoint: String,
+}
+
+#[derive(Clone, Deserialize)]
+struct UniversePackage {
+    name: String,
+    version: String,
+    description: String,
+    #[serde(default)]
+    categories: Vec<String>,
+    #[serde(default)]
+    disciplines: Vec<String>,
+    template: Option<UniverseTemplateSpec>,
+    #[serde(rename = "updatedAt")]
+    updated_at: u64,
+}
+
+#[derive(Clone, Serialize)]
+pub struct UniverseTemplateInfo {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub category: String,
+}
+
+fn extract_universe_template(
+    archive_bytes: &[u8],
+    template: &UniverseTemplateSpec,
+    dest: &Path,
+) -> Result<PathBuf, String> {
+    let decoder = GzDecoder::new(archive_bytes);
+    let mut archive = Archive::new(decoder);
+    let template_path = Path::new(&template.path);
+    for entry in archive.entries().map_err(|e| e.to_string())? {
+        let mut entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path().map_err(|e| e.to_string())?;
+        let Ok(relative) = path.strip_prefix(template_path) else {
+            continue;
+        };
+        if relative.as_os_str().is_empty() {
+            continue;
+        }
+        if relative.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        }) {
+            return Err(format!("Unsafe archive path: {}", path.display()));
+        }
+        let output = dest.join(relative);
+        if entry.header().entry_type().is_dir() {
+            fs::create_dir_all(&output).map_err(|e| e.to_string())?;
+        } else if entry.header().entry_type().is_file() {
+            if let Some(parent) = output.parent() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            entry.unpack(&output).map_err(|e| e.to_string())?;
+        }
+    }
+
+    let main_path = dest.join(&template.entrypoint);
+    if !main_path.exists() {
+        return Err(format!(
+            "Template entrypoint '{}' was not found",
+            template.entrypoint
+        ));
+    }
+    Ok(main_path)
+}
+
+fn project_dest(parent_path: &str, project_name: &str) -> Result<PathBuf, String> {
+    let name_path = Path::new(project_name);
+    if project_name.trim().is_empty()
+        || name_path.components().count() != 1
+        || !matches!(name_path.components().next(), Some(Component::Normal(_)))
+    {
+        return Err("Project name must be a single folder name".to_string());
+    }
+    Ok(Path::new(parent_path).join(project_name))
+}
+
 fn templates_dir(app: &tauri::AppHandle) -> std::path::PathBuf {
     #[cfg(debug_assertions)]
     {
@@ -1828,6 +1916,97 @@ fn list_templates(app: tauri::AppHandle) -> Result<Vec<TemplateInfo>, String> {
 }
 
 #[tauri::command]
+async fn list_universe_templates() -> Result<Vec<UniverseTemplateInfo>, String> {
+    let packages = reqwest::get("https://packages.typst.org/preview/index.json")
+        .await
+        .map_err(|e| format!("Failed to fetch Typst Universe: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("Typst Universe returned an error: {e}"))?
+        .json::<Vec<UniversePackage>>()
+        .await
+        .map_err(|e| format!("Failed to read Typst Universe package index: {e}"))?;
+
+    let mut latest = std::collections::HashMap::<String, UniversePackage>::new();
+    for package in packages.into_iter().filter(|package| package.template.is_some()) {
+        let replace = latest
+            .get(&package.name)
+            .map(|current| package.updated_at > current.updated_at)
+            .unwrap_or(true);
+        if replace {
+            latest.insert(package.name.clone(), package);
+        }
+    }
+
+    let mut templates = latest
+        .into_values()
+        .map(|package| UniverseTemplateInfo {
+            id: package.name.clone(),
+            name: package.name,
+            version: package.version,
+            description: package.description,
+            category: package
+                .disciplines
+                .first()
+                .or_else(|| package.categories.first())
+                .cloned()
+                .unwrap_or_else(|| "template".to_string()),
+        })
+        .collect::<Vec<_>>();
+    templates.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(templates)
+}
+
+#[tauri::command]
+async fn create_project_from_universe_template(
+    package_name: String,
+    version: String,
+    parent_path: String,
+    project_name: String,
+) -> Result<String, String> {
+    let packages = reqwest::get("https://packages.typst.org/preview/index.json")
+        .await
+        .map_err(|e| format!("Failed to fetch Typst Universe: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("Typst Universe returned an error: {e}"))?
+        .json::<Vec<UniversePackage>>()
+        .await
+        .map_err(|e| format!("Failed to read Typst Universe package index: {e}"))?;
+    let package = packages
+        .into_iter()
+        .find(|package| package.name == package_name && package.version == version)
+        .ok_or_else(|| format!("Template @{package_name}:{version} is not in Typst Universe"))?;
+    let template = package
+        .template
+        .ok_or_else(|| format!("@{package_name}:{version} is not a template package"))?;
+
+    let archive_url =
+        format!("https://packages.typst.org/preview/{package_name}-{version}.tar.gz");
+    let archive_bytes = reqwest::get(&archive_url)
+        .await
+        .map_err(|e| format!("Failed to download @{package_name}:{version}: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("Typst Universe returned an error: {e}"))?
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read @{package_name}:{version}: {e}"))?;
+
+    let dest = project_dest(&parent_path, &project_name)?;
+    if dest.exists() {
+        return Err(format!("Folder '{}' already exists", dest.display()));
+    }
+    fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+
+    let result = extract_universe_template(archive_bytes.as_ref(), &template, &dest)
+        .map(|path| path.to_string_lossy().to_string())
+        .map_err(|e| format!("Failed to import @{package_name}:{version}: {e}"));
+
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&dest);
+    }
+    result
+}
+
+#[tauri::command]
 fn create_project_from_template(
     app: tauri::AppHandle,
     template_id: String,
@@ -1838,7 +2017,7 @@ fn create_project_from_template(
     if !src.exists() {
         return Err(format!("template '{template_id}' not found"));
     }
-    let dest = Path::new(&parent_path).join(&project_name);
+    let dest = project_dest(&parent_path, &project_name)?;
     if dest.exists() {
         return Err(format!("Folder '{}' already exists", dest.display()));
     }
@@ -1923,7 +2102,24 @@ fn find_tinymist_path(resource_dir: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use flate2::{write::GzEncoder, Compression};
     use std::fs;
+    use tar::{Builder, Header};
+
+    fn template_archive(files: &[(&str, &str)]) -> Vec<u8> {
+        let encoder = GzEncoder::new(Vec::new(), Compression::default());
+        let mut archive = Builder::new(encoder);
+        for (path, content) in files {
+            let mut header = Header::new_gnu();
+            header.set_size(content.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            archive
+                .append_data(&mut header, path, content.as_bytes())
+                .unwrap();
+        }
+        archive.into_inner().unwrap().finish().unwrap()
+    }
 
     // ── compose_markdown_source ───────────────────────────────────────────────
 
@@ -1972,6 +2168,60 @@ mod tests {
         assert!(!err.is_empty());
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn extract_universe_template_copies_declared_subtree_only() {
+        let dir = std::env::temp_dir().join("ts_universe_extract");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let archive = template_archive(&[
+            ("README.md", "package docs"),
+            ("template/main.typ", "= Hello"),
+            ("template/assets/logo.txt", "logo"),
+        ]);
+        let template = UniverseTemplateSpec {
+            path: "template".to_string(),
+            entrypoint: "main.typ".to_string(),
+        };
+
+        let main = extract_universe_template(&archive, &template, &dir).unwrap();
+
+        assert_eq!(main, dir.join("main.typ"));
+        assert_eq!(fs::read_to_string(dir.join("main.typ")).unwrap(), "= Hello");
+        assert_eq!(
+            fs::read_to_string(dir.join("assets/logo.txt")).unwrap(),
+            "logo"
+        );
+        assert!(!dir.join("README.md").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn extract_universe_template_requires_declared_entrypoint() {
+        let dir = std::env::temp_dir().join("ts_universe_missing_entrypoint");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let archive = template_archive(&[("template/other.typ", "= Other")]);
+        let template = UniverseTemplateSpec {
+            path: "template".to_string(),
+            entrypoint: "main.typ".to_string(),
+        };
+
+        let error = extract_universe_template(&archive, &template, &dir).unwrap_err();
+
+        assert!(error.contains("Template entrypoint 'main.typ' was not found"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn project_dest_rejects_nested_paths() {
+        assert!(project_dest("/tmp", "../outside").is_err());
+        assert!(project_dest("/tmp", "nested/project").is_err());
+        assert_eq!(
+            project_dest("/tmp", "paper").unwrap(),
+            Path::new("/tmp").join("paper")
+        );
     }
 
     // ── hash_svg ──────────────────────────────────────────────────────────────
@@ -2198,7 +2448,9 @@ pub fn run() {
             ai::search_citations,
             ai::list_ollama_models,
             list_templates,
+            list_universe_templates,
             create_project_from_template,
+            create_project_from_universe_template,
         ])
         .setup(move |app| {
             let resource_dir = app
