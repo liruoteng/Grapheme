@@ -2462,6 +2462,8 @@ pub fn run() {
             ai::check_claude_cli,
             ai::stream_claude_cli,
             ai::stream_ai_chat,
+            ai::stream_ai_chat_with_tools,
+            ai::stream_claude_api,
             ai::cancel_ai_stream,
             ai::search_citations,
             ai::list_ollama_models,

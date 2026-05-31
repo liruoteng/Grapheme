@@ -207,6 +207,29 @@ pub async fn stream_claude_cli(
     Ok(new_session_id)
 }
 
+// ── Tool calling types ─────────────────────────────────────────────────────
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ToolDefinition {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    pub input: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ToolResult {
+    pub tool_call_id: String,
+    pub content: String,
+    pub is_error: bool,
+}
+
 // ── Ollama streaming ───────────────────────────────────────────────────────
 
 #[derive(Serialize)]
@@ -214,12 +237,41 @@ struct OllamaRequest<'a> {
     model: &'a str,
     messages: Vec<OllamaMessage<'a>>,
     stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<OllamaTool<'a>>>,
+}
+
+#[derive(Serialize)]
+struct OllamaTool<'a> {
+    #[serde(rename = "type")]
+    tool_type: &'a str,
+    function: OllamaToolFunction<'a>,
+}
+
+#[derive(Serialize)]
+struct OllamaToolFunction<'a> {
+    name: &'a str,
+    description: &'a str,
+    parameters: &'a serde_json::Value,
 }
 
 #[derive(Serialize)]
 struct OllamaMessage<'a> {
     role: &'a str,
     content: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<OllamaToolCall>>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct OllamaToolCall {
+    function: OllamaToolCallFunction,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct OllamaToolCallFunction {
+    name: String,
+    arguments: serde_json::Value,
 }
 
 async fn stream_ollama(
@@ -231,22 +283,53 @@ async fn stream_ollama(
     on_chunk: &Channel<String>,
     cancel: &Arc<AtomicBool>,
 ) -> Result<(), String> {
-    // Prepend system message
+    stream_ollama_with_tools(client, messages, base_url, model, system, &[], on_chunk, cancel).await
+}
+
+async fn stream_ollama_with_tools(
+    client: &Client,
+    messages: &[ChatMessage],
+    base_url: &str,
+    model: &str,
+    system: &str,
+    tools: &[ToolDefinition],
+    on_chunk: &Channel<String>,
+    cancel: &Arc<AtomicBool>,
+) -> Result<(), String> {
     let mut ollama_messages: Vec<OllamaMessage> = vec![OllamaMessage {
         role: "system",
         content: system,
+        tool_calls: None,
     }];
     for m in messages {
         ollama_messages.push(OllamaMessage {
             role: &m.role,
             content: &m.content,
+            tool_calls: None,
         });
     }
+
+    let ollama_tools: Option<Vec<OllamaTool>> = if tools.is_empty() {
+        None
+    } else {
+        Some(tools.iter().map(|t| OllamaTool {
+            tool_type: "function",
+            function: OllamaToolFunction {
+                name: &t.name,
+                description: &t.description,
+                parameters: &t.parameters,
+            },
+        }).collect())
+    };
+
+    // Ollama tool calling requires stream: false
+    let use_streaming = tools.is_empty();
 
     let body = serde_json::to_string(&OllamaRequest {
         model,
         messages: ollama_messages,
-        stream: true,
+        stream: use_streaming,
+        tools: ollama_tools,
     })
     .map_err(|e| e.to_string())?;
 
@@ -265,7 +348,38 @@ async fn stream_ollama(
         return Err(format!("Ollama error {status}: {body}"));
     }
 
-    // Ollama streams NDJSON: each line is a complete JSON object
+    if !use_streaming {
+        // Non-streaming response (for tool calls)
+        let response_text = resp.text().await.map_err(|e| e.to_string())?;
+        let event: serde_json::Value = serde_json::from_str(&response_text).map_err(|e| e.to_string())?;
+        
+        // Send text content
+        if let Some(text) = event["message"]["content"].as_str() {
+            if !text.is_empty() {
+                on_chunk.send(text.to_string()).map_err(|e| e.to_string())?;
+            }
+        }
+        
+        // Send tool calls as JSON via on_chunk
+        if let Some(tool_calls) = event["message"]["tool_calls"].as_array() {
+            for (i, tc) in tool_calls.iter().enumerate() {
+                if let Some(func) = tc["function"].as_object() {
+                    let name = func["name"].as_str().unwrap_or("");
+                    let args = &func["arguments"];
+                    let tool_call = ToolCall {
+                        id: format!("call_{}", i),
+                        name: name.to_string(),
+                        input: args.clone(),
+                    };
+                    let tc_json = serde_json::to_string(&tool_call).unwrap_or_default();
+                    on_chunk.send(format!("\n__TOOL_CALL__:{}\n", tc_json)).map_err(|e| e.to_string())?;
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    // Streaming response (no tools)
     let mut byte_stream = resp.bytes_stream();
     let mut buffer = String::new();
 
@@ -325,6 +439,239 @@ pub async fn stream_ai_chat(
         &cancel.0,
     )
     .await
+}
+
+// ── Tool-enabled Ollama chat ──────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn stream_ai_chat_with_tools(
+    messages: Vec<ChatMessage>,
+    ollama_url: String,
+    ollama_model: String,
+    system: String,
+    tools: Vec<ToolDefinition>,
+    on_chunk: Channel<String>,
+    cancel: tauri::State<'_, AiCancelFlag>,
+) -> Result<(), String> {
+    cancel.0.store(false, Ordering::Relaxed);
+    let client = Client::new();
+    stream_ollama_with_tools(
+        &client,
+        &messages,
+        &ollama_url,
+        &ollama_model,
+        &system,
+        &tools,
+        &on_chunk,
+        &cancel.0,
+    )
+    .await
+}
+
+// ── Claude API with native tool calling ───────────────────────────────────
+
+#[derive(Serialize)]
+struct ClaudeApiRequest<'a> {
+    model: &'a str,
+    max_tokens: u32,
+    system: &'a str,
+    messages: Vec<ClaudeApiMessage<'a>>,
+    tools: Vec<ClaudeApiTool<'a>>,
+    stream: bool,
+}
+
+#[derive(Serialize)]
+struct ClaudeApiMessage<'a> {
+    role: &'a str,
+    content: serde_json::Value,
+}
+
+#[derive(Serialize)]
+struct ClaudeApiTool<'a> {
+    name: &'a str,
+    description: &'a str,
+    input_schema: &'a serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct ClaudeToolUse {
+    id: String,
+    name: String,
+    input: serde_json::Value,
+}
+
+#[tauri::command]
+pub async fn stream_claude_api(
+    api_key: String,
+    messages: Vec<ChatMessage>,
+    model: String,
+    system: String,
+    tools: Vec<ToolDefinition>,
+    on_chunk: Channel<String>,
+    on_status: Channel<String>,
+    cancel: tauri::State<'_, AiCancelFlag>,
+) -> Result<(), String> {
+    cancel.0.store(false, Ordering::Relaxed);
+    let client = Client::new();
+
+    let claude_messages: Vec<ClaudeApiMessage> = messages
+        .iter()
+        .map(|m| {
+            let content = if m.role == "tool" {
+                // Tool results need special formatting
+                serde_json::json!([{
+                    "type": "tool_result",
+                    "tool_use_id": m.content.clone(),
+                    "content": ""
+                }])
+            } else {
+                serde_json::json!(m.content)
+            };
+            ClaudeApiMessage {
+                role: &m.role,
+                content,
+            }
+        })
+        .collect();
+
+    let claude_tools: Vec<ClaudeApiTool> = tools
+        .iter()
+        .map(|t| ClaudeApiTool {
+            name: &t.name,
+            description: &t.description,
+            input_schema: &t.parameters,
+        })
+        .collect();
+
+    let body = serde_json::to_string(&ClaudeApiRequest {
+        model: &model,
+        max_tokens: 8192,
+        system: &system,
+        messages: claude_messages,
+        tools: claude_tools,
+        stream: true,
+    })
+    .map_err(|e| e.to_string())?;
+
+    let resp = client
+        .post("https://api.anthropic.com/v1/messages")
+        .header("x-api-key", &api_key)
+        .header("anthropic-version", "2023-06-01")
+        .header("content-type", "application/json")
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| format!("Claude API error: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status().as_u16();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Claude API error {status}: {body}"));
+    }
+
+    let mut byte_stream = resp.bytes_stream();
+    let mut buffer = String::new();
+    let mut current_tool_use: Option<ClaudeToolUse> = None;
+
+    while let Some(chunk) = byte_stream.next().await {
+        if cancel.0.load(Ordering::Relaxed) {
+            return Err("cancelled".to_string());
+        }
+        let chunk = chunk.map_err(|e| e.to_string())?;
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+        while let Some(pos) = buffer.find("\n\n") {
+            let event_text = buffer[..pos].to_string();
+            buffer = buffer[pos + 2..].to_string();
+
+            for line in event_text.lines() {
+                if !line.starts_with("data: ") {
+                    continue;
+                }
+                let data = &line[6..];
+                if data == "[DONE]" {
+                    return Ok(());
+                }
+
+                let Ok(event): Result<serde_json::Value, _> = serde_json::from_str(data) else {
+                    continue;
+                };
+
+                match event["type"].as_str() {
+                    Some("content_block_start") => {
+                        let block = &event["content_block"];
+                        match block["type"].as_str() {
+                            Some("text") => {
+                                if let Some(text) = block["text"].as_str() {
+                                    if !text.is_empty() {
+                                        on_chunk.send(text.to_string()).map_err(|e| e.to_string())?;
+                                    }
+                                }
+                            }
+                            Some("tool_use") => {
+                                current_tool_use = Some(ClaudeToolUse {
+                                    id: block["id"].as_str().unwrap_or("").to_string(),
+                                    name: block["name"].as_str().unwrap_or("").to_string(),
+                                    input: serde_json::Value::Object(serde_json::Map::new()),
+                                });
+                            }
+                            _ => {}
+                        }
+                    }
+                    Some("content_block_delta") => {
+                        let delta = &event["delta"];
+                        match delta["type"].as_str() {
+                            Some("text_delta") => {
+                                if let Some(text) = delta["text"].as_str() {
+                                    if !text.is_empty() {
+                                        on_chunk.send(text.to_string()).map_err(|e| e.to_string())?;
+                                    }
+                                }
+                            }
+                            Some("input_json_delta") => {
+                                if let Some(partial) = delta["partial_json"].as_str() {
+                                    if let Some(ref mut tool_use) = current_tool_use {
+                                        // Accumulate partial JSON
+                                        if let Ok(partial_value) = serde_json::from_str::<serde_json::Value>(partial) {
+                                            if let (Some(obj), Some(partial_obj)) = (tool_use.input.as_object_mut(), partial_value.as_object()) {
+                                                for (k, v) in partial_obj {
+                                                    obj.insert(k.clone(), v.clone());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    Some("content_block_stop") => {
+                        if let Some(tool_use) = current_tool_use.take() {
+                            let tc = ToolCall {
+                                id: tool_use.id,
+                                name: tool_use.name,
+                                input: tool_use.input,
+                            };
+                            let tc_json = serde_json::to_string(&tc).unwrap_or_default();
+                            on_chunk.send(format!("\n__TOOL_CALL__:{}\n", tc_json)).map_err(|e| e.to_string())?;
+                        }
+                    }
+                    Some("message_delta") => {
+                        // Emit usage info
+                        if let Some(usage) = event["usage"].as_object() {
+                            let output_tokens = usage["output_tokens"].as_u64().unwrap_or(0);
+                            let _ = on_status.send(format!(
+                                r#"{{"t":"usage","output_tokens":{output_tokens}}}"#
+                            ));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 // ── Ollama server lifecycle ────────────────────────────────────────────────

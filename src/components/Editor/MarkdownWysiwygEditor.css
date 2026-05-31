@@ -400,8 +400,8 @@
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 0.6em;
-  margin: 0.7em 0 0;
-  padding: 0.35em 0;
+  margin: 0;
+  padding: 1.05em 0 0.35em;
   color: color-mix(in srgb, var(--markdown-wysiwyg-text) 82%, var(--text-secondary));
   font-size: 0.9em;
   line-height: 1.55;

@@ -1,66 +1,116 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
-import type { LLMProvider, LLMStreamEvent, Message, Tools, ToolCall } from "./types";
+import type { LLMProvider, LLMStreamEvent, Message, Tools, JsonSchema } from "./types";
 
 export type AiProvider = "claude-cli" | "ollama";
 
 export interface GraphemeProviderConfig {
   provider: AiProvider;
   claudeModel?: string;
+  claudeApiKey?: string;
   ollamaUrl?: string;
   ollamaModel?: string;
   sessionId?: string | null;
   onSessionId?: (id: string) => void;
 }
 
-function parseToolCalls(text: string): ToolCall[] {
-  const toolCalls: ToolCall[] = [];
-  const regex = /<tool_call\s+name="([^"]+)">([\s\S]*?)<\/tool_call>/g;
-  let match;
-
-  while ((match = regex.exec(text)) !== null) {
-    const name = match[1];
-    const inputStr = match[2].trim();
-    try {
-      const input = JSON.parse(inputStr);
-      toolCalls.push({
-        id: `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        name,
-        input,
-      });
-    } catch {
-      console.warn(`Failed to parse tool call input for ${name}:`, inputStr);
-    }
-  }
-
-  return toolCalls;
+interface BackendToolDef {
+  name: string;
+  description: string;
+  parameters: JsonSchema;
 }
 
-function getExampleInput(tool: { inputSchema: { properties?: Record<string, unknown>; required?: string[] } }): Record<string, unknown> {
-  const example: Record<string, unknown> = {};
-  const props = tool.inputSchema.properties ?? {};
-  const required = tool.inputSchema.required ?? [];
+interface RawToolCall {
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+}
 
-  for (const key of required) {
-    const schema = props[key] as { type?: string; description?: string } | undefined;
-    if (!schema) continue;
-    switch (schema.type) {
-      case "string":
-        example[key] = `example_${key}`;
-        break;
-      case "number":
-        example[key] = 10;
-        break;
-      case "boolean":
-        example[key] = true;
-        break;
-      case "array":
-        example[key] = [];
-        break;
-      default:
-        example[key] = null;
+const TOOL_CALL_MARKER = "__TOOL_CALL__:";
+
+function convertTools(tools: Tools): BackendToolDef[] {
+  return tools.map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    parameters: tool.inputSchema,
+  }));
+}
+
+function mapMessages(messages: Message[]): { role: string; content: string }[] {
+  return messages.map((m) => ({
+    role: m.role === "tool" ? "assistant" : m.role,
+    content: m.role === "tool" ? `Tool result: ${m.content}` : m.content,
+  }));
+}
+
+class ToolCallParser {
+  private buffer = "";
+
+  feed(chunk: string): LLMStreamEvent[] {
+    this.buffer += chunk;
+    return this.extract();
+  }
+
+  finish(): LLMStreamEvent[] {
+    const events: LLMStreamEvent[] = this.extract();
+    if (this.buffer.length > 0) {
+      events.push({ type: "text_delta", text: this.buffer });
+      this.buffer = "";
+    }
+    return events;
+  }
+
+  private extract(): LLMStreamEvent[] {
+    const events: LLMStreamEvent[] = [];
+
+    while (true) {
+      const markerIdx = this.buffer.indexOf(TOOL_CALL_MARKER);
+
+      if (markerIdx === -1) {
+        const safe = this.safeTextPrefix();
+        if (safe.length > 0) {
+          events.push({ type: "text_delta", text: safe });
+          this.buffer = this.buffer.slice(safe.length);
+        }
+        return events;
+      }
+
+      if (markerIdx > 0) {
+        const before = this.buffer.slice(0, markerIdx);
+        const text = before.replace(/^\n/, "");
+        if (text.length > 0) {
+          events.push({ type: "text_delta", text });
+        }
+      }
+
+      const afterMarker = this.buffer.slice(markerIdx + TOOL_CALL_MARKER.length);
+      const newlineIdx = afterMarker.indexOf("\n");
+      if (newlineIdx === -1) {
+        this.buffer = this.buffer.slice(markerIdx);
+        return events;
+      }
+
+      const jsonStr = afterMarker.slice(0, newlineIdx).trim();
+      this.buffer = afterMarker.slice(newlineIdx + 1);
+
+      try {
+        const parsed: RawToolCall = JSON.parse(jsonStr);
+        events.push({ type: "tool_call", toolCall: parsed });
+      } catch {
+        console.warn("Failed to parse tool call JSON:", jsonStr);
+      }
     }
   }
-  return example;
+
+  private safeTextPrefix(): string {
+    const maxCheck = Math.min(this.buffer.length, TOOL_CALL_MARKER.length);
+    for (let i = 1; i <= maxCheck; i++) {
+      const tail = this.buffer.slice(this.buffer.length - i);
+      if (TOOL_CALL_MARKER.startsWith(tail) && this.buffer.endsWith(tail)) {
+        return this.buffer.slice(0, this.buffer.length - i);
+      }
+    }
+    return this.buffer;
+  }
 }
 
 export class GraphemeLLMProvider implements LLMProvider {
@@ -76,74 +126,99 @@ export class GraphemeLLMProvider implements LLMProvider {
     systemPrompt: string,
     signal?: AbortSignal,
   ): AsyncGenerator<LLMStreamEvent> {
-    const toolDescriptions = this.formatToolsForPrompt(tools);
-    const enhancedSystemPrompt = `${systemPrompt}\n\n${toolDescriptions}`;
-
     if (this.config.provider === "ollama") {
-      yield* this.chatOllama(messages, enhancedSystemPrompt, signal);
+      yield* this.chatOllama(messages, tools, systemPrompt, signal);
+    } else if (this.config.claudeApiKey) {
+      yield* this.chatClaudeApi(messages, tools, systemPrompt, signal);
     } else {
-      yield* this.chatClaudeCli(messages, enhancedSystemPrompt, signal);
+      yield* this.chatClaudeCli(messages, systemPrompt, signal);
     }
   }
 
-  private async *chatOllama(
-    messages: Message[],
-    systemPrompt: string,
+  private async *streamWithParser(
+    invokeFn: (onChunk: Channel<string>) => Promise<void>,
     signal?: AbortSignal,
   ): AsyncGenerator<LLMStreamEvent> {
-    const apiMessages = messages.map((m) => ({
-      role: m.role === "tool" ? "assistant" : m.role,
-      content: m.role === "tool" ? `Tool result: ${m.content}` : m.content,
-    }));
-
-    let fullText = "";
-    const chunkQueue: string[] = [];
-    let resolveChunk: (() => void) | null = null;
+    const parser = new ToolCallParser();
+    const eventQueue: LLMStreamEvent[] = [];
+    let resolveEvent: (() => void) | null = null;
     let done = false;
 
     const onChunk = new Channel<string>();
     onChunk.onmessage = (chunk: string) => {
       if (signal?.aborted) return;
-      fullText += chunk;
-      chunkQueue.push(chunk);
-      resolveChunk?.();
+      const events = parser.feed(chunk);
+      eventQueue.push(...events);
+      resolveEvent?.();
     };
 
-    const invokePromise = invoke("stream_ai_chat", {
-      messages: apiMessages,
-      ollamaUrl: this.config.ollamaUrl ?? "http://localhost:11434",
-      ollamaModel: this.config.ollamaModel ?? "llama3",
-      system: systemPrompt,
-      onChunk,
-    }).then(() => {
+    const invokePromise = invokeFn(onChunk).then(() => {
       done = true;
-      resolveChunk?.();
+      resolveEvent?.();
     });
 
-    while (!done || chunkQueue.length > 0) {
+    while (!done || eventQueue.length > 0) {
       if (signal?.aborted) {
         await invoke("cancel_ai_stream").catch(() => {});
         break;
       }
 
-      if (chunkQueue.length > 0) {
-        const chunk = chunkQueue.shift()!;
-        yield { type: "text_delta", text: chunk };
+      if (eventQueue.length > 0) {
+        yield eventQueue.shift()!;
       } else if (!done) {
         await new Promise<void>((resolve) => {
-          resolveChunk = resolve;
+          resolveEvent = resolve;
         });
       }
     }
 
     await invokePromise.catch(() => {});
 
-    const toolCalls = parseToolCalls(fullText);
-    for (const call of toolCalls) {
-      yield { type: "tool_call", toolCall: call };
+    const remaining = parser.finish();
+    for (const event of remaining) {
+      yield event;
     }
 
     yield { type: "done" };
+  }
+
+  private chatOllama(
+    messages: Message[],
+    tools: Tools,
+    systemPrompt: string,
+    signal?: AbortSignal,
+  ): AsyncGenerator<LLMStreamEvent> {
+    return this.streamWithParser(async (onChunk) => {
+      await invoke("stream_ai_chat_with_tools", {
+        messages: mapMessages(messages),
+        ollamaUrl: this.config.ollamaUrl ?? "http://localhost:11434",
+        ollamaModel: this.config.ollamaModel ?? "llama3",
+        system: systemPrompt,
+        tools: convertTools(tools),
+        onChunk,
+      });
+    }, signal);
+  }
+
+  private chatClaudeApi(
+    messages: Message[],
+    tools: Tools,
+    systemPrompt: string,
+    signal?: AbortSignal,
+  ): AsyncGenerator<LLMStreamEvent> {
+    return this.streamWithParser(async (onChunk) => {
+      const onStatus = new Channel<string>();
+      onStatus.onmessage = () => {};
+      await invoke("stream_claude_api", {
+        apiKey: this.config.claudeApiKey,
+        messages: mapMessages(messages),
+        model: this.config.claudeModel ?? "claude-sonnet-4-20250514",
+        system: systemPrompt,
+        tools: convertTools(tools),
+        onChunk,
+        onStatus,
+      });
+    }, signal);
   }
 
   private async *chatClaudeCli(
@@ -154,7 +229,6 @@ export class GraphemeLLMProvider implements LLMProvider {
     const lastUserMessage = [...messages].reverse().find((m) => m.role === "user");
     const message = lastUserMessage?.content ?? "";
 
-    let fullText = "";
     const chunkQueue: string[] = [];
     let resolveChunk: (() => void) | null = null;
     let done = false;
@@ -162,7 +236,6 @@ export class GraphemeLLMProvider implements LLMProvider {
     const onChunk = new Channel<string>();
     onChunk.onmessage = (chunk: string) => {
       if (signal?.aborted) return;
-      fullText += chunk;
       chunkQueue.push(chunk);
       resolveChunk?.();
     };
@@ -204,49 +277,6 @@ export class GraphemeLLMProvider implements LLMProvider {
     }
 
     await invokePromise.catch(() => {});
-
-    const toolCalls = parseToolCalls(fullText);
-    for (const call of toolCalls) {
-      yield { type: "tool_call", toolCall: call };
-    }
-
     yield { type: "done" };
-  }
-
-  private formatToolsForPrompt(tools: Tools): string {
-    if (tools.length === 0) return "";
-
-    const toolDocs = tools.map((tool) => {
-      const params = Object.entries(tool.inputSchema.properties ?? {})
-        .map(([key, schema]) => {
-          const required = tool.inputSchema.required?.includes(key) ? " (required)" : "";
-          const desc = (schema as { description?: string }).description ?? "";
-          return `    - ${key}${required}: ${desc}`;
-        })
-        .join("\n");
-
-      const example = getExampleInput(tool);
-
-      return `### ${tool.name}
-${tool.description}
-
-Parameters:
-${params || "    (none)"}
-
-Example usage:
-<tool_call name="${tool.name}">
-${JSON.stringify(example, null, 2)}
-
-`;
-    }).join("\n\n");
-
-    return `# Available Tools
-
-You have access to the following tools:
-
-${toolDocs}
-
-When you need to use a tool, respond with the tool call in the format shown in the examples above.
-`;
   }
 }
