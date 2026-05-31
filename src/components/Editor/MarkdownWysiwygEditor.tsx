@@ -690,13 +690,15 @@ function htmlBlockAt(source: MarkdownDocSource, lineNumber: number): MarkdownHtm
   }
 
   let depth = 1;
+  const closeTagRe = new RegExp(`<\\/${tagName}\\s*>`, "i");
+  const openTagRe = new RegExp(`<${tagName}(\\s[^>]*?)?\\s*>`, "i");
   for (let ln = lineNumber + 1; ln <= doc.lines; ln++) {
     const scanLine = doc.line(ln);
     let pos = 0;
     while (pos < scanLine.text.length) {
       const remaining = scanLine.text.slice(pos);
-      const nextClose = new RegExp(`<\\/${tagName}\\s*>`, "i").exec(remaining);
-      const nextOpen = new RegExp(`<${tagName}(\\s[^>]*?)?\\s*>`, "i").exec(remaining);
+      const nextClose = closeTagRe.exec(remaining);
+      const nextOpen = openTagRe.exec(remaining);
 
       const nextCloseIndex = nextClose ? pos + nextClose.index : -1;
       const nextOpenIndex = nextOpen ? pos + nextOpen.index : -1;
@@ -714,6 +716,32 @@ function htmlBlockAt(source: MarkdownDocSource, lineNumber: number): MarkdownHtm
       } else {
         break;
       }
+    }
+  }
+
+  return null;
+}
+
+function htmlCommentAt(source: MarkdownDocSource, lineNumber: number): { from: number; to: number } | null {
+  const doc = markdownDoc(source);
+  const startLine = doc.line(lineNumber);
+  const openIndex = startLine.text.indexOf("<!--");
+  if (openIndex === -1) return null;
+  if (openIndex > 3 || (openIndex > 0 && startLine.text.slice(0, openIndex).trim() !== "")) return null;
+
+  const afterOpen = startLine.text.slice(openIndex + 4);
+  const sameLineClose = afterOpen.indexOf("-->");
+  if (sameLineClose !== -1) {
+    const endPos = startLine.from + openIndex + 4 + sameLineClose + 3;
+    return { from: startLine.from, to: endPos };
+  }
+
+  for (let ln = lineNumber + 1; ln <= doc.lines; ln++) {
+    const scanLine = doc.line(ln);
+    const closeIndex = scanLine.text.indexOf("-->");
+    if (closeIndex !== -1) {
+      const toPos = scanLine.from + closeIndex + 3;
+      return { from: startLine.from, to: toPos };
     }
   }
 
@@ -1697,16 +1725,17 @@ class HtmlBlockWidget extends WidgetType {
   }
 
   eq(other: HtmlBlockWidget) {
-    return this.block.from === other.block.from && this.block.to === other.block.to;
+    return this.block.from === other.block.from && this.block.to === other.block.to && this.block.content === other.block.content;
   }
 
   updateDOM(_dom: HTMLElement): boolean {
-    return true;
+    return false;
   }
 
   toDOM(view: EditorView) {
     const wrapper = document.createElement("div");
     wrapper.className = "cm-md-html-block-render";
+    wrapper.contentEditable = "false";
     wrapper.dataset.htmlFrom = String(this.block.from);
     wrapper.dataset.htmlTo = String(this.block.to);
 
@@ -1737,6 +1766,26 @@ class HtmlBlockWidget extends WidgetType {
     });
 
     return wrapper;
+  }
+}
+
+class HtmlCommentWidget extends WidgetType {
+  constructor(
+    private readonly from: number,
+    private readonly to: number,
+  ) {
+    super();
+  }
+
+  eq(other: HtmlCommentWidget) {
+    return this.from === other.from && this.to === other.to;
+  }
+
+  toDOM() {
+    const span = document.createElement("span");
+    span.className = "cm-md-html-comment";
+    span.contentEditable = "false";
+    return span;
   }
 }
 
@@ -2246,6 +2295,22 @@ function addInlineDecorations(
     ranges.push({ from: start, to: end, className: "cm-md-emoji" });
   }
 
+  const htmlCommentRe = /<!--[\s\S]*?-->/g;
+  htmlCommentRe.lastIndex = fromOffset;
+  const commentRanges: { from: number; to: number }[] = [];
+  let commentMatch: RegExpExecArray | null;
+  while ((commentMatch = htmlCommentRe.exec(lineText)) !== null) {
+    const commentStart = lineFrom + commentMatch.index;
+    const commentEnd = commentStart + commentMatch[0].length;
+    commentRanges.push({ from: commentStart, to: commentEnd });
+    ranges.push({
+      from: commentStart,
+      to: commentEnd,
+      replace: true,
+      widget: new HtmlCommentWidget(commentStart, commentEnd),
+    });
+  }
+
   const htmlTagRe = /<([a-zA-Z][a-zA-Z0-9]*)((?:\s[^>]*?)?)\s*>/g;
   htmlTagRe.lastIndex = fromOffset;
   let htmlMatch: RegExpExecArray | null;
@@ -2259,6 +2324,8 @@ function addInlineDecorations(
 
     const tagStart = lineFrom + htmlMatch.index;
     const tagMatchEnd = tagStart + htmlMatch[0].length;
+
+    if (commentRanges.some((cr) => tagStart < cr.to && tagMatchEnd > cr.from)) continue;
 
     if (selfClosing || voidTag) {
       const active = inlineMarkerActive([{ from: tagStart, to: tagMatchEnd }], cursorFrom, cursorTo);
@@ -2512,6 +2579,19 @@ function buildMarkdownDecorations(state: EditorState) {
           widget: new MarkdownImageWidget(image),
         });
       }
+      continue;
+    }
+
+    const htmlComment = htmlCommentAt(state, line.number);
+    if (htmlComment) {
+      const lastCommentLineNumber = doc.lineAt(htmlComment.to).number;
+      ranges.push({
+        from: htmlComment.from,
+        to: htmlComment.to,
+        replace: true,
+        widget: new HtmlCommentWidget(htmlComment.from, htmlComment.to),
+      });
+      lineNumber = lastCommentLineNumber;
       continue;
     }
 
@@ -3017,6 +3097,27 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
 
   const extensions = useMemo<Extension[]>(() => [
     highlightSpecialChars(),
+    EditorState.transactionFilter.of((tr) => {
+      let hasNBSP = false;
+      const changes: { from: number; to?: number; insert?: string }[] = [];
+      tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+        const text = inserted.toString();
+        if (text.includes("\u00a0")) {
+          hasNBSP = true;
+          changes.push({ from: fromA, to: toA, insert: text.replace(/\u00a0/g, " ") });
+        } else {
+          changes.push({ from: fromA, to: toA, insert: text });
+        }
+      });
+      if (!hasNBSP) return tr;
+      return {
+        changes,
+        selection: tr.selection,
+        effects: tr.effects,
+        annotations: (tr as unknown as Record<string, unknown>).annotations as TransactionSpec["annotations"],
+        scrollIntoView: tr.scrollIntoView,
+      } satisfies TransactionSpec;
+    }),
     history(),
     drawSelection(),
     dropCursor(),

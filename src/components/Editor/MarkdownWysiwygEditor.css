@@ -1091,6 +1091,10 @@
   line-height: inherit;
 }
 
+.markdown-wysiwyg .cm-md-html-comment {
+  display: none;
+}
+
 .markdown-wysiwyg .cm-md-html-source {
   color: var(--markdown-wysiwyg-text);
   font-family: var(--editor-code-font, monospace);

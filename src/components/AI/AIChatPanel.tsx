@@ -10,6 +10,17 @@ import {
   X,
 } from "lucide-react";
 import { useEditorStore, type AiMessage } from "../../stores/editorStore";
+import {
+  getAcademicWorkflowPrompt,
+  getGraphemeActionSystemPrompt,
+  getGraphemeWritingSystemPrompt,
+  isReadOnlyAcademicMode,
+  type AcademicWorkflowMode,
+} from "../../lib/agent/graphemeWritingPrompt";
+import {
+  filterSlashCommands,
+  type GraphemeSlashCommand,
+} from "../../lib/agent/slashCommands";
 import { prepareWithSegments, measureNaturalWidth } from "@chenglou/pretext";
 import "./AIChatPanel.css";
 
@@ -41,21 +52,46 @@ interface CitationResult {
 type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 type ChatMode = "plan" | "action";
 
+const ACADEMIC_MODES: { id: AcademicWorkflowMode; label: string }[] = [
+  { id: "clarify", label: "Clarify" },
+  { id: "research", label: "Research" },
+  { id: "outline", label: "Outline" },
+  { id: "draft", label: "Draft" },
+  { id: "review", label: "Review" },
+  { id: "revise", label: "Revise" },
+  { id: "citation-audit", label: "Citations" },
+];
+
 const EMPTY_STARTERS = [
   {
-    title: "Plan an essay",
-    body: "Build a thesis, outline, and section goals from my topic.",
-    prompt: "Help me turn this topic into a thesis-driven essay outline: ",
+    title: "Clarify question",
+    body: "Scope a research question before drafting.",
+    prompt: "Help me scope this research topic: ",
+    mode: "clarify" as const,
+  },
+  {
+    title: "Plan a paper",
+    body: "Build an evidence-aware outline for approval.",
+    prompt: "Create an outline and argument blueprint for: ",
+    mode: "outline" as const,
   },
   {
     title: "Improve selection",
     body: "Make selected text clearer without changing the claim.",
     prompt: "Improve the selected text for clarity, flow, and academic tone.",
+    mode: "revise" as const,
   },
   {
     title: "Find sources",
     body: "Search papers and prepare BibTeX-ready citations.",
     prompt: "/cite ",
+    mode: "research" as const,
+  },
+  {
+    title: "Review draft",
+    body: "Get a read-only academic review and revision roadmap.",
+    prompt: "Review this manuscript and produce a revision roadmap.",
+    mode: "review" as const,
   },
 ];
 
@@ -64,18 +100,6 @@ const CLAUDE_MODELS = [
   { id: "claude-sonnet-4-6",         label: "Sonnet 4.6" },
   { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5" },
 ];
-
-const SYSTEM_PROMPT =
-  "You are a writing assistant in Grapheme, a Typst academic document editor. " +
-  "Help users write, improve, and edit their content. Respond in plain text. " +
-  "When given selected text as context, focus your response on working with that text.";
-
-const ACTION_PROTOCOL =
-  "You are running in Grapheme Act mode. Do not chat, explain, apologize, or describe what you did. " +
-  "Return exactly one XML edit operation and nothing else. " +
-  "Use <replace_selection>new text</replace_selection> when selected text should be rewritten. " +
-  "Use <insert_at_cursor>new text</insert_at_cursor> when text should be added at the cursor. " +
-  "Use <replace_document>full new document</replace_document> only when the user explicitly asks to rewrite the whole document.";
 
 type ActionEdit =
   | { kind: "replace_selection"; text: string }
@@ -141,6 +165,7 @@ export function AIChatPanel() {
   // Local messages: mirrors active session + live streaming turn
   const [localMessages, setLocalMessages] = useState<AiMessage[]>(activeSession?.messages ?? []);
   const [input, setInput] = useState("");
+  const [slashCommandIndex, setSlashCommandIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [thinkingHint, setThinkingHint] = useState<string | null>(null);
   const [thinkingSeconds, setThinkingSeconds] = useState(0);
@@ -161,7 +186,15 @@ export function AIChatPanel() {
   const [effort, setEffort] = useState<Effort>("medium");
   const [thinking, setThinking] = useState(false);
   const [chatMode, setChatMode] = useState<ChatMode>("plan");
+  const [academicMode, setAcademicMode] = useState<AcademicWorkflowMode>("clarify");
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const isReadOnlyMode = isReadOnlyAcademicMode(academicMode);
+  const systemPrompt =
+    chatMode === "action"
+      ? getGraphemeActionSystemPrompt(academicMode)
+      : getGraphemeWritingSystemPrompt(academicMode);
+  const slashCommands = filterSlashCommands(input);
+  const showSlashCommands = !isLoading && slashCommands.length > 0;
 
   // ── Provider settings ──────────────────────────────────────────────────
   const selectedText = useEditorStore((s) => s.selectedText);
@@ -227,6 +260,10 @@ export function AIChatPanel() {
   useEffect(() => {
     createChatSession();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (isReadOnlyMode) setChatMode("plan");
+  }, [isReadOnlyMode]);
 
   const handleNewSession = useCallback(() => {
     commitMessages(localMessagesRef.current);
@@ -306,7 +343,7 @@ export function AIChatPanel() {
   //   input  = system prompt + user messages (+ 4 per message for role/format overhead)
   //   output = assistant completions (+ 4 per message for role/format overhead)
   const inputTokens =
-    estTokens(SYSTEM_PROMPT) +
+    estTokens(systemPrompt) +
     localMessages
       .filter((m) => m.role === "user")
       .reduce((sum, m) => sum + estTokens(m.content) + 4, 0);
@@ -394,15 +431,23 @@ export function AIChatPanel() {
     let contextualContent = trimmed;
     if (chatMode === "action") {
       contextualContent =
-        `${ACTION_PROTOCOL}\n\n` +
+        `${systemPrompt}\n\n` +
         `User request:\n${trimmed}\n\n` +
         `Active document path: ${activeTab?.path ?? "(untitled)"}\n\n` +
         `Current document:\n\`\`\`\n${activeTab?.content ?? ""}\n\`\`\``;
       if (selectedText) {
         contextualContent += `\n\nSelected text:\n\`\`\`\n${selectedText}\n\`\`\``;
       }
-    } else if (selectedText) {
-      contextualContent = `Selected text:\n\`\`\`\n${selectedText}\n\`\`\`\n\n${trimmed}`;
+    } else {
+      contextualContent = `${getAcademicWorkflowPrompt(academicMode)}\n\nUser request:\n${trimmed}`;
+      if (selectedText) {
+        contextualContent += `\n\nSelected text:\n\`\`\`\n${selectedText}\n\`\`\``;
+      }
+      if (isReadOnlyMode) {
+        contextualContent +=
+          `\n\nActive document path: ${activeTab?.path ?? "(untitled)"}\n\n` +
+          `Current document:\n\`\`\`\n${activeTab?.content ?? ""}\n\`\`\``;
+      }
     }
 
     const withUser: AiMessage[] = [...localMessages, { role: "user", content: trimmed, timestamp: Date.now() }];
@@ -436,7 +481,7 @@ export function AIChatPanel() {
           messages: apiMessages,
           ollamaUrl,
           ollamaModel,
-          system: chatMode === "action" ? ACTION_PROTOCOL : SYSTEM_PROMPT,
+          system: systemPrompt,
           onChunk,
         });
       } else {
@@ -469,7 +514,9 @@ export function AIChatPanel() {
         const returnedSessionId = await invoke<string | null>("stream_claude_cli", {
           sessionId: activeSession?.claudeSessionId ?? null,
           message: contextualContent,
-          system: activeSession?.claudeSessionId ? "" : (chatMode === "action" ? ACTION_PROTOCOL : SYSTEM_PROMPT),
+          system: activeSession?.claudeSessionId
+            ? ""
+            : systemPrompt,
           model: claudeModel || null,
           effort,
           thinking,
@@ -524,6 +571,27 @@ export function AIChatPanel() {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (showSlashCommands) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        setSlashCommandIndex((current) => {
+          const offset = e.key === "ArrowDown" ? 1 : -1;
+          return (current + offset + slashCommands.length) % slashCommands.length;
+        });
+        return;
+      }
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        applySlashCommand(slashCommands[slashCommandIndex] ?? slashCommands[0]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setInput("");
+        return;
+      }
+    }
+
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -562,13 +630,19 @@ export function AIChatPanel() {
     commitMessages(localMessagesRef.current);
   };
 
-  const applyPrompt = (prompt: string) => {
+  const applyPrompt = (prompt: string, mode: AcademicWorkflowMode) => {
+    setAcademicMode(mode);
     setInput(prompt);
     requestAnimationFrame(() => {
       chatInputRef.current?.focus();
       const len = prompt.length;
       chatInputRef.current?.setSelectionRange(len, len);
     });
+  };
+
+  const applySlashCommand = (command: GraphemeSlashCommand) => {
+    setSlashCommandIndex(0);
+    applyPrompt(command.prompt, command.mode);
   };
 
   // ── Session list helpers ───────────────────────────────────────────────
@@ -731,7 +805,7 @@ export function AIChatPanel() {
                 <button
                   key={starter.title}
                   className="ai-starter-card"
-                  onClick={() => applyPrompt(starter.prompt)}
+                  onClick={() => applyPrompt(starter.prompt, starter.mode)}
                 >
                   <span className="ai-starter-title">{starter.title}</span>
                   <span className="ai-starter-body">{starter.body}</span>
@@ -845,17 +919,54 @@ export function AIChatPanel() {
       )}
 
       <div className="ai-chat-input-area">
+        {showSlashCommands && (
+          <div className="ai-slash-menu" role="listbox" aria-label="Writing modes">
+            {slashCommands.map((command, index) => (
+              <button
+                key={command.command}
+                className={`ai-slash-menu-item${index === slashCommandIndex ? " ai-slash-menu-item--active" : ""}`}
+                type="button"
+                role="option"
+                aria-selected={index === slashCommandIndex}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => applySlashCommand(command)}
+              >
+                <span className="ai-slash-menu-command">/{command.command}</span>
+                <span className="ai-slash-menu-copy">
+                  <span className="ai-slash-menu-label">{command.label}</span>
+                  <span className="ai-slash-menu-description">{command.description}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
         <textarea
           ref={chatInputRef}
           className="ai-chat-input"
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={(e) => {
+            setInput(e.target.value);
+            setSlashCommandIndex(0);
+          }}
           onKeyDown={handleKeyDown}
           placeholder={selectedText ? "Tell AI what to do with the selection…" : "Ask for drafting, editing, rephrasing, or /cite query"}
           rows={3}
           disabled={isLoading}
         />
         <div className="ai-chat-input-actions">
+          <select
+            className="ai-toolbar-select"
+            value={academicMode}
+            onChange={(e) => setAcademicMode(e.target.value as AcademicWorkflowMode)}
+            title="Academic workflow mode"
+          >
+            {ACADEMIC_MODES.map((mode) => (
+              <option key={mode.id} value={mode.id}>{mode.label}</option>
+            ))}
+          </select>
+
+          <span className="ai-toolbar-sep" />
+
           <select
             className="ai-toolbar-model"
             value={modelValue}
@@ -917,10 +1028,14 @@ export function AIChatPanel() {
           <span className="ai-toolbar-spacer" />
 
           <span className="ai-toolbar-label">Act</span>
-          <label className="ai-mode-toggle" title={chatMode === "action" ? "Auto-insert on" : "Auto-insert off"}>
+          <label
+            className={`ai-mode-toggle${isReadOnlyMode ? " ai-mode-toggle--disabled" : ""}`}
+            title={isReadOnlyMode ? "Review and citation audit are read-only" : chatMode === "action" ? "Auto-insert on" : "Auto-insert off"}
+          >
             <input
               type="checkbox"
               checked={chatMode === "action"}
+              disabled={isReadOnlyMode}
               onChange={(e) => setChatMode(e.target.checked ? "action" : "plan")}
             />
             <span className="ai-mode-toggle-track" />
