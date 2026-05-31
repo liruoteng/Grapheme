@@ -138,6 +138,8 @@ interface EditorState {
   updateTabContent: (path: string, content: string) => void;
   syncCleanTabContent: (path: string, content: string) => void;
   markTabClean: (path: string) => void;
+  mtimeVersion: number;
+  bumpMtimeVersion: () => void;
 
   // Active PDF Panel Path
   activePdfPath: string | null;
@@ -482,12 +484,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       ),
     })),
 
-  markTabClean: (path) =>
+  markTabClean: (path) => {
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.path === path ? { ...t, isDirty: false } : t
       ),
-    })),
+    }));
+    get().bumpMtimeVersion();
+  },
 
   activePdfPath: null,
   setActivePdfPath: (path) => set({ activePdfPath: path }),
@@ -613,6 +617,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   lastEditTime: null,
   setLastEditTime: (t) => set({ lastEditTime: t }),
+  mtimeVersion: 0,
+  bumpMtimeVersion: () => set((s) => ({ mtimeVersion: s.mtimeVersion + 1 })),
   lastCompileMs: null,
   setLastCompileMs: (ms) => set({ lastCompileMs: ms }),
   compileStartedAt: null,

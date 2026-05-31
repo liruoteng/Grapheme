@@ -29,6 +29,14 @@
 .lsp-connecting   { color: #facc15; }
 .lsp-disconnected { color: var(--text-dim); }
 
+.status-file-path {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0.85;
+  min-width: 0;
+}
+
 .status-errors,
 .status-warnings {
   background: transparent;

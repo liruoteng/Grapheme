@@ -38,6 +38,10 @@ export default function App() {
   const lspStatus = useEditorStore((s) => s.lspStatus);
   const theme = useEditorStore((s) => s.theme);
   const activeTabPath = useEditorStore((s) => s.activeTabPath);
+  const activeTabName = useEditorStore((s) => {
+    const tab = s.tabs.find((t) => t.path === s.activeTabPath);
+    return tab?.name ?? null;
+  });
   const writingMode = useEditorStore((s) => s.writingMode);
   const mdSourceMode = useEditorStore((s) => s.mdSourceMode);
   const isMdFile = activeTabPath?.endsWith(".md") || activeTabPath?.endsWith(".markdown");
@@ -552,7 +556,7 @@ export default function App() {
             ) : null}
             <PanelManager
               titleSuffixes={{
-                editor: isMdFile ? <MarkdownEditorModeBadge /> : null,
+                editor: activeTabName ? <span className="pm-panel-subtitle">— {activeTabName}</span> : null,
                 preview: <PreviewPageCount />,
               }}
               headerExtras={{
@@ -780,15 +784,6 @@ const MdSourceToggle = memo(function MdSourceToggle() {
         <Code size={13} />
       </button>
     </div>
-  );
-});
-
-const MarkdownEditorModeBadge = memo(function MarkdownEditorModeBadge() {
-  const mdSourceMode = useEditorStore((s) => s.mdSourceMode);
-  return (
-    <span className="pm-panel-subtitle">
-      {mdSourceMode ? "Markdown source" : "Rich Markdown"}
-    </span>
   );
 });
 

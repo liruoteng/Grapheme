@@ -847,7 +847,7 @@
   color: #fff;
   cursor: pointer;
   transition: background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease, transform 0.08s ease;
-  vertical-align: -0.12em;
+  vertical-align: middle;
 }
 
 .markdown-wysiwyg .cm-md-task-checkbox:hover {

@@ -10,8 +10,9 @@ import {
   Pencil,
   Minus,
   Plus,
-  Type,
+  File,
 } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
 import { useEditorStore } from "../../stores/editorStore";
 import "./StatusBar.css";
 
@@ -116,12 +117,21 @@ export function StatusBar({
   const converterWarnings = useEditorStore((s) => s.converterWarnings);
   const fontSize     = useEditorStore((s) => s.editorFontSize);
   const setFontSize  = useEditorStore((s) => s.setEditorFontSize);
-  const lastEditTime = useEditorStore((s) => s.lastEditTime);
   const lastCompileMs = useEditorStore((s) => s.lastCompileMs);
+  const mtimeVersion = useEditorStore((s) => s.mtimeVersion);
 
   const [showFontMenu, setShowFontMenu] = useState(false);
+  const [fileMtime, setFileMtime] = useState<number | null>(null);
   const [, setTick] = useState(0);
   const fontBtnRef = useRef<HTMLButtonElement>(null);
+
+  // Fetch file modification time when active tab changes
+  useEffect(() => {
+    if (!activeTabPath) { setFileMtime(null); return; }
+    invoke<{ mtime: number }>("file_stat", { path: activeTabPath })
+      .then((r) => setFileMtime(r.mtime))
+      .catch(() => setFileMtime(null));
+  }, [activeTabPath, mtimeVersion]);
 
   // Tick every 15s to refresh relative time display
   useEffect(() => {
@@ -141,7 +151,7 @@ export function StatusBar({
     return () => document.removeEventListener("mousedown", handle);
   }, [showFontMenu]);
 
-  const editTimeLabel = formatEditTime(lastEditTime);
+  const editTimeLabel = formatEditTime(fileMtime);
   const language = activeTab ? getLanguageLabel(activeTab.path) : null;
 
   return (
@@ -212,7 +222,7 @@ export function StatusBar({
             title="Adjust font size"
             onClick={() => setShowFontMenu((v) => !v)}
           >
-            <Type size={11} /> {fontSize}
+            <span style={{ fontFamily: "Georgia, serif", fontStyle: "italic", fontSize: 13, display: "inline-flex", alignItems: "center" }}>Aa</span>&nbsp; {fontSize}
           </button>
           <button
             className="font-adj-btn"
@@ -232,11 +242,17 @@ export function StatusBar({
           </button>
         </div>
 
+        {activeTab && (
+          <span className="status-file-path">
+            <File size={11} style={{ cursor: "pointer" }} onClick={() => navigator.clipboard.writeText(activeTab.path)} />
+            <span title={activeTab.path}>{activeTab.path}</span>
+          </span>
+        )}
       </div>
 
       <div className="status-right">
         {editTimeLabel && (
-          <span className="status-edit-time" title="Last edit time">
+          <span className="status-edit-time" title="File modified time">
             <Pencil size={11} /> {editTimeLabel}
           </span>
         )}

@@ -54,6 +54,23 @@ pub struct FileEntry {
     pub is_dir: bool,
 }
 
+#[derive(Serialize)]
+pub struct FileStat {
+    pub mtime: u64, // Unix millisecond timestamp
+}
+
+#[tauri::command]
+fn file_stat(path: String) -> Result<FileStat, String> {
+    let meta = fs::metadata(&path).map_err(|e| e.to_string());
+    meta.and_then(|m| {
+        m.modified()
+            .map(|t| FileStat {
+                mtime: t.duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64,
+            })
+            .map_err(|e| e.to_string())
+    })
+}
+
 #[tauri::command]
 fn read_file(path: String) -> Result<String, String> {
     fs::read_to_string(&path).map_err(|e| e.to_string())
@@ -2412,6 +2429,7 @@ pub fn run() {
             )),
         })
         .invoke_handler(tauri::generate_handler![
+            file_stat,
             read_file,
             read_file_bytes,
             write_file,
