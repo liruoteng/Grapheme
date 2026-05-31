@@ -750,8 +750,8 @@ fn extract_footnotes(content: &str) -> (String, HashMap<String, String>) {
     (out, footnotes)
 }
 
-fn collect_table<'a>(lines: &[&'a str], start: usize) -> (Vec<Vec<&'a str>>, usize) {
-    let mut rows: Vec<Vec<&str>> = Vec::new();
+fn collect_table<'a>(lines: &[&'a str], start: usize) -> (Vec<Vec<String>>, usize) {
+    let mut rows: Vec<Vec<String>> = Vec::new();
     let mut i = start;
     while i < lines.len() && (lines[i].contains('|') || lines[i].contains('-')) {
         let line = lines[i];
@@ -763,19 +763,37 @@ fn collect_table<'a>(lines: &[&'a str], start: usize) -> (Vec<Vec<&'a str>>, usi
             i += 1;
             continue;
         }
-        let row: Vec<&str> = line
-            .trim()
-            .trim_matches('|')
-            .split('|')
-            .map(|c| c.trim())
-            .collect();
+        let row = split_table_row(line);
         rows.push(row);
         i += 1;
     }
     (rows, i - start)
 }
 
-fn render_table_with_options(rows: &[Vec<&str>], options: &MarkdownOptions) -> String {
+fn split_table_row(line: &str) -> Vec<String> {
+    let line = line.trim().trim_matches('|');
+    let mut cells: Vec<String> = Vec::new();
+    let mut current_start = 0;
+    let chars: Vec<char> = line.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '\\' && i + 1 < chars.len() && chars[i + 1] == '|' {
+            i += 2;
+            continue;
+        }
+        if chars[i] == '|' {
+            let cell = &line[current_start..i];
+            cells.push(cell.trim().replace("\\|", "|"));
+            current_start = i + 1;
+        }
+        i += 1;
+    }
+    let cell = &line[current_start..];
+    cells.push(cell.trim().replace("\\|", "|"));
+    cells
+}
+
+fn render_table_with_options(rows: &[Vec<String>], options: &MarkdownOptions) -> String {
     if rows.is_empty() {
         return String::new();
     }
@@ -2975,5 +2993,14 @@ mod tests {
         let p = build_preamble(&fm);
         assert!(p.contains("Test"), "got: {p}");
         assert!(p.contains("#set page"), "got: {p}");
+    }
+
+    #[test]
+    fn markdown_table_escaped_pipe() {
+        let md = "| A | B | C |\n|---|---|---|\n| 1 | `a \\| b` | 3 |\n";
+        let out = convert(md);
+        assert!(out.contains("columns: 3"));
+        assert!(out.contains("a | b"));
+        assert!(!out.contains("columns: 4"));
     }
 }

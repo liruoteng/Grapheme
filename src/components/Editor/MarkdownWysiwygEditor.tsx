@@ -72,6 +72,7 @@ type ScrollSnapshot = {
 
 const editTableSourceEffect = StateEffect.define<InlineRange | null>();
 const editImageSourceEffect = StateEffect.define<InlineRange | null>();
+const editHtmlBlockEffect = StateEffect.define<InlineRange | null>();
 const revealMarkdownSyntaxEffect = StateEffect.define<null>();
 
 const tableSourceEditRangeField = StateField.define<InlineRange | null>({
@@ -109,6 +110,29 @@ const imageSourceEditRangeField = StateField.define<InlineRange | null>({
 
     for (const effect of transaction.effects) {
       if (effect.is(editImageSourceEffect)) value = effect.value;
+    }
+
+    if (value && transaction.selection) {
+      const selection = transaction.state.selection.main;
+      if (selection.to < value.from || selection.from > value.to) return null;
+    }
+
+    return value;
+  },
+});
+
+const htmlBlockEditRangeField = StateField.define<InlineRange | null>({
+  create: () => null,
+  update(value, transaction) {
+    if (value && transaction.docChanged) {
+      value = {
+        from: transaction.changes.mapPos(value.from),
+        to: transaction.changes.mapPos(value.to),
+      };
+    }
+
+    for (const effect of transaction.effects) {
+      if (effect.is(editHtmlBlockEffect)) value = effect.value;
     }
 
     if (value && transaction.selection) {
@@ -651,11 +675,11 @@ function mathBlockAt(source: MarkdownDocSource, lineNumber: number): MarkdownMat
 function htmlBlockAt(source: MarkdownDocSource, lineNumber: number): MarkdownHtmlBlock | null {
   const doc = markdownDoc(source);
   const openLine = doc.line(lineNumber);
-  const openMatch = openLine.text.match(/^( {0,3})<([a-zA-Z][a-zA-Z0-9]*)((?:\s[^>]*)?)\s*(\/?)>/);
+  const openMatch = openLine.text.match(/^( {0,3})<([a-zA-Z][a-zA-Z0-9]*)((?:\s[^>]*?)?)\s*>/);
   if (!openMatch) return null;
 
   const tagName = openMatch[2].toLowerCase();
-  const selfClosing = openMatch[4] === "/";
+  const selfClosing = openMatch[0].endsWith("/>");
   if (selfClosing || !blockHtmlTagNames.has(tagName)) return null;
 
   const closeRe = new RegExp(`<\\/${tagName}\\s*>`, "i");
@@ -672,24 +696,21 @@ function htmlBlockAt(source: MarkdownDocSource, lineNumber: number): MarkdownHtm
     while (pos < scanLine.text.length) {
       const remaining = scanLine.text.slice(pos);
       const nextClose = new RegExp(`<\\/${tagName}\\s*>`, "i").exec(remaining);
-      const nextOpen = new RegExp(`<${tagName}(\\s[^>]*)?\\s*>`, "i").exec(remaining);
+      const nextOpen = new RegExp(`<${tagName}(\\s[^>]*?)?\\s*>`, "i").exec(remaining);
 
-      const closeIdx = nextClose ? pos + nextClose.index : Infinity;
-      const openIdx = nextOpen ? pos + nextOpen.index : Infinity;
+      const nextCloseIndex = nextClose ? pos + nextClose.index : -1;
+      const nextOpenIndex = nextOpen ? pos + nextOpen.index : -1;
 
-      if (closeIdx < openIdx) {
+      if (nextCloseIndex !== -1 && (nextOpenIndex === -1 || nextCloseIndex < nextOpenIndex)) {
         depth--;
         if (depth === 0) {
-          return {
-            from: openLine.from,
-            to: scanLine.from + closeIdx + (nextClose?.[0].length ?? 0),
-            content: doc.sliceString(openLine.from, scanLine.from + closeIdx + (nextClose?.[0].length ?? 0)),
-          };
+          const toPos = scanLine.from + nextCloseIndex + (nextClose?.[0].length ?? 0);
+          return { from: openLine.from, to: toPos, content: doc.sliceString(openLine.from, toPos) };
         }
-        pos = closeIdx + 1;
-      } else if (openIdx !== Infinity) {
+        pos = nextCloseIndex + 1;
+      } else if (nextOpenIndex !== -1) {
         depth++;
-        pos = openIdx + 1;
+        pos = nextOpenIndex + 1;
       } else {
         break;
       }
@@ -1320,7 +1341,7 @@ class MarkdownTableWidget extends WidgetType {
     wrap.appendChild(actions);
 
     wrap.addEventListener("mousedown", (event) => {
-      if ((event.target as HTMLElement).closest("button, [contenteditable='true']")) return;
+      if (event.target instanceof Element && event.target.closest("button, [contenteditable='true']")) return;
       event.preventDefault();
       view.focus();
     });
@@ -1556,7 +1577,7 @@ class MarkdownImageWidget extends WidgetType {
     figure.appendChild(broken);
 
     figure.addEventListener("mousedown", (event) => {
-      if ((event.target as HTMLElement).closest("button")) return;
+      if (event.target instanceof Element && event.target.closest("button")) return;
       event.preventDefault();
       const imageFrom = Number(figure.dataset.imageFrom);
       const imageTo = Number(figure.dataset.imageTo);
@@ -1679,9 +1700,15 @@ class HtmlBlockWidget extends WidgetType {
     return this.block.from === other.block.from && this.block.to === other.block.to;
   }
 
+  updateDOM(_dom: HTMLElement): boolean {
+    return true;
+  }
+
   toDOM(view: EditorView) {
     const wrapper = document.createElement("div");
     wrapper.className = "cm-md-html-block-render";
+    wrapper.dataset.htmlFrom = String(this.block.from);
+    wrapper.dataset.htmlTo = String(this.block.to);
 
     const inner = document.createElement("div");
     inner.className = "cm-md-html-block-inner";
@@ -1696,11 +1723,16 @@ class HtmlBlockWidget extends WidgetType {
     wrapper.appendChild(inner);
 
     wrapper.addEventListener("mousedown", (event) => {
-      if ((event.target as HTMLElement).closest("button, a, input, select, textarea, [contenteditable='true']")) return;
+      if (event.target instanceof Element && event.target.closest("button, a, input, select, textarea, [contenteditable='true']")) return;
       event.preventDefault();
-      const rect = wrapper.getBoundingClientRect();
-      const pos = event.clientX < rect.left + rect.width / 2 ? this.block.from : this.block.to;
-      view.dispatch({ selection: EditorSelection.cursor(pos), scrollIntoView: false });
+      const htmlFrom = Number(wrapper.dataset.htmlFrom);
+      const htmlTo = Number(wrapper.dataset.htmlTo);
+      if (!Number.isFinite(htmlFrom) || !Number.isFinite(htmlTo)) return;
+      view.dispatch({
+        effects: editHtmlBlockEffect.of({ from: htmlFrom, to: htmlTo }),
+        selection: EditorSelection.range(htmlFrom, htmlTo),
+        scrollIntoView: false,
+      });
       view.focus();
     });
 
@@ -1721,6 +1753,10 @@ class HtmlInlineWidget extends WidgetType {
     return this.source === other.source && this.from === other.from && this.to === other.to;
   }
 
+  updateDOM(_dom: HTMLElement): boolean {
+    return true;
+  }
+
   toDOM(view: EditorView) {
     const span = document.createElement("span");
     span.className = "cm-md-html-inline-render";
@@ -1734,7 +1770,7 @@ class HtmlInlineWidget extends WidgetType {
     }
 
     span.addEventListener("mousedown", (event) => {
-      if ((event.target as HTMLElement).closest("button, a, input, select, textarea")) return;
+      if (event.target instanceof Element && event.target.closest("button, a, input, select, textarea")) return;
       event.preventDefault();
       selectRangePreservingScroll(view, this.from, this.to);
       view.focus();
@@ -2210,12 +2246,12 @@ function addInlineDecorations(
     ranges.push({ from: start, to: end, className: "cm-md-emoji" });
   }
 
-  const htmlTagRe = /<([a-zA-Z][a-zA-Z0-9]*)((?:\s[^>]*?)?)\s*(\/?)>/g;
+  const htmlTagRe = /<([a-zA-Z][a-zA-Z0-9]*)((?:\s[^>]*?)?)\s*>/g;
   htmlTagRe.lastIndex = fromOffset;
   let htmlMatch: RegExpExecArray | null;
   while ((htmlMatch = htmlTagRe.exec(lineText)) !== null) {
     const tagName = htmlMatch[1].toLowerCase();
-    const selfClosing = htmlMatch[3] === "/";
+    const selfClosing = htmlMatch[0].endsWith("/>");
     const voidTag = voidHtmlTagNames.has(tagName);
     const inlineTag = inlineHtmlTagNames.has(tagName);
 
@@ -2241,12 +2277,13 @@ function addInlineDecorations(
     }
 
     const closeRe = new RegExp(`<\\/${tagName}\\s*>`, "i");
-    closeRe.lastIndex = htmlTagRe.lastIndex;
-    const closeMatch = closeRe.exec(lineText);
+    const afterOpen = lineText.slice(htmlMatch.index + htmlMatch[0].length);
+    const closeMatch = closeRe.exec(afterOpen);
     if (!closeMatch) continue;
 
-    const endPos = lineFrom + closeMatch.index + closeMatch[0].length;
-    const source = lineText.slice(htmlMatch.index, closeMatch.index + closeMatch[0].length);
+    const closeStart = htmlMatch.index + htmlMatch[0].length + closeMatch.index;
+    const endPos = lineFrom + closeStart + closeMatch[0].length;
+    const source = lineText.slice(htmlMatch.index, closeStart + closeMatch[0].length);
     const active = inlineMarkerActive([{ from: tagStart, to: endPos }], cursorFrom, cursorTo);
 
     if (active) {
@@ -2260,7 +2297,7 @@ function addInlineDecorations(
       });
     }
 
-    htmlTagRe.lastIndex = closeMatch.index + closeMatch[0].length;
+    htmlTagRe.lastIndex = closeStart + closeMatch[0].length;
   }
 }
 
@@ -2353,6 +2390,7 @@ function buildMarkdownDecorations(state: EditorState) {
   const frontmatter = frontmatterAtTop(state);
   const tableSourceEditRange = state.field(tableSourceEditRangeField, false);
   const imageSourceEditRange = state.field(imageSourceEditRangeField, false);
+  const htmlBlockEditRange = state.field(htmlBlockEditRangeField, false);
 
   for (let lineNumber = 1; lineNumber <= doc.lines; lineNumber += 1) {
     const line = doc.line(lineNumber);
@@ -2479,7 +2517,7 @@ function buildMarkdownDecorations(state: EditorState) {
 
     const htmlBlock = htmlBlockAt(state, line.number);
     if (htmlBlock) {
-      const activeHtmlBlock = rangeActive(htmlBlock, cursorFrom, cursorTo, selectionEmpty);
+      const activeHtmlBlock = !!htmlBlockEditRange && htmlBlockEditRange.to >= htmlBlock.from && htmlBlockEditRange.from <= htmlBlock.to;
       const lastHtmlLineNumber = doc.lineAt(htmlBlock.to).number;
       if (activeHtmlBlock) {
         for (let htmlLineNumber = line.number; htmlLineNumber <= lastHtmlLineNumber; htmlLineNumber += 1) {
@@ -2928,6 +2966,7 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
     syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
     tableSourceEditRangeField,
     imageSourceEditRangeField,
+    htmlBlockEditRangeField,
     markdownWysiwygDecorations(() => pointerSelectionActiveRef.current),
     EditorView.lineWrapping,
     keymap.of([
