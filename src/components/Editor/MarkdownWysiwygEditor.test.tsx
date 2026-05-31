@@ -434,6 +434,41 @@ describe("MarkdownWysiwygEditor", () => {
     });
   });
 
+  it("allows editing image source after clicking edit source button", async () => {
+    const path = "/workspace/examples/markdown/image.md";
+    useEditorStore.getState().openTab(path, "image.md", "![Sample image](assets/photo.png)\n");
+
+    const { container } = render(<MarkdownWysiwygEditor />);
+
+    await waitFor(() => {
+      expect(container.querySelector(".cm-md-image-render")).toBeInTheDocument();
+    });
+
+    const editSource = [...container.querySelectorAll(".cm-md-image-actions button")]
+      .find((button) => button.textContent === "Edit source");
+    fireEvent.click(editSource!);
+
+    await waitFor(() => {
+      expect(container.querySelector(".cm-md-image-source")).toBeInTheDocument();
+    });
+
+    const content = container.querySelector(".cm-content") as HTMLElement;
+    const view = EditorView.findFromDOM(content);
+    expect(view).toBeTruthy();
+
+    // Verify cursor can be placed in the image source (the edit button sets selection to the image range)
+    const selection = view!.state.selection.main;
+    expect(selection.from).toBe(0);
+    expect(selection.to).toBe(33); // length of "![Sample image](assets/photo.png)"
+
+    // Verify we can type and modify the content at cursor position
+    view!.dispatch({ changes: { from: 2, insert: "New " } });
+
+    await waitFor(() => {
+      expect(useEditorStore.getState().activeTab()?.content).toBe("![New Sample image](assets/photo.png)\n");
+    });
+  });
+
   it("falls back to ancestor-relative image paths for markdown opened from a nested folder", async () => {
     const path = "/workspace/examples/markdown/image.md";
     useEditorStore.getState().openTab(path, "image.md", "![Sample image](markdown/assets/photo.png)\n");
@@ -570,6 +605,76 @@ describe("MarkdownWysiwygEditor", () => {
 
     await waitFor(() => {
       expect(useEditorStore.getState().activeTab()?.content).toBe("![photo.png](assets/photo.png)Intro\n");
+    });
+  });
+
+  it("renders nested blockquotes with proper styling", async () => {
+    const path = "/workspace/examples/markdown/blockquote.md";
+    useEditorStore.getState().openTab(path, "blockquote.md", "> Level 1\n> > Level 2\n> > > Level 3\n");
+
+    const { container } = render(<MarkdownWysiwygEditor />);
+
+    await waitFor(() => {
+      const level1 = container.querySelector(".cm-md-blockquote-level-1");
+      const level2 = container.querySelector(".cm-md-blockquote-level-2");
+      const level3 = container.querySelector(".cm-md-blockquote-level-3");
+      expect(level1).toBeInTheDocument();
+      expect(level2).toBeInTheDocument();
+      expect(level3).toBeInTheDocument();
+    });
+  });
+
+  it("renders blockquotes with space-separated nested syntax", async () => {
+    const path = "/workspace/examples/markdown/blockquote.md";
+    useEditorStore.getState().openTab(path, "blockquote.md", "> > nested with spaces\n");
+
+    const { container } = render(<MarkdownWysiwygEditor />);
+
+    await waitFor(() => {
+      const level2 = container.querySelector(".cm-md-blockquote-level-2");
+      expect(level2).toBeInTheDocument();
+    });
+  });
+
+  it("renders blockquotes containing lists", async () => {
+    const path = "/workspace/examples/markdown/blockquote.md";
+    useEditorStore.getState().openTab(path, "blockquote.md", "> - list item 1\n> - list item 2\n");
+
+    const { container } = render(<MarkdownWysiwygEditor />);
+
+    await waitFor(() => {
+      const blockquoteLine = container.querySelector(".cm-md-blockquote-line");
+      const listMarker = container.querySelector(".cm-md-list-marker");
+      expect(blockquoteLine).toBeInTheDocument();
+      expect(listMarker).toBeInTheDocument();
+    });
+  });
+
+  it("renders blockquotes containing headings", async () => {
+    const path = "/workspace/examples/markdown/blockquote.md";
+    useEditorStore.getState().openTab(path, "blockquote.md", "> ## Heading in quote\n");
+
+    const { container } = render(<MarkdownWysiwygEditor />);
+
+    await waitFor(() => {
+      const blockquoteLine = container.querySelector(".cm-md-blockquote-line");
+      const heading = container.querySelector(".cm-md-h2");
+      expect(blockquoteLine).toBeInTheDocument();
+      expect(heading).toBeInTheDocument();
+    });
+  });
+
+  it("renders blockquotes containing task lists", async () => {
+    const path = "/workspace/examples/markdown/blockquote.md";
+    useEditorStore.getState().openTab(path, "blockquote.md", "> - [ ] task in quote\n");
+
+    const { container } = render(<MarkdownWysiwygEditor />);
+
+    await waitFor(() => {
+      const blockquoteLine = container.querySelector(".cm-md-blockquote-line");
+      const taskCheckbox = container.querySelector(".cm-md-task-checkbox");
+      expect(blockquoteLine).toBeInTheDocument();
+      expect(taskCheckbox).toBeInTheDocument();
     });
   });
 });

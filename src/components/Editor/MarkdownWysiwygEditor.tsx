@@ -2587,7 +2587,7 @@ function buildMarkdownDecorations(state: EditorState) {
     const isDefaultCursor = cursorFrom === 0 && cursorTo === 0 && selection.empty;
     const activeLine = selectionEmpty && !isDefaultCursor && cursorTo >= line.from && cursorFrom <= line.to;
     const heading = text.match(/^(#{1,6})\s+/);
-    const blockquote = text.match(/^(>+\s?)/);
+    const blockquote = text.match(/^((?:>\s*)+)/);
     const task = text.match(/^(\s*)([-*+])\s+\[([ xX])\]\s+/);
     const unordered = text.match(/^(\s*)([-*+])\s+/);
     const ordered = text.match(/^(\s*)(\d+\.)\s+/);
@@ -2611,11 +2611,82 @@ function buildMarkdownDecorations(state: EditorState) {
         });
       }
     } else if (blockquote) {
-      ranges.push({ from: line.from, to: line.from, line: true, className: "cm-md-blockquote-line" });
-      ranges.push(markerRange(line.from, line.from + blockquote[1].length, activeLine));
-      ranges.push({ from: line.from + blockquote[1].length, to: line.to, className: "cm-md-blockquote" });
-      addInlineDecorations(ranges, text, line.from, blockquote[1].length, cursorFrom, cursorTo);
+      const blockquotePrefix = blockquote[1];
+      const blockquoteLevel = (blockquotePrefix.match(/>/g) || []).length;
+      const contentAfterPrefix = text.slice(blockquotePrefix.length);
+
+      ranges.push({ from: line.from, to: line.from, line: true, className: `cm-md-blockquote-line cm-md-blockquote-level-${blockquoteLevel}` });
+      ranges.push(markerRange(line.from, line.from + blockquotePrefix.length, activeLine));
+
+      const contentFrom = line.from + blockquotePrefix.length;
+      const contentHeading = contentAfterPrefix.match(/^(#{1,6})\s+/);
+      const contentTask = contentAfterPrefix.match(/^(\s*)([-*+])\s+\[([ xX])\]\s+/);
+      const contentUnordered = contentAfterPrefix.match(/^(\s*)([-*+])\s+/);
+      const contentOrdered = contentAfterPrefix.match(/^(\s*)(\d+\.)\s+/);
+
+      if (contentHeading) {
+        const level = Math.min(contentHeading[1].length, 6);
+        ranges.push({ from: contentFrom, to: contentFrom + contentHeading[0].length, className: `cm-md-heading-marker cm-md-h${level}` });
+        ranges.push({ from: contentFrom + contentHeading[0].length, to: line.to, className: `cm-md-heading cm-md-h${level} cm-md-blockquote` });
+      } else if (contentTask) {
+        const taskIndent = Math.floor(contentTask[1].length / 2);
+        const markerFrom = contentFrom + contentTask[1].length;
+        const markerTo = contentFrom + contentTask[0].length;
+        const activeTaskMarker = cursorTo >= markerFrom && cursorFrom <= markerTo;
+        if (activeTaskMarker) {
+          ranges.push(markerRange(markerFrom, markerTo, true));
+        } else {
+          ranges.push({
+            from: markerFrom,
+            to: markerTo,
+            replace: true,
+            widget: new TaskCheckboxWidget(contentTask[3].toLowerCase() === "x", markerFrom, markerTo),
+          });
+        }
+        if (contentTask[3].toLowerCase() === "x") {
+          ranges.push({ from: markerTo, to: line.to, className: "cm-md-task-complete cm-md-blockquote" });
+        }
+        ranges.push({ from: markerTo, to: line.to, className: "cm-md-blockquote" });
+        addInlineDecorations(ranges, text, contentFrom, contentTask[0].length, cursorFrom, cursorTo);
+      } else if (contentUnordered) {
+        const markerFrom = contentFrom + contentUnordered[1].length;
+        const markerTo = contentFrom + contentUnordered[0].length;
+        const activeListMarker = cursorTo >= markerFrom && cursorFrom <= markerTo;
+        if (activeListMarker) {
+          ranges.push(markerRange(markerFrom, markerTo, true, "cm-md-active-list-marker"));
+        } else {
+          ranges.push({
+            from: markerFrom,
+            to: markerTo,
+            replace: true,
+            widget: new ListMarkerWidget("bullet"),
+          });
+        }
+        ranges.push({ from: markerTo, to: line.to, className: "cm-md-blockquote" });
+        addInlineDecorations(ranges, text, contentFrom, contentUnordered[0].length, cursorFrom, cursorTo);
+      } else if (contentOrdered) {
+        const markerFrom = contentFrom + contentOrdered[1].length;
+        const markerTo = contentFrom + contentOrdered[0].length;
+        const activeListMarker = cursorTo >= markerFrom && cursorFrom <= markerTo;
+        if (activeListMarker) {
+          ranges.push(markerRange(markerFrom, markerTo, true, "cm-md-active-list-marker"));
+        } else {
+          ranges.push({
+            from: markerFrom,
+            to: markerTo,
+            replace: true,
+            widget: new ListMarkerWidget("ordered", contentOrdered[2]),
+          });
+        }
+        ranges.push({ from: markerTo, to: line.to, className: "cm-md-blockquote" });
+        addInlineDecorations(ranges, text, contentFrom, contentOrdered[0].length, cursorFrom, cursorTo);
+      } else {
+        ranges.push({ from: contentFrom, to: line.to, className: "cm-md-blockquote" });
+        addInlineDecorations(ranges, text, contentFrom, 0, cursorFrom, cursorTo);
+      }
     } else if (task) {
+      const taskIndent = Math.floor(task[1].length / 2);
+      ranges.push({ from: line.from, to: line.from, line: true, className: `cm-md-indent-${taskIndent}` });
       const markerFrom = line.from + task[1].length;
       const markerTo = line.from + task[0].length;
       const activeTaskMarker = cursorTo >= markerFrom && cursorFrom <= markerTo;
@@ -2634,6 +2705,8 @@ function buildMarkdownDecorations(state: EditorState) {
       }
       addInlineDecorations(ranges, text, line.from, task[0].length, cursorFrom, cursorTo);
     } else if (unordered) {
+      const unorderedIndent = Math.floor(unordered[1].length / 2);
+      ranges.push({ from: line.from, to: line.from, line: true, className: `cm-md-indent-${unorderedIndent}` });
       if (activeLine) {
         ranges.push(markerRange(line.from + unordered[1].length, line.from + unordered[0].length, true, "cm-md-active-list-marker"));
       } else {
@@ -2646,6 +2719,8 @@ function buildMarkdownDecorations(state: EditorState) {
       }
       addInlineDecorations(ranges, text, line.from, unordered[0].length, cursorFrom, cursorTo);
     } else if (ordered) {
+      const orderedIndent = Math.floor(ordered[1].length / 2);
+      ranges.push({ from: line.from, to: line.from, line: true, className: `cm-md-indent-${orderedIndent}` });
       if (activeLine) {
         ranges.push(markerRange(line.from + ordered[1].length, line.from + ordered[0].length, true, "cm-md-active-list-marker"));
       } else {
@@ -2687,10 +2762,16 @@ function buildMarkdownImageAtomicRanges(state: EditorState) {
   const ranges: Range<Decoration>[] = [];
   const doc = state.doc;
   const imageAtom = Decoration.mark({});
+  const imageSourceEditRange = state.field(imageSourceEditRangeField, false);
   for (let lineNumber = 1; lineNumber <= doc.lines; lineNumber += 1) {
     const line = doc.line(lineNumber);
     const image = imageAtLine(line.text, line.from);
-    if (image) ranges.push(imageAtom.range(image.from, image.to));
+    if (image) {
+      const isActiveImage = !!imageSourceEditRange && imageSourceEditRange.to >= image.from && imageSourceEditRange.from <= image.to;
+      if (!isActiveImage) {
+        ranges.push(imageAtom.range(image.from, image.to));
+      }
+    }
   }
   return Decoration.set(ranges, true);
 }
@@ -2698,7 +2779,9 @@ function buildMarkdownImageAtomicRanges(state: EditorState) {
 const markdownImageAtomicRangeField = StateField.define<DecorationSet>({
   create: buildMarkdownImageAtomicRanges,
   update(value, transaction) {
-    if (transaction.docChanged) return buildMarkdownImageAtomicRanges(transaction.state);
+    if (transaction.docChanged || transaction.effects.some((effect) => effect.is(editImageSourceEffect))) {
+      return buildMarkdownImageAtomicRanges(transaction.state);
+    }
     return value;
   },
   provide: (field) => EditorView.atomicRanges.of((view) => view.state.field(field)),
@@ -2945,12 +3028,13 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
     syntaxHighlighting(HighlightStyle.define([
       { tag: tags.meta, color: "#404740" },
       { tag: tags.link, textDecoration: "none" },
+      { tag: tags.url, color: "inherit" },
       { tag: tags.heading, fontWeight: "bold" },
       { tag: tags.emphasis, fontStyle: "italic" },
       { tag: tags.strong, fontWeight: "bold" },
       { tag: tags.strikethrough, textDecoration: "line-through" },
       { tag: tags.keyword, color: "#708" },
-      { tag: [tags.atom, tags.bool, tags.url, tags.contentSeparator, tags.labelName], color: "#219" },
+      { tag: [tags.atom, tags.bool, tags.contentSeparator, tags.labelName], color: "#219" },
       { tag: [tags.literal, tags.inserted], color: "#164" },
       { tag: [tags.string, tags.deleted], color: "#a11" },
       { tag: [tags.regexp, tags.escape, tags.special(tags.string)], color: "#e40" },

@@ -61,6 +61,11 @@
   border-left-color: var(--accent-bright);
 }
 
+.markdown-wysiwyg--dark {
+  --accent: #E1A36F;
+  --accent-bright: #EDB88F;
+}
+
 .markdown-wysiwyg--dark .cm-cursor {
   border-left-color: #f4c7a4;
 }
@@ -214,6 +219,31 @@
   padding: 0.22em 1em;
   border-left: 3px solid var(--accent);
   background: color-mix(in srgb, var(--bg-surface) 60%, transparent);
+}
+
+.markdown-wysiwyg .cm-line.cm-md-blockquote-level-2 {
+  border-left-color: color-mix(in srgb, var(--accent) 60%, var(--text-secondary));
+  padding-left: calc(1em + 0.5em);
+}
+
+.markdown-wysiwyg .cm-line.cm-md-blockquote-level-3 {
+  border-left-color: color-mix(in srgb, var(--accent) 40%, var(--text-secondary));
+  padding-left: calc(1em + 1em);
+}
+
+.markdown-wysiwyg .cm-line.cm-md-blockquote-level-4 {
+  border-left-color: color-mix(in srgb, var(--accent) 30%, var(--text-secondary));
+  padding-left: calc(1em + 1.5em);
+}
+
+.markdown-wysiwyg .cm-line.cm-md-blockquote-level-5 {
+  border-left-color: color-mix(in srgb, var(--accent) 20%, var(--text-secondary));
+  padding-left: calc(1em + 2em);
+}
+
+.markdown-wysiwyg .cm-line.cm-md-blockquote-level-6 {
+  border-left-color: color-mix(in srgb, var(--accent) 15%, var(--text-secondary));
+  padding-left: calc(1em + 2.5em);
 }
 
 .markdown-wysiwyg .cm-md-rule-source {
@@ -844,6 +874,11 @@
   min-width: 1.45em;
   box-sizing: border-box;
 }
+
+.markdown-wysiwyg .cm-md-indent-1 { padding-left: 1.4em; }
+.markdown-wysiwyg .cm-md-indent-2 { padding-left: 2.8em; }
+.markdown-wysiwyg .cm-md-indent-3 { padding-left: 4.2em; }
+.markdown-wysiwyg .cm-md-indent-4 { padding-left: 5.6em; }
 
 .markdown-wysiwyg .cm-md-emoji {
   font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "EmojiOne Color", sans-serif;
