@@ -88,7 +88,6 @@ void function registerExtraLanguages() {
     property: /\w+/
   };
 }();
-import { WidthHandle } from "./WidthHandle";
 import { FrontmatterPanel } from "./FrontmatterPanel";
 import { extractFrontmatter, restoreFrontmatter } from "./frontmatterUtil";
 import { normalizeWysiwygMarkdownEscapes } from "./markdownEscapeUtil";
@@ -839,7 +838,6 @@ function WritingModeEditorInner({ path, initialContent, externalContent, onSave,
                 />
             )}
             <SelectionToolbar getEditor={() => getEditor() ?? null} />
-            <WidthHandle />
         </div>
     );
 }

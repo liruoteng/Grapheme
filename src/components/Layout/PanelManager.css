@@ -272,8 +272,7 @@
 }
 
 /* ── Resize handles ────────────────────────────────────────────────────────
-   Full-area invisible hit targets with a small centred visual indicator.
-   The user can grab anywhere along the gap, but only sees a subtle bar. */
+   The full panel gap is draggable, with a small centred visual indicator. */
 .pm-row-handle {
   height: 5px;
   flex-shrink: 0;
@@ -344,7 +343,6 @@ body.pm-resizing-row * { cursor: row-resize !important; user-select: none !impor
   border-radius: 10px;
   margin: 2px;
   border: 1px solid var(--border);
-  border-bottom-color: transparent;
 }
 
 .pm-panel--dragging {

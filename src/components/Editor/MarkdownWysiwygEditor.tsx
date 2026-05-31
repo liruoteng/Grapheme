@@ -28,7 +28,6 @@ import { useEditorStore, type Reference } from "../../stores/editorStore";
 import { copyImageFilesToAssets } from "../../lib/utils";
 import { getActiveDragSource } from "../FileExplorer/fileDrag";
 import { SlashMenu, type SlashCommand } from "./SlashMenu";
-import { WidthHandle } from "./WidthHandle";
 import {
   insertColumnIntoTable,
   insertRowIntoTable,
@@ -164,6 +163,12 @@ type MarkdownFootnoteDefinition = {
   value: string;
 };
 
+type MarkdownHtmlBlock = {
+  from: number;
+  to: number;
+  content: string;
+};
+
 type CitationOption = {
   key: string;
   label: string;
@@ -262,6 +267,28 @@ const codeBlockLanguages = [
 ];
 const codeSyntaxHighlightMaxDocLength = 100_000;
 const previewUpdateDebounceMs = 500;
+
+const blockHtmlTagNames = new Set([
+  "address", "article", "aside", "blockquote", "body", "caption",
+  "center", "col", "colgroup", "dd", "details", "dialog", "dir",
+  "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer",
+  "form", "frame", "frameset", "h1", "h2", "h3", "h4", "h5", "h6",
+  "head", "header", "hr", "html", "iframe", "legend", "li", "link",
+  "main", "menu", "menuitem", "nav", "noframes", "ol", "optgroup",
+  "option", "p", "param", "section", "source", "summary", "table",
+  "tbody", "td", "tfoot", "th", "thead", "title", "tr", "track", "ul",
+]);
+
+const inlineHtmlTagNames = new Set([
+  "span", "strong", "em", "b", "i", "u", "s", "ins", "del",
+  "mark", "kbd", "sup", "sub", "small", "big", "abbr", "code",
+  "time", "var", "q", "dfn", "cite", "samp", "a",
+]);
+
+const voidHtmlTagNames = new Set([
+  "br", "hr", "img", "wbr", "input", "meta", "link", "area",
+  "base", "col", "embed", "source", "track",
+]);
 
 function codeBlockLanguageOptions(current: string) {
   return [...new Set([current, ...codeBlockLanguages])];
@@ -619,6 +646,57 @@ function mathBlockAt(source: MarkdownDocSource, lineNumber: number): MarkdownMat
     value: lines.join("\n").trim(),
     kind: dollarOpen ? "dollar" : "bracket",
   };
+}
+
+function htmlBlockAt(source: MarkdownDocSource, lineNumber: number): MarkdownHtmlBlock | null {
+  const doc = markdownDoc(source);
+  const openLine = doc.line(lineNumber);
+  const openMatch = openLine.text.match(/^( {0,3})<([a-zA-Z][a-zA-Z0-9]*)((?:\s[^>]*)?)\s*(\/?)>/);
+  if (!openMatch) return null;
+
+  const tagName = openMatch[2].toLowerCase();
+  const selfClosing = openMatch[4] === "/";
+  if (selfClosing || !blockHtmlTagNames.has(tagName)) return null;
+
+  const closeRe = new RegExp(`<\\/${tagName}\\s*>`, "i");
+  const sameLineClose = closeRe.exec(openLine.text.slice(openMatch[0].length));
+  if (sameLineClose) {
+    const endPos = openLine.from + openMatch[0].length + sameLineClose.index + sameLineClose[0].length;
+    return { from: openLine.from, to: endPos, content: doc.sliceString(openLine.from, endPos) };
+  }
+
+  let depth = 1;
+  for (let ln = lineNumber + 1; ln <= doc.lines; ln++) {
+    const scanLine = doc.line(ln);
+    let pos = 0;
+    while (pos < scanLine.text.length) {
+      const remaining = scanLine.text.slice(pos);
+      const nextClose = new RegExp(`<\\/${tagName}\\s*>`, "i").exec(remaining);
+      const nextOpen = new RegExp(`<${tagName}(\\s[^>]*)?\\s*>`, "i").exec(remaining);
+
+      const closeIdx = nextClose ? pos + nextClose.index : Infinity;
+      const openIdx = nextOpen ? pos + nextOpen.index : Infinity;
+
+      if (closeIdx < openIdx) {
+        depth--;
+        if (depth === 0) {
+          return {
+            from: openLine.from,
+            to: scanLine.from + closeIdx + (nextClose?.[0].length ?? 0),
+            content: doc.sliceString(openLine.from, scanLine.from + closeIdx + (nextClose?.[0].length ?? 0)),
+          };
+        }
+        pos = closeIdx + 1;
+      } else if (openIdx !== Infinity) {
+        depth++;
+        pos = openIdx + 1;
+      } else {
+        break;
+      }
+    }
+  }
+
+  return null;
 }
 
 function normalizePrismLanguage(language: string) {
@@ -1590,6 +1668,82 @@ class FootnoteDefinitionWidget extends WidgetType {
   }
 }
 
+class HtmlBlockWidget extends WidgetType {
+  constructor(
+    private readonly block: MarkdownHtmlBlock,
+  ) {
+    super();
+  }
+
+  eq(other: HtmlBlockWidget) {
+    return this.block.from === other.block.from && this.block.to === other.block.to;
+  }
+
+  toDOM(view: EditorView) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "cm-md-html-block-render";
+
+    const inner = document.createElement("div");
+    inner.className = "cm-md-html-block-inner";
+
+    const parser = new DOMParser();
+    const parsed = parser.parseFromString(this.block.content, "text/html");
+    const bodyContent = parsed.body;
+    while (bodyContent.firstChild) {
+      inner.appendChild(bodyContent.firstChild);
+    }
+
+    wrapper.appendChild(inner);
+
+    wrapper.addEventListener("mousedown", (event) => {
+      if ((event.target as HTMLElement).closest("button, a, input, select, textarea, [contenteditable='true']")) return;
+      event.preventDefault();
+      const rect = wrapper.getBoundingClientRect();
+      const pos = event.clientX < rect.left + rect.width / 2 ? this.block.from : this.block.to;
+      view.dispatch({ selection: EditorSelection.cursor(pos), scrollIntoView: false });
+      view.focus();
+    });
+
+    return wrapper;
+  }
+}
+
+class HtmlInlineWidget extends WidgetType {
+  constructor(
+    private readonly source: string,
+    private readonly from: number,
+    private readonly to: number,
+  ) {
+    super();
+  }
+
+  eq(other: HtmlInlineWidget) {
+    return this.source === other.source && this.from === other.from && this.to === other.to;
+  }
+
+  toDOM(view: EditorView) {
+    const span = document.createElement("span");
+    span.className = "cm-md-html-inline-render";
+    span.contentEditable = "false";
+
+    const parser = new DOMParser();
+    const parsed = parser.parseFromString(this.source, "text/html");
+    const bodyContent = parsed.body;
+    while (bodyContent.firstChild) {
+      span.appendChild(bodyContent.firstChild);
+    }
+
+    span.addEventListener("mousedown", (event) => {
+      if ((event.target as HTMLElement).closest("button, a, input, select, textarea")) return;
+      event.preventDefault();
+      selectRangePreservingScroll(view, this.from, this.to);
+      view.focus();
+    });
+
+    return span;
+  }
+}
+
 class MathWidget extends WidgetType {
   constructor(
     private readonly value: string,
@@ -2055,6 +2209,59 @@ function addInlineDecorations(
     const end = start + match[0].length;
     ranges.push({ from: start, to: end, className: "cm-md-emoji" });
   }
+
+  const htmlTagRe = /<([a-zA-Z][a-zA-Z0-9]*)((?:\s[^>]*?)?)\s*(\/?)>/g;
+  htmlTagRe.lastIndex = fromOffset;
+  let htmlMatch: RegExpExecArray | null;
+  while ((htmlMatch = htmlTagRe.exec(lineText)) !== null) {
+    const tagName = htmlMatch[1].toLowerCase();
+    const selfClosing = htmlMatch[3] === "/";
+    const voidTag = voidHtmlTagNames.has(tagName);
+    const inlineTag = inlineHtmlTagNames.has(tagName);
+
+    if (!selfClosing && !voidTag && !inlineTag) continue;
+
+    const tagStart = lineFrom + htmlMatch.index;
+    const tagMatchEnd = tagStart + htmlMatch[0].length;
+
+    if (selfClosing || voidTag) {
+      const active = inlineMarkerActive([{ from: tagStart, to: tagMatchEnd }], cursorFrom, cursorTo);
+      if (active) {
+        ranges.push({ from: tagStart, to: tagMatchEnd, className: "cm-md-html-source" });
+      } else {
+        const source = lineText.slice(htmlMatch.index, htmlMatch.index + htmlMatch[0].length);
+        ranges.push({
+          from: tagStart,
+          to: tagMatchEnd,
+          replace: true,
+          widget: new HtmlInlineWidget(source, tagStart, tagMatchEnd),
+        });
+      }
+      continue;
+    }
+
+    const closeRe = new RegExp(`<\\/${tagName}\\s*>`, "i");
+    closeRe.lastIndex = htmlTagRe.lastIndex;
+    const closeMatch = closeRe.exec(lineText);
+    if (!closeMatch) continue;
+
+    const endPos = lineFrom + closeMatch.index + closeMatch[0].length;
+    const source = lineText.slice(htmlMatch.index, closeMatch.index + closeMatch[0].length);
+    const active = inlineMarkerActive([{ from: tagStart, to: endPos }], cursorFrom, cursorTo);
+
+    if (active) {
+      ranges.push({ from: tagStart, to: endPos, className: "cm-md-html-source" });
+    } else {
+      ranges.push({
+        from: tagStart,
+        to: endPos,
+        replace: true,
+        widget: new HtmlInlineWidget(source, tagStart, endPos),
+      });
+    }
+
+    htmlTagRe.lastIndex = closeMatch.index + closeMatch[0].length;
+  }
 }
 
 function linkAtPosition(view: EditorView, pos: number) {
@@ -2267,6 +2474,29 @@ function buildMarkdownDecorations(state: EditorState) {
           widget: new MarkdownImageWidget(image),
         });
       }
+      continue;
+    }
+
+    const htmlBlock = htmlBlockAt(state, line.number);
+    if (htmlBlock) {
+      const activeHtmlBlock = rangeActive(htmlBlock, cursorFrom, cursorTo, selectionEmpty);
+      const lastHtmlLineNumber = doc.lineAt(htmlBlock.to).number;
+      if (activeHtmlBlock) {
+        for (let htmlLineNumber = line.number; htmlLineNumber <= lastHtmlLineNumber; htmlLineNumber += 1) {
+          const htmlLine = doc.line(htmlLineNumber);
+          ranges.push({ from: htmlLine.from, to: htmlLine.to, className: "cm-md-html-source" });
+        }
+      } else {
+        ranges.push({
+          from: htmlBlock.from,
+          to: htmlBlock.to,
+          replace: true,
+          block: true,
+          widget: new HtmlBlockWidget(htmlBlock),
+        });
+      }
+
+      lineNumber = lastHtmlLineNumber;
       continue;
     }
 
@@ -2534,6 +2764,7 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
   const previewUpdateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pointerScrollSnapshotRef = useRef<ScrollSnapshot | null>(null);
   const pointerScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollbarTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pointerSelectionActiveRef = useRef(false);
   const onSaveRef = useRef(onSave);
   const onSnapshotRef = useRef(onSnapshot);
@@ -2864,8 +3095,20 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
     const view = new EditorView({ state, parent: container });
     viewRef.current = view;
     pathRef.current = editorFile.path;
+    const scroller = view.scrollDOM;
+    const revealScrollbar = () => {
+      scroller.classList.add("is-scrolling");
+      if (scrollbarTimerRef.current) clearTimeout(scrollbarTimerRef.current);
+      scrollbarTimerRef.current = setTimeout(() => {
+        scroller.classList.remove("is-scrolling");
+        scrollbarTimerRef.current = null;
+      }, 700);
+    };
+    scroller.addEventListener("scroll", revealScrollbar, { passive: true });
 
     return () => {
+      scroller.removeEventListener("scroll", revealScrollbar);
+      if (scrollbarTimerRef.current) clearTimeout(scrollbarTimerRef.current);
       view.destroy();
       viewRef.current = null;
     };
@@ -2930,6 +3173,7 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
       if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
       if (previewUpdateTimer.current) clearTimeout(previewUpdateTimer.current);
       if (pointerScrollTimerRef.current) clearTimeout(pointerScrollTimerRef.current);
+      if (scrollbarTimerRef.current) clearTimeout(scrollbarTimerRef.current);
     };
   }, []);
 
@@ -3037,7 +3281,6 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
           }}
         />
       )}
-      <WidthHandle />
     </div>
   );
 }

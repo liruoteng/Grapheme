@@ -23,6 +23,28 @@
   overflow: auto;
   overflow-anchor: none;
   padding: 56px clamp(20px, 4vw, 48px) 96px;
+  scrollbar-color: transparent transparent;
+  scrollbar-width: thin;
+}
+
+.markdown-wysiwyg .cm-scroller.is-scrolling,
+.markdown-wysiwyg .cm-scroller:hover {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+.markdown-wysiwyg .cm-scroller::-webkit-scrollbar {
+  width: 6px;
+}
+
+.markdown-wysiwyg .cm-scroller::-webkit-scrollbar-track,
+.markdown-wysiwyg .cm-scroller::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+
+.markdown-wysiwyg .cm-scroller.is-scrolling::-webkit-scrollbar-thumb,
+.markdown-wysiwyg .cm-scroller:hover::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
 }
 
 .markdown-wysiwyg .cm-content {
@@ -1013,6 +1035,30 @@
 
 .markdown-wysiwyg .cm-md-image-render--broken .cm-md-image-broken {
   display: block;
+}
+
+/* --- Html widget rendering --- */
+
+.markdown-wysiwyg .cm-md-html-block-render {
+  margin: 1em 0;
+}
+
+.markdown-wysiwyg .cm-md-html-block-inner {
+  line-height: 1.6;
+}
+
+.markdown-wysiwyg .cm-md-html-inline-render {
+  display: inline;
+  line-height: inherit;
+}
+
+.markdown-wysiwyg .cm-md-html-source {
+  color: var(--markdown-wysiwyg-text);
+  font-family: var(--editor-code-font, monospace);
+  font-size: 0.92em;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border-radius: 3px;
+  padding: 0 2px;
 }
 
 [data-theme="claude"] .markdown-wysiwyg .cm-selectionBackground {

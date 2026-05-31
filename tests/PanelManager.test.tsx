@@ -68,4 +68,21 @@ describe("PanelManager", () => {
     fireEvent.pointerMove(window, { clientX: 120, buttons: 0, pointerId: 1 });
     expect(document.body).not.toHaveClass("pm-resizing-col");
   });
+
+  it("allows column resizing anywhere along the panel gap", () => {
+    useEditorStore.setState({
+      activePanels: ["editor", "preview"],
+      panelLayout: "horizontal",
+    });
+
+    const { container } = render(<PanelManager contents={contents} />);
+    const gap = container.querySelector(".pm-col-handle");
+
+    expect(gap).toBeInTheDocument();
+    fireEvent.pointerDown(gap!, { clientX: 100, buttons: 1, pointerId: 1 });
+    expect(document.body).toHaveClass("pm-resizing-col");
+
+    fireEvent.pointerUp(window, { pointerId: 1 });
+    expect(document.body).not.toHaveClass("pm-resizing-col");
+  });
 });

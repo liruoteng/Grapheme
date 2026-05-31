@@ -66,6 +66,29 @@ describe("MarkdownWysiwygEditor", () => {
     });
   });
 
+  it("reveals the scrollbar while scrolling and hides it again when idle", async () => {
+    const path = "/workspace/examples/markdown/scrollbar.md";
+    useEditorStore.getState().openTab(path, "scrollbar.md", "# Scrollbar\n");
+
+    const { container } = render(<MarkdownWysiwygEditor />);
+
+    const scroller = await waitFor(() => {
+      const element = container.querySelector(".cm-scroller") as HTMLElement | null;
+      expect(element).toBeInTheDocument();
+      return element!;
+    });
+
+    expect(scroller).not.toHaveClass("is-scrolling");
+
+    vi.useFakeTimers();
+    fireEvent.scroll(scroller);
+    expect(scroller).toHaveClass("is-scrolling");
+
+    vi.advanceTimersByTime(700);
+    expect(scroller).not.toHaveClass("is-scrolling");
+    vi.useRealTimers();
+  });
+
   it("preserves the source spacing in rendered ordered list markers", async () => {
     const path = "/workspace/examples/markdown/ordered-list.md";
     useEditorStore.getState().openTab(path, "ordered-list.md", "10. Ordered item\n");
