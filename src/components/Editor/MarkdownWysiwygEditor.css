@@ -108,7 +108,8 @@
   font-size: 1em;
   display: inline-block;
   min-width: 1.45em;
-  margin-right: 0.18em;
+  margin-right: 0.3em;
+  white-space: nowrap;
 }
 
 .markdown-wysiwyg .cm-md-active-link-marker,
@@ -854,7 +855,8 @@
 .markdown-wysiwyg .cm-md-list-marker {
   display: inline-block;
   width: 1.45em;
-  margin-right: 0.18em;
+  min-width: 1.45em; 
+  margin-right: 0.3em;
   color: var(--text-muted);
   font-family: "JetBrains Mono", "Fira Code", "Menlo", monospace;
   font-size: 1em;
@@ -872,13 +874,15 @@
 .markdown-wysiwyg .cm-md-list-marker--ordered {
   width: auto;
   min-width: 1.45em;
+  text-align: right;
   box-sizing: border-box;
+  white-space: nowrap;
 }
 
-.markdown-wysiwyg .cm-md-indent-1 { padding-left: 1.4em; }
-.markdown-wysiwyg .cm-md-indent-2 { padding-left: 2.8em; }
-.markdown-wysiwyg .cm-md-indent-3 { padding-left: 4.2em; }
-.markdown-wysiwyg .cm-md-indent-4 { padding-left: 5.6em; }
+.markdown-wysiwyg .cm-line.cm-md-indent-1 { padding-left: 0.7em; }
+.markdown-wysiwyg .cm-line.cm-md-indent-2 { padding-left: 1.4em; }
+.markdown-wysiwyg .cm-line.cm-md-indent-3 { padding-left: 2.1em; }
+.markdown-wysiwyg .cm-line.cm-md-indent-4 { padding-left: 2.8em; }
 
 .markdown-wysiwyg .cm-md-emoji {
   font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "EmojiOne Color", sans-serif;
