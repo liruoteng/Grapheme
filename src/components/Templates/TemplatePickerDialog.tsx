@@ -10,6 +10,7 @@ interface TemplateInfo {
   description: string;
   category: string;
   main: string;
+  thumbnail?: string;
 }
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -20,6 +21,14 @@ const CATEGORY_COLORS: Record<string, string> = {
 };
 
 function TemplateThumbnail({ template }: { template: TemplateInfo }) {
+  if (template.thumbnail) {
+    return (
+      <div className="template-thumbnail template-thumbnail--rendered">
+        <img src={template.thumbnail} alt="" />
+      </div>
+    );
+  }
+
   const isTwo =
     template.id === "ieee-conference" ||
     template.id === "cvpr-2025" ||

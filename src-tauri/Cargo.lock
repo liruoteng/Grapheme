@@ -1732,6 +1732,7 @@ dependencies = [
 name = "grapheme"
 version = "0.0.1"
 dependencies = [
+ "base64 0.22.1",
  "comemo",
  "futures-util",
  "reqwest 0.12.28",

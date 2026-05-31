@@ -154,6 +154,21 @@
   gap: 5px;
 }
 
+.template-thumbnail--rendered {
+  align-items: center;
+  background: #deded8;
+  justify-content: center;
+  padding: 7px;
+}
+
+.template-thumbnail--rendered img {
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
+  height: 100%;
+  object-fit: contain;
+  width: 100%;
+}
+
 .thumbnail-title-bar {
   height: 8px;
   background: #888;

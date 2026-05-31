@@ -5,6 +5,7 @@ mod lsp_bridge;
 mod preview_sidecar;
 mod typst_world;
 
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -1765,6 +1766,7 @@ pub struct TemplateInfo {
     pub description: String,
     pub category: String,
     pub main: String,
+    pub thumbnail: Option<String>,
 }
 
 fn templates_dir(app: &tauri::AppHandle) -> std::path::PathBuf {
@@ -1816,6 +1818,9 @@ fn list_templates(app: tauri::AppHandle) -> Result<Vec<TemplateInfo>, String> {
             description: v["description"].as_str().unwrap_or("").to_string(),
             category: v["category"].as_str().unwrap_or("").to_string(),
             main: v["main"].as_str().unwrap_or("main.md").to_string(),
+            thumbnail: fs::read(entry.path().join("thumbnail.png"))
+                .ok()
+                .map(|bytes| format!("data:image/png;base64,{}", BASE64_STANDARD.encode(bytes))),
         });
     }
     templates.sort_by(|a, b| a.name.cmp(&b.name));
