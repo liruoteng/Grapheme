@@ -1,4 +1,4 @@
-# Type Studio
+# Grapheme
 
 A desktop AI-powered writing app for [Typst](https://typst.app) and Markdown.
 
