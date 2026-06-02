@@ -14,6 +14,7 @@ vi.mock("@tauri-apps/api/webview", () => ({
 
 vi.mock("@tauri-apps/plugin-fs", () => ({
   watch: () => Promise.resolve(() => {}),
+  watchImmediate: () => Promise.resolve(() => {}),
 }));
 
 import { FileTree, type FileTreeHandle } from "./FileTree";

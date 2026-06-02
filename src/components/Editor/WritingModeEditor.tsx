@@ -18,6 +18,7 @@ import { mathBlockViewPlugin } from "./mathBlockView";
 import { mathInlineViewPlugin } from "./mathInlineView";
 import { mathAutoSelectPlugin } from "./mathAutoSelect";
 import { editorViewCtx } from "@milkdown/core";
+import type { Ctx } from "@milkdown/ctx";
 import { toggleMark, setBlockType } from "@milkdown/prose/commands";
 import { wrapInList } from "@milkdown/prose/schema-list";
 import { TextSelection } from "@milkdown/prose/state";
@@ -415,7 +416,7 @@ function WritingModeEditorInner({ path, initialContent, externalContent, onSave,
             prevPath = path;
             const editor = getEditorRef.current();
             if (!editor) return;
-            editor.action((ctx: any) => {
+            editor.action((ctx: Ctx) => {
                 const view = ctx.get(editorViewCtx);
                 const { state, dispatch } = view;
                 const current = state.doc.textBetween(0, state.doc.content.size);

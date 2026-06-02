@@ -59,6 +59,18 @@ type DecorationRange = {
   side?: number;
 };
 
+type DecorationBuildRange = {
+  from: number;
+  to: number;
+};
+
+type MarkdownDecorationBuildOptions = {
+  includeLayout?: boolean;
+  includeInline?: boolean;
+  ranges?: readonly DecorationBuildRange[];
+  suppressActiveInline?: boolean;
+};
+
 type InlineRange = {
   from: number;
   to: number;
@@ -241,6 +253,7 @@ const prismAliases: Record<string, string> = {
 
 const codeSyntaxHighlightMaxDocLength = 100_000;
 const previewUpdateDebounceMs = 500;
+const inlineDecorationContextLineCount = 200;
 
 const blockHtmlTagNames = new Set([
   "address", "article", "aside", "blockquote", "body", "caption",
@@ -2408,6 +2421,31 @@ function deleteImageAtCursor(view: EditorView, direction: "backward" | "forward"
   return true;
 }
 
+function markdownDecorationLineRanges(state: EditorState, ranges?: readonly DecorationBuildRange[]) {
+  const doc = state.doc;
+  if (!ranges || ranges.length === 0) return [{ fromLine: 1, toLine: doc.lines }];
+
+  const lineRanges = ranges.map((range) => {
+    const fromLine = doc.lineAt(Math.max(0, Math.min(range.from, doc.length))).number;
+    const toLine = doc.lineAt(Math.max(0, Math.min(range.to, doc.length))).number;
+    return {
+      fromLine: Math.max(1, fromLine - inlineDecorationContextLineCount),
+      toLine,
+    };
+  }).sort((a, b) => a.fromLine - b.fromLine || a.toLine - b.toLine);
+
+  const merged: Array<{ fromLine: number; toLine: number }> = [];
+  for (const range of lineRanges) {
+    const previous = merged[merged.length - 1];
+    if (previous && range.fromLine <= previous.toLine + 1) {
+      previous.toLine = Math.max(previous.toLine, range.toLine);
+    } else {
+      merged.push({ ...range });
+    }
+  }
+  return merged;
+}
+
 function externalInsertRange(view: EditorView, text: string) {
   const selection = view.state.selection.main;
   if (!selection.empty || !text.startsWith("\n")) {
@@ -2418,8 +2456,32 @@ function externalInsertRange(view: EditorView, text: string) {
   return link ? { from: link.to, to: link.to } : { from: selection.from, to: selection.to };
 }
 
-function buildMarkdownDecorations(state: EditorState) {
+function buildMarkdownDecorations(state: EditorState, options: MarkdownDecorationBuildOptions = {}) {
+  const includeLayout = options.includeLayout ?? true;
+  const includeInline = options.includeInline ?? true;
+  const showActiveInline = !options.suppressActiveInline;
   const ranges: DecorationRange[] = [];
+  const pushLayout = (range: DecorationRange) => {
+    if (includeLayout) ranges.push(range);
+  };
+  const pushInline = (range: DecorationRange) => {
+    if (includeInline) ranges.push(range);
+  };
+  const addInline = (
+    text: string,
+    lineFrom: number,
+    fromOffset: number,
+    selectionFrom: number,
+    selectionTo: number,
+  ) => {
+    if (includeInline) addInlineDecorations(ranges, text, lineFrom, fromOffset, selectionFrom, selectionTo);
+  };
+  const addSyntax = (lineText: string, lineFrom: number, language: string) => {
+    if (includeInline) addSyntaxTokenDecorations(ranges, lineText, lineFrom, language);
+  };
+  const addLatexSyntax = (lineText: string, lineFrom: number) => {
+    if (includeInline) addLatexSyntaxTokenDecorations(ranges, lineText, lineFrom);
+  };
   const selection = state.selection.main;
   const cursorFrom = selection.from;
   const cursorTo = selection.to;
@@ -2430,21 +2492,23 @@ function buildMarkdownDecorations(state: EditorState) {
   const tableSourceEditRange = state.field(tableSourceEditRangeField, false);
   const imageSourceEditRange = state.field(imageSourceEditRangeField, false);
   const htmlBlockEditRange = state.field(htmlBlockEditRangeField, false);
+  const lineRanges = markdownDecorationLineRanges(state, options.ranges);
 
-  for (let lineNumber = 1; lineNumber <= doc.lines; lineNumber += 1) {
-    const line = doc.line(lineNumber);
+  for (const lineRange of lineRanges) {
+    for (let lineNumber = lineRange.fromLine; lineNumber <= lineRange.toLine; lineNumber += 1) {
+      const line = doc.line(lineNumber);
     const text = line.text;
 
     if (frontmatter && line.from === frontmatter.from) {
-      const activeFrontmatter = selectionEmpty && cursorTo >= frontmatter.from && cursorFrom <= frontmatter.to;
+      const activeFrontmatter = showActiveInline && selectionEmpty && cursorTo >= frontmatter.from && cursorFrom <= frontmatter.to;
       const lastFrontmatterLineNumber = doc.lineAt(frontmatter.to).number;
       if (activeFrontmatter) {
         for (let fmLineNumber = line.number; fmLineNumber <= lastFrontmatterLineNumber; fmLineNumber += 1) {
           const fmLine = doc.line(fmLineNumber);
-          ranges.push({ from: fmLine.from, to: fmLine.to, className: "cm-md-frontmatter-source" });
+          pushInline({ from: fmLine.from, to: fmLine.to, className: "cm-md-frontmatter-source" });
         }
       } else {
-        ranges.push({
+        pushLayout({
           from: frontmatter.from,
           to: frontmatter.to,
           replace: true,
@@ -2459,15 +2523,15 @@ function buildMarkdownDecorations(state: EditorState) {
 
     const mathBlock = mathBlockAt(state, line.number);
     if (mathBlock) {
-      const activeMathBlock = rangeActive(mathBlock, cursorFrom, cursorTo, selectionEmpty);
+      const activeMathBlock = showActiveInline && rangeActive(mathBlock, cursorFrom, cursorTo, selectionEmpty);
       const lastMathLineNumber = doc.lineAt(mathBlock.to).number;
       if (activeMathBlock) {
         for (let mathLineNumber = line.number; mathLineNumber <= lastMathLineNumber; mathLineNumber += 1) {
           const mathLine = doc.line(mathLineNumber);
-          ranges.push({ from: mathLine.from, to: mathLine.to, className: "cm-md-math-source" });
-          addLatexSyntaxTokenDecorations(ranges, mathLine.text, mathLine.from);
+          pushInline({ from: mathLine.from, to: mathLine.to, className: "cm-md-math-source" });
+          addLatexSyntax(mathLine.text, mathLine.from);
         }
-        ranges.push({
+        pushLayout({
           from: mathBlock.to,
           to: mathBlock.to,
           point: true,
@@ -2482,7 +2546,7 @@ function buildMarkdownDecorations(state: EditorState) {
           ),
         });
       } else {
-        ranges.push({
+        pushLayout({
           from: mathBlock.from,
           to: mathBlock.to,
           replace: true,
@@ -2497,7 +2561,7 @@ function buildMarkdownDecorations(state: EditorState) {
 
     const codeBlock = codeBlockAt(state, line.number);
     if (codeBlock) {
-      const activeCodeBlock = selectionEmpty && cursorTo >= codeBlock.from && cursorFrom <= codeBlock.to;
+      const activeCodeBlock = showActiveInline && selectionEmpty && cursorTo >= codeBlock.from && cursorFrom <= codeBlock.to;
       const lastCodeLineNumber = doc.lineAt(codeBlock.to).number;
 
       for (let codeLineNumber = line.number; codeLineNumber <= lastCodeLineNumber; codeLineNumber += 1) {
@@ -2513,14 +2577,14 @@ function buildMarkdownDecorations(state: EditorState) {
           isFirstLine ? "cm-md-code-block-line--first" : "",
           isLastLine ? "cm-md-code-block-line--last" : "",
         ].filter(Boolean).join(" ");
-        ranges.push({ from: codeLine.from, to: codeLine.from, line: true, className: lineClasses });
+        pushLayout({ from: codeLine.from, to: codeLine.from, line: true, className: lineClasses });
         if (isFenceLine && !activeCodeBlock) {
-          ranges.push({ from: codeLine.from, to: codeLine.to, className: "cm-md-code-fence-hidden" });
+          pushInline({ from: codeLine.from, to: codeLine.to, className: "cm-md-code-fence-hidden" });
         } else {
-          ranges.push({ from: codeLine.from, to: codeLine.to, className: "cm-md-code-block-source" });
+          pushInline({ from: codeLine.from, to: codeLine.to, className: "cm-md-code-block-source" });
         }
         if (isOpenFenceLine) {
-          ranges.push({
+          pushInline({
             from: codeLine.from,
             to: codeLine.from,
             point: true,
@@ -2529,7 +2593,7 @@ function buildMarkdownDecorations(state: EditorState) {
           });
         }
         if (!isFenceLine && enableCodeSyntaxHighlighting) {
-          addSyntaxTokenDecorations(ranges, codeLine.text, codeLine.from, codeBlock.language);
+          addSyntax(codeLine.text, codeLine.from, codeBlock.language);
         }
       }
 
@@ -2541,9 +2605,9 @@ function buildMarkdownDecorations(state: EditorState) {
     if (image) {
       const activeImage = !!imageSourceEditRange && imageSourceEditRange.to >= image.from && imageSourceEditRange.from <= image.to;
       if (activeImage) {
-        ranges.push({ from: image.from, to: image.to, className: "cm-md-image-source" });
+        pushInline({ from: image.from, to: image.to, className: "cm-md-image-source" });
       } else {
-        ranges.push({
+        pushLayout({
           from: image.from,
           to: image.to,
           replace: true,
@@ -2557,7 +2621,7 @@ function buildMarkdownDecorations(state: EditorState) {
     const htmlComment = htmlCommentAt(state, line.number);
     if (htmlComment) {
       const lastCommentLineNumber = doc.lineAt(htmlComment.to).number;
-      ranges.push({
+      pushLayout({
         from: htmlComment.from,
         to: htmlComment.to,
         replace: true,
@@ -2574,10 +2638,10 @@ function buildMarkdownDecorations(state: EditorState) {
       if (activeHtmlBlock) {
         for (let htmlLineNumber = line.number; htmlLineNumber <= lastHtmlLineNumber; htmlLineNumber += 1) {
           const htmlLine = doc.line(htmlLineNumber);
-          ranges.push({ from: htmlLine.from, to: htmlLine.to, className: "cm-md-html-source" });
+          pushInline({ from: htmlLine.from, to: htmlLine.to, className: "cm-md-html-source" });
         }
       } else {
-        ranges.push({
+        pushLayout({
           from: htmlBlock.from,
           to: htmlBlock.to,
           replace: true,
@@ -2592,15 +2656,15 @@ function buildMarkdownDecorations(state: EditorState) {
 
     const footnoteDefinition = footnoteDefinitionAt(state, line.number);
     if (footnoteDefinition) {
-      const activeFootnote = rangeActive(footnoteDefinition, cursorFrom, cursorTo, selectionEmpty);
+      const activeFootnote = showActiveInline && rangeActive(footnoteDefinition, cursorFrom, cursorTo, selectionEmpty);
       const lastFootnoteLineNumber = doc.lineAt(footnoteDefinition.to).number;
       if (activeFootnote) {
         for (let footnoteLineNumber = line.number; footnoteLineNumber <= lastFootnoteLineNumber; footnoteLineNumber += 1) {
           const footnoteLine = doc.line(footnoteLineNumber);
-          ranges.push({ from: footnoteLine.from, to: footnoteLine.to, className: "cm-md-footnote-source" });
+          pushInline({ from: footnoteLine.from, to: footnoteLine.to, className: "cm-md-footnote-source" });
         }
       } else {
-        ranges.push({
+        pushLayout({
           from: footnoteDefinition.from,
           to: footnoteDefinition.to,
           replace: true,
@@ -2620,10 +2684,10 @@ function buildMarkdownDecorations(state: EditorState) {
       if (activeTable) {
         for (let tableLineNumber = line.number; tableLineNumber <= lastTableLineNumber; tableLineNumber += 1) {
           const tableLine = doc.line(tableLineNumber);
-          ranges.push({ from: tableLine.from, to: tableLine.to, className: "cm-md-table-source" });
+          pushInline({ from: tableLine.from, to: tableLine.to, className: "cm-md-table-source" });
         }
       } else {
-        ranges.push({
+        pushLayout({
           from: table.from,
           to: table.to,
           replace: true,
@@ -2637,7 +2701,7 @@ function buildMarkdownDecorations(state: EditorState) {
     }
 
     const isDefaultCursor = cursorFrom === 0 && cursorTo === 0 && selection.empty;
-    const activeLine = selectionEmpty && !isDefaultCursor && cursorTo >= line.from && cursorFrom <= line.to;
+    const activeLine = showActiveInline && selectionEmpty && !isDefaultCursor && cursorTo >= line.from && cursorFrom <= line.to;
     const heading = text.match(/^(#{1,6})\s+/);
     const blockquote = text.match(/^((?:>\s*)+)/);
     const task = text.match(/^(\s*)([-*+])\s+\[([ xX])\]\s+/);
@@ -2646,15 +2710,15 @@ function buildMarkdownDecorations(state: EditorState) {
 
     if (heading) {
       const level = Math.min(heading[1].length, 6);
-      ranges.push({ from: line.from, to: line.from, line: true, className: `cm-md-heading-line cm-md-hl-${level}` });
-      ranges.push(markerRange(line.from, line.from + heading[0].length, activeLine, `cm-heading-marker-${level}`));
-      ranges.push({ from: line.from + heading[0].length, to: line.to, className: `cm-md-heading cm-md-h${level}` });
-      addInlineDecorations(ranges, text, line.from, heading[0].length, cursorFrom, cursorTo);
+      pushLayout({ from: line.from, to: line.from, line: true, className: `cm-md-heading-line cm-md-hl-${level}` });
+      pushInline(markerRange(line.from, line.from + heading[0].length, activeLine, `cm-heading-marker-${level}`));
+      pushInline({ from: line.from + heading[0].length, to: line.to, className: `cm-md-heading cm-md-h${level}` });
+      addInline(text, line.from, heading[0].length, cursorFrom, cursorTo);
     } else if (/^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/.test(text)) {
       if (activeLine) {
-        ranges.push({ from: line.from, to: line.to, className: "cm-md-rule-source" });
+        pushInline({ from: line.from, to: line.to, className: "cm-md-rule-source" });
       } else {
-        ranges.push({
+        pushLayout({
           from: line.from,
           to: line.to,
           replace: true,
@@ -2667,8 +2731,8 @@ function buildMarkdownDecorations(state: EditorState) {
       const blockquoteLevel = (blockquotePrefix.match(/>/g) || []).length;
       const contentAfterPrefix = text.slice(blockquotePrefix.length);
 
-      ranges.push({ from: line.from, to: line.from, line: true, className: `cm-md-blockquote-line cm-md-blockquote-level-${blockquoteLevel}` });
-      ranges.push(markerRange(line.from, line.from + blockquotePrefix.length, activeLine));
+      pushLayout({ from: line.from, to: line.from, line: true, className: `cm-md-blockquote-line cm-md-blockquote-level-${blockquoteLevel}` });
+      pushInline(markerRange(line.from, line.from + blockquotePrefix.length, activeLine));
 
       const contentFrom = line.from + blockquotePrefix.length;
       const contentHeading = contentAfterPrefix.match(/^(#{1,6})\s+/);
@@ -2678,16 +2742,16 @@ function buildMarkdownDecorations(state: EditorState) {
 
       if (contentHeading) {
         const level = Math.min(contentHeading[1].length, 6);
-        ranges.push({ from: contentFrom, to: contentFrom + contentHeading[0].length, className: `cm-md-heading-marker cm-md-h${level}` });
-        ranges.push({ from: contentFrom + contentHeading[0].length, to: line.to, className: `cm-md-heading cm-md-h${level} cm-md-blockquote` });
+        pushInline({ from: contentFrom, to: contentFrom + contentHeading[0].length, className: `cm-md-heading-marker cm-md-h${level}` });
+        pushInline({ from: contentFrom + contentHeading[0].length, to: line.to, className: `cm-md-heading cm-md-h${level} cm-md-blockquote` });
       } else if (contentTask) {
         const markerFrom = contentFrom + contentTask[1].length;
         const markerTo = contentFrom + contentTask[0].length;
         const activeTaskMarker = cursorTo >= markerFrom && cursorFrom <= markerTo;
         if (activeTaskMarker) {
-          ranges.push(markerRange(markerFrom, markerTo, true));
+          pushInline(markerRange(markerFrom, markerTo, true));
         } else {
-          ranges.push({
+          pushInline({
             from: markerFrom,
             to: markerTo,
             replace: true,
@@ -2695,56 +2759,56 @@ function buildMarkdownDecorations(state: EditorState) {
           });
         }
         if (contentTask[3].toLowerCase() === "x") {
-          ranges.push({ from: markerTo, to: line.to, className: "cm-md-task-complete cm-md-blockquote" });
+          pushInline({ from: markerTo, to: line.to, className: "cm-md-task-complete cm-md-blockquote" });
         }
-        ranges.push({ from: markerTo, to: line.to, className: "cm-md-blockquote" });
-        addInlineDecorations(ranges, text, contentFrom, contentTask[0].length, cursorFrom, cursorTo);
+        pushInline({ from: markerTo, to: line.to, className: "cm-md-blockquote" });
+        addInline(text, contentFrom, contentTask[0].length, cursorFrom, cursorTo);
       } else if (contentUnordered) {
         const markerFrom = contentFrom + contentUnordered[1].length;
         const markerTo = contentFrom + contentUnordered[0].length;
         const activeListMarker = cursorTo >= markerFrom && cursorFrom <= markerTo;
         if (activeListMarker) {
-          ranges.push(markerRange(markerFrom, markerTo, true, "cm-md-active-list-marker"));
+          pushInline(markerRange(markerFrom, markerTo, true, "cm-md-active-list-marker"));
         } else {
-          ranges.push({
+          pushInline({
             from: markerFrom,
             to: markerTo,
             replace: true,
             widget: new ListMarkerWidget("bullet"),
           });
         }
-        ranges.push({ from: markerTo, to: line.to, className: "cm-md-blockquote" });
-        addInlineDecorations(ranges, text, contentFrom, contentUnordered[0].length, cursorFrom, cursorTo);
+        pushInline({ from: markerTo, to: line.to, className: "cm-md-blockquote" });
+        addInline(text, contentFrom, contentUnordered[0].length, cursorFrom, cursorTo);
       } else if (contentOrdered) {
         const markerFrom = contentFrom + contentOrdered[1].length;
         const markerTo = contentFrom + contentOrdered[0].length;
         const activeListMarker = cursorTo >= markerFrom && cursorFrom <= markerTo;
         if (activeListMarker) {
-          ranges.push(markerRange(markerFrom, markerTo, true, "cm-md-active-list-marker"));
+          pushInline(markerRange(markerFrom, markerTo, true, "cm-md-active-list-marker"));
         } else {
-          ranges.push({
+          pushInline({
             from: markerFrom,
             to: markerTo,
             replace: true,
             widget: new ListMarkerWidget("ordered", contentOrdered[2]),
           });
         }
-        ranges.push({ from: markerTo, to: line.to, className: "cm-md-blockquote" });
-        addInlineDecorations(ranges, text, contentFrom, contentOrdered[0].length, cursorFrom, cursorTo);
+        pushInline({ from: markerTo, to: line.to, className: "cm-md-blockquote" });
+        addInline(text, contentFrom, contentOrdered[0].length, cursorFrom, cursorTo);
       } else {
-        ranges.push({ from: contentFrom, to: line.to, className: "cm-md-blockquote" });
-        addInlineDecorations(ranges, text, contentFrom, 0, cursorFrom, cursorTo);
+        pushInline({ from: contentFrom, to: line.to, className: "cm-md-blockquote" });
+        addInline(text, contentFrom, 0, cursorFrom, cursorTo);
       }
     } else if (task) {
       const taskIndent = Math.floor(task[1].length / 2);
-      ranges.push({ from: line.from, to: line.from, line: true, className: `cm-md-indent-${taskIndent}` });
+      pushLayout({ from: line.from, to: line.from, line: true, className: `cm-md-indent-${taskIndent}` });
       const markerFrom = line.from + task[1].length;
       const markerTo = line.from + task[0].length;
       const activeTaskMarker = cursorTo >= markerFrom && cursorFrom <= markerTo;
       if (activeTaskMarker) {
-        ranges.push(markerRange(markerFrom, markerTo, true));
+        pushInline(markerRange(markerFrom, markerTo, true));
       } else {
-        ranges.push({
+        pushInline({
           from: markerFrom,
           to: markerTo,
           replace: true,
@@ -2752,39 +2816,40 @@ function buildMarkdownDecorations(state: EditorState) {
         });
       }
       if (task[3].toLowerCase() === "x") {
-        ranges.push({ from: markerTo, to: line.to, className: "cm-md-task-complete" });
+        pushInline({ from: markerTo, to: line.to, className: "cm-md-task-complete" });
       }
-      addInlineDecorations(ranges, text, line.from, task[0].length, cursorFrom, cursorTo);
+      addInline(text, line.from, task[0].length, cursorFrom, cursorTo);
     } else if (unordered) {
       const unorderedIndent = Math.floor(unordered[1].length / 2);
-      ranges.push({ from: line.from, to: line.from, line: true, className: `cm-md-indent-${unorderedIndent}` });
+      pushLayout({ from: line.from, to: line.from, line: true, className: `cm-md-indent-${unorderedIndent}` });
       if (activeLine) {
-        ranges.push(markerRange(line.from + unordered[1].length, line.from + unordered[0].length, true, "cm-md-active-list-marker"));
+        pushInline(markerRange(line.from + unordered[1].length, line.from + unordered[0].length, true, "cm-md-active-list-marker"));
       } else {
-        ranges.push({
+        pushInline({
           from: line.from + unordered[1].length,
           to: line.from + unordered[0].length,
           replace: true,
           widget: new ListMarkerWidget("bullet"),
         });
       }
-      addInlineDecorations(ranges, text, line.from, unordered[0].length, cursorFrom, cursorTo);
+      addInline(text, line.from, unordered[0].length, cursorFrom, cursorTo);
     } else if (ordered) {
       const orderedIndent = Math.floor(ordered[1].length / 2);
-      ranges.push({ from: line.from, to: line.from, line: true, className: `cm-md-indent-${orderedIndent}` });
+      pushLayout({ from: line.from, to: line.from, line: true, className: `cm-md-indent-${orderedIndent}` });
       if (activeLine) {
-        ranges.push(markerRange(line.from + ordered[1].length, line.from + ordered[0].length, true, "cm-md-active-list-marker"));
+        pushInline(markerRange(line.from + ordered[1].length, line.from + ordered[0].length, true, "cm-md-active-list-marker"));
       } else {
-        ranges.push({
+        pushInline({
           from: line.from + ordered[1].length,
           to: line.from + ordered[0].length,
           replace: true,
           widget: new ListMarkerWidget("ordered", ordered[2]),
         });
       }
-      addInlineDecorations(ranges, text, line.from, ordered[0].length, cursorFrom, cursorTo);
+      addInline(text, line.from, ordered[0].length, cursorFrom, cursorTo);
     } else {
-      addInlineDecorations(ranges, text, line.from, 0, cursorFrom, cursorTo);
+      addInline(text, line.from, 0, cursorFrom, cursorTo);
+    }
     }
   }
 
@@ -2840,21 +2905,29 @@ const markdownImageAtomicRangeField = StateField.define<DecorationSet>({
 
 function markdownWysiwygDecorations(isPointerSelectionActive?: () => boolean): Extension {
   const decorationField = StateField.define<DecorationSet>({
-    create: buildMarkdownDecorations,
+    create: (state) => buildMarkdownDecorations(state, { includeInline: false }),
     update(value, transaction) {
       if (
         transaction.docChanged ||
         transaction.effects.some((effect) => effect.is(revealMarkdownSyntaxEffect)) ||
         (transaction.selection && !isPointerSelectionActive?.())
       ) {
-        return buildMarkdownDecorations(transaction.state);
+        return buildMarkdownDecorations(transaction.state, { includeInline: false });
       }
       return value;
     },
     provide: (field) => EditorView.decorations.from(field),
   });
 
-  return [decorationField, markdownImageAtomicRangeField];
+  const inlineDecorations = EditorView.decorations.of((view) =>
+    buildMarkdownDecorations(view.state, {
+      includeLayout: false,
+      ranges: view.visibleRanges,
+      suppressActiveInline: isPointerSelectionActive?.(),
+    })
+  );
+
+  return [decorationField, inlineDecorations, markdownImageAtomicRangeField];
 }
 
 function revealMarkdownSyntax(view: EditorView) {
@@ -3193,9 +3266,15 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
       mousedown(event, view) {
         if (event.button !== 0) return false;
         pointerSelectionActiveRef.current = true;
+        let pointerPos: number | null = null;
+        try {
+          pointerPos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+        } catch {
+          event.preventDefault();
+        }
         pointerScrollSnapshotRef.current = captureScrollSnapshot(
           view,
-          view.posAtCoords({ x: event.clientX, y: event.clientY }),
+          pointerPos,
         );
         if (pointerScrollTimerRef.current) clearTimeout(pointerScrollTimerRef.current);
         pointerScrollTimerRef.current = setTimeout(() => {
@@ -3203,7 +3282,7 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
           pointerScrollSnapshotRef.current = null;
           pointerScrollTimerRef.current = null;
         }, 3000);
-        return false;
+        return pointerPos === null;
       },
       mouseup(_event, view) {
         releasePointerScrollSnapshot();

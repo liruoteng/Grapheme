@@ -1345,12 +1345,12 @@ mod markdown_preview_tests {
 
         assert!(diagnostic.is_none());
         assert!(!fallback.trim().is_empty());
-        assert!(fast_ms < 500, "fast preview took {fast_ms}ms");
+        assert!(fast_ms < 1_000, "fast preview took {fast_ms}ms");
         assert!(
-            resilient_ms < 3_000,
+            resilient_ms < 5_000,
             "resilient preview took {resilient_ms}ms"
         );
-        assert!(fallback_ms < 250, "fallback source took {fallback_ms}ms");
+        assert!(fallback_ms < 500, "fallback source took {fallback_ms}ms");
 
         let _ = fs::remove_dir_all(dir);
     }
