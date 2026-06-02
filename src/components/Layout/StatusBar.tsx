@@ -118,6 +118,7 @@ export function StatusBar({
   const fontSize     = useEditorStore((s) => s.editorFontSize);
   const setFontSize  = useEditorStore((s) => s.setEditorFontSize);
   const lastCompileMs = useEditorStore((s) => s.lastCompileMs);
+  const lastEditTime = useEditorStore((s) => s.lastEditTime);
   const mtimeVersion = useEditorStore((s) => s.mtimeVersion);
 
   const [showFontMenu, setShowFontMenu] = useState(false);
@@ -151,7 +152,7 @@ export function StatusBar({
     return () => document.removeEventListener("mousedown", handle);
   }, [showFontMenu]);
 
-  const editTimeLabel = formatEditTime(fileMtime);
+  const editTimeLabel = formatEditTime(fileMtime ?? lastEditTime);
   const language = activeTab ? getLanguageLabel(activeTab.path) : null;
 
   return (

@@ -2168,7 +2168,7 @@ function addInlineDecorations(
   cursorFrom: number,
   cursorTo: number,
 ) {
-  const re = /\*\*\*([^*\n]+?)\*\*\*|\*\*([^*\n]+?)\*\*|__([^_\n]+?)__|~~([^~\n]+?)~~|`([^`\n]+?)`|\[([^\]\n]+?)\]\(([^)\n]+?)\)|\[([^\]\n]+?)\]\[([^\]\n]*)\]|_([^_\n]+?)_|\*([^*\n]+?)\*|\\([\\`*{}\[\]()#+\-.!|>])|<([a-zA-Z]+:\/\/[^\s>]+)>|<([a-zA-Z][a-zA-Z0-9.]+@[a-zA-Z0-9.]+)>|\[([^\]\n]*)\]:\s*<?([^>\s]+)>?\s*$/g;
+  const re = /\*\*\*([^*\n]+?)\*\*\*|\*\*([^*\n]+?)\*\*|__([^_\n]+?)__|~~([^~\n]+?)~~|`([^`\n]+?)`|\[([^\]\n]+?)\]\(([^)\n]+?)\)|\[([^\]\n]+?)\]\[([^\]\n]*)\]|_([^_\n]+?)_|\*([^*\n]+?)\*|\\([\\`*{}[\]()#+\-.!|>])|<([a-zA-Z]+:\/\/[^\s>]+)>|<([a-zA-Z][a-zA-Z0-9.]+@[a-zA-Z0-9.]+)>|\[([^\]\n]*)\]:\s*<?([^>\s]+)>?\s*$/g;
   re.lastIndex = fromOffset;
 
   let match: RegExpExecArray | null;
@@ -2731,7 +2731,6 @@ function buildMarkdownDecorations(state: EditorState) {
         ranges.push({ from: contentFrom, to: contentFrom + contentHeading[0].length, className: `cm-md-heading-marker cm-md-h${level}` });
         ranges.push({ from: contentFrom + contentHeading[0].length, to: line.to, className: `cm-md-heading cm-md-h${level} cm-md-blockquote` });
       } else if (contentTask) {
-        const taskIndent = Math.floor(contentTask[1].length / 2);
         const markerFrom = contentFrom + contentTask[1].length;
         const markerTo = contentFrom + contentTask[0].length;
         const activeTaskMarker = cursorTo >= markerFrom && cursorFrom <= markerTo;

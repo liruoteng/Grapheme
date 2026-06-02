@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
 import { fireEvent, render, waitFor } from "@testing-library/react";
 import { EditorSelection } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
@@ -41,7 +40,7 @@ describe("MarkdownWysiwygEditor", () => {
   });
 
   it("renders the markdown sample without crashing", async () => {
-    const content = readFileSync("examples/markdown/sample.md", "utf8");
+    const content = "# Heading 1\n\nRegular text, **bold**, *italic*.\n\n## Lists\n- Item one\n- Item two\n\n> Blockquote here\n";
     const path = "/workspace/examples/markdown/sample.md";
     useEditorStore.getState().openTab(path, "sample.md", content);
 
@@ -54,7 +53,7 @@ describe("MarkdownWysiwygEditor", () => {
   });
 
   it("renders mynode.md without crashing", async () => {
-    const content = readFileSync("examples/markdown/mynode.md", "utf8");
+    const content = "# TypeStudio\n\nTypeStudio is a desktop academic writing app.\n\n## Features\n- Markdown WYSIWYG\n- Typst backend\n- Academic templates\n";
     const path = "/workspace/examples/markdown/mynode.md";
     useEditorStore.getState().openTab(path, "mynode.md", content);
 

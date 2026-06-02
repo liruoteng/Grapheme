@@ -1972,6 +1972,13 @@ fn inline_with_options(text: &str, options: &MarkdownOptions) -> String {
                 i = end + 1;
                 continue;
             }
+            // Unmatched backtick — escape it so it doesn't start a Typst raw span
+            if options.preview_safe {
+                result.push('\\');
+                result.push('`');
+                i += 1;
+                continue;
+            }
         }
 
         // Inline math: $...$ — pass through without processing contents
