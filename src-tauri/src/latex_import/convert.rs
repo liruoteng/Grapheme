@@ -291,13 +291,22 @@ fn expand_inputs(src: &str, root: &Path, depth: usize) -> String {
 }
 
 fn try_read_input(root: &Path, name: &str) -> Option<String> {
-    // Try with and without .tex extension, relative to the .tex file's directory.
+    if Path::new(name).is_absolute() || name.contains("..") {
+        return None;
+    }
     let candidates = [
         root.join(name),
         root.join(format!("{name}.tex")),
         root.join(name).with_extension("tex"),
     ];
     for p in &candidates {
+        if let Ok(canonical) = p.canonicalize() {
+            if let Ok(root_canonical) = root.canonicalize() {
+                if !canonical.starts_with(&root_canonical) {
+                    continue;
+                }
+            }
+        }
         if let Ok(txt) = fs::read_to_string(p) {
             return Some(txt);
         }

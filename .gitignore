@@ -45,3 +45,4 @@ LATEX-TYPST-MAP.md
 skills-lock.json
 release.sh
 *.md
+.*.preview.typ

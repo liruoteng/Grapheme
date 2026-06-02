@@ -106,6 +106,14 @@ fn create_file(path: String) -> Result<(), String> {
 #[tauri::command]
 fn create_temp_file(extension: Option<String>) -> Result<String, String> {
     let ext = extension.unwrap_or_else(|| "typ".to_string());
+    let ext = ext
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '.')
+        .take(16)
+        .collect::<String>();
+    if ext.is_empty() || ext.contains("..") || ext.starts_with('.') {
+        return Err("invalid extension".into());
+    }
     let dir = std::env::temp_dir().join("type-studio");
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     for n in 1..10000 {
@@ -2668,7 +2676,11 @@ pub fn run() {
                             .and_then(|u| u.as_str())
                             .unwrap_or("http://localhost:11434")
                             .to_string();
-                        tauri::async_runtime::spawn(ai::ensure_ollama_server(url));
+                        tauri::async_runtime::spawn(async move {
+                            if let Some(_child) = ai::ensure_ollama_server(url).await {
+                                tokio::signal::ctrl_c().await.ok();
+                            }
+                        });
                     }
                 }
             }

@@ -13,6 +13,7 @@ import {
   Code,
   Bot,
 } from "lucide-react";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { StatusBar } from "./components/Layout/StatusBar";
 import { FloatingSidebar } from "./components/Layout/FloatingSidebar";
 import { PanelManager } from "./components/Layout/PanelManager";
@@ -568,33 +569,37 @@ export default function App() {
                 ai: <AiHeaderControlsLeft />
               }}
               contents={{
-                ai: <AIChatPanel />,
+                ai: <ErrorBoundary name="AI Chat"><AIChatPanel /></ErrorBoundary>,
                 editor: isMdFile && !mdSourceMode ? (
-                  <MarkdownWysiwygEditor
-                    onSave={handleSave}
-                    onSnapshot={handleSnapshot}
-                    onPreviewTrigger={handlePreviewTrigger}
-                    externalContent={restoreState ?? undefined}
-                  />
+                  <ErrorBoundary name="Markdown Editor">
+                    <MarkdownWysiwygEditor
+                      onSave={handleSave}
+                      onSnapshot={handleSnapshot}
+                      onPreviewTrigger={handlePreviewTrigger}
+                      externalContent={restoreState ?? undefined}
+                    />
+                  </ErrorBoundary>
                 ) : (
-                  <MonacoEditor
-                    onSave={handleSave}
-                    onSnapshot={handleSnapshot}
-                    onNewFile={handleNewFile}
-                    onPreviewTrigger={handlePreviewTrigger}
-                    externalContent={restoreState ?? undefined}
-                  />
+                  <ErrorBoundary name="Source Editor">
+                    <MonacoEditor
+                      onSave={handleSave}
+                      onSnapshot={handleSnapshot}
+                      onNewFile={handleNewFile}
+                      onPreviewTrigger={handlePreviewTrigger}
+                      externalContent={restoreState ?? undefined}
+                    />
+                  </ErrorBoundary>
                 ),
-                preview: <PreviewBody />,
+                preview: <ErrorBoundary name="Preview"><PreviewBody /></ErrorBoundary>,
                 diff: (
                   <div className="pm-placeholder">
                     Diff view — coming soon
                   </div>
                 ),
-                outline: <TableOfContents />,
-                pdf: <PDFViewerPanel />,
-                bibliography: <ReferencesPanel />,
-                profiler: <ProfilerPanel />,
+                outline: <ErrorBoundary name="Outline"><TableOfContents /></ErrorBoundary>,
+                pdf: <ErrorBoundary name="PDF Viewer"><PDFViewerPanel /></ErrorBoundary>,
+                bibliography: <ErrorBoundary name="References"><ReferencesPanel /></ErrorBoundary>,
+                profiler: <ErrorBoundary name="Profiler"><ProfilerPanel /></ErrorBoundary>,
               }}
             />
           </div>

@@ -677,19 +677,22 @@ pub async fn stream_claude_api(
 // ── Ollama server lifecycle ────────────────────────────────────────────────
 
 /// Check if Ollama is reachable; if not, start `ollama serve` in the background.
-pub async fn ensure_ollama_server(base_url: String) {
+/// Returns the child process handle if a new server was started.
+pub async fn ensure_ollama_server(base_url: String) -> Option<tokio::process::Child> {
     let client = Client::new();
     let url = format!("{}/api/tags", base_url.trim_end_matches('/'));
     if client.get(&url).send().await.is_ok() {
-        return; // already running
+        return None;
     }
     eprintln!("[ollama] server not detected, starting `ollama serve`…");
-    let _ = TokioCommand::new("ollama")
+    TokioCommand::new("ollama")
         .arg("serve")
         .env("PATH", extended_path())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .spawn();
+        .kill_on_drop(true)
+        .spawn()
+        .ok()
 }
 
 // ── List Ollama models ─────────────────────────────────────────────────────
