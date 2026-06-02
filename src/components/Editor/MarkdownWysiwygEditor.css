@@ -49,6 +49,7 @@
 
 .markdown-wysiwyg .cm-content {
   box-sizing: border-box;
+  flex: 0 1 auto;
   width: min(var(--markdown-wysiwyg-width, 760px), 100%);
   min-height: 100%;
   margin: 0 auto;
@@ -999,20 +1000,20 @@
 
 .markdown-wysiwyg .cm-md-table-render th[contenteditable="true"]:focus,
 .markdown-wysiwyg .cm-md-table-render td[contenteditable="true"]:focus {
-  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
-  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent-primary) 58%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 58%, transparent);
 }
 
 .markdown-wysiwyg .cm-md-table-render th.is-selected,
 .markdown-wysiwyg .cm-md-table-render td.is-selected,
 .markdown-wysiwyg .cm-md-table-render tr:nth-child(even) td.is-selected {
-  background: color-mix(in srgb, var(--accent-primary) 20%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 46%, transparent);
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 46%, transparent);
 }
 
 .markdown-wysiwyg .cm-md-table-render th.is-selection-anchor,
 .markdown-wysiwyg .cm-md-table-render td.is-selection-anchor {
-  box-shadow: inset 0 0 0 2px var(--accent-primary);
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
 
 .markdown-wysiwyg .cm-md-table-source {

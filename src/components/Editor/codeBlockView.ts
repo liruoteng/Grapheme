@@ -4,13 +4,7 @@ import { EditorView } from "@milkdown/prose/view";
 import { codeBlockSchema } from "@milkdown/preset-commonmark";
 import { $view } from "@milkdown/utils";
 import type { Ctx } from "@milkdown/ctx";
-
-const LANGUAGES = [
-  "", "javascript", "typescript", "python", "rust", "go", "java",
-  "c", "cpp", "csharp", "ruby", "php", "swift", "kotlin", "scala",
-  "bash", "shell", "sql", "html", "css", "json", "xml", "yaml",
-  "toml", "markdown", "plaintext", "diff", "graphql", "latex",
-];
+import { codeBlockLanguages } from "./codeBlockLanguages";
 
 export class CodeBlockView implements NodeView {
   dom: HTMLElement;
@@ -77,7 +71,7 @@ export class CodeBlockView implements NodeView {
   }
 
   private populateLanguages() {
-    for (const lang of LANGUAGES) {
+    for (const lang of codeBlockLanguages) {
       const opt = document.createElement("option");
       opt.value = lang;
       opt.textContent = lang || "Plain Text";

@@ -420,32 +420,32 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   tabs: [],
   activeTabPath: null,
 
-  openTab: (path, name, content) => {
-    const existing = get().tabs.find((t) => t.path === path);
-    if (existing) {
-      set({ activeTabPath: path });
-      return;
-    }
-    set((s) => ({
-      tabs: [...s.tabs, { path, name, content, isDirty: false }],
-      activeTabPath: path,
-    }));
-  },
+  openTab: (path, name, content) =>
+    set((s) => {
+      const existing = s.tabs.find((t) => t.path === path);
+      if (existing) {
+        return { activeTabPath: path };
+      }
+      return {
+        tabs: [...s.tabs, { path, name, content, isDirty: false }],
+        activeTabPath: path,
+      };
+    }),
 
-  openTempTab: (kind = "typ", realPath?: string) => {
-    const ext = kind === "md" ? "md" : "typ";
-    const name = realPath ? (realPath.split("/").pop() ?? `untitled.${ext}`) : `untitled.${ext}`;
-    const tempPath = realPath ?? `__temp__/${name}`;
-    const existing = get().tabs.find((t) => t.path === tempPath);
-    if (existing) {
-      set({ activeTabPath: tempPath });
-      return;
-    }
-    set((s) => ({
-      tabs: [...s.tabs, { path: tempPath, name, content: "", isDirty: false, isTemp: true }],
-      activeTabPath: tempPath,
-    }));
-  },
+  openTempTab: (kind = "typ", realPath?: string) =>
+    set((s) => {
+      const ext = kind === "md" ? "md" : "typ";
+      const name = realPath ? (realPath.split("/").pop() ?? `untitled.${ext}`) : `untitled.${ext}`;
+      const tempPath = realPath ?? `__temp__/${name}`;
+      const existing = s.tabs.find((t) => t.path === tempPath);
+      if (existing) {
+        return { activeTabPath: tempPath };
+      }
+      return {
+        tabs: [...s.tabs, { path: tempPath, name, content: "", isDirty: false, isTemp: true }],
+        activeTabPath: tempPath,
+      };
+    }),
 
   promoteTempTab: (oldPath, newPath, newName) =>
     set((s) => ({
@@ -457,17 +457,17 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       activeTabPath: s.activeTabPath === oldPath ? newPath : s.activeTabPath,
     })),
 
-  closeTab: (path) => {
-    const { tabs, activeTabPath } = get();
-    const idx = tabs.findIndex((t) => t.path === path);
-    if (idx === -1) return;
-    const next = tabs.filter((t) => t.path !== path);
-    let nextActive = activeTabPath;
-    if (activeTabPath === path) {
-      nextActive = next[Math.max(0, idx - 1)]?.path ?? null;
-    }
-    set({ tabs: next, activeTabPath: nextActive });
-  },
+  closeTab: (path) =>
+    set((s) => {
+      const idx = s.tabs.findIndex((t) => t.path === path);
+      if (idx === -1) return {};
+      const next = s.tabs.filter((t) => t.path !== path);
+      let nextActive = s.activeTabPath;
+      if (s.activeTabPath === path) {
+        nextActive = next[Math.max(0, idx - 1)]?.path ?? null;
+      }
+      return { tabs: next, activeTabPath: nextActive };
+    }),
 
   setActiveTab: (path) => set({ activeTabPath: path }),
 
@@ -485,14 +485,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       ),
     })),
 
-  markTabClean: (path) => {
+  markTabClean: (path) =>
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.path === path ? { ...t, isDirty: false } : t
       ),
-    }));
-    get().bumpMtimeVersion();
-  },
+      mtimeVersion: s.mtimeVersion + 1,
+    })),
 
   activePdfPath: null,
   setActivePdfPath: (path) => set({ activePdfPath: path }),

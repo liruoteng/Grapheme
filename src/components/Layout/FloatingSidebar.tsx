@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { useEditorStore, type FileEntry } from "../../stores/editorStore";
+import { useEditorStore } from "../../stores/editorStore";
 import { usePointerDrag } from "../../hooks/usePointerDrag";
 import { FileTree, type FileTreeHandle } from "../FileExplorer/FileTree";
 import "./FloatingSidebar.css";
@@ -14,9 +14,6 @@ interface SearchMatch {
 interface FloatingSidebarProps {
   onOpenFolder: () => void;
 }
-
-const SHOW_MEDIA_SECTION = false;
-const SHOW_REFERENCES_SECTION = false;
 
 function SidebarIcon() {
   return (
@@ -258,12 +255,6 @@ export function FloatingSidebar({ onOpenFolder }: FloatingSidebarProps) {
         </div>
       </div>
 
-      {/* ── Section 2: Media Management (temporarily hidden) ── */}
-      {SHOW_MEDIA_SECTION && <MediaSection />}
-
-      {/* ── Section 3: References (temporarily hidden) ───── */}
-      {SHOW_REFERENCES_SECTION && <ReferencesSection />}
-
       {/* ── Bottom: profile + theme ──────────────────────────── */}
       <div className="fsb-bottom">
         <button className="fsb-bottom-btn" title="Profile (coming soon)" aria-label="User profile">
@@ -366,169 +357,6 @@ function SearchSection({
                 <span className="fsb-search-line-content">{m.line_content}</span>
               </button>
             ))}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function ReferencesSection() {
-  const [urlValue, setUrlValue] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  // Accept URL pasted anywhere in the section via a paste listener
-  useEffect(() => {
-    const onPaste = (e: ClipboardEvent) => {
-      const text = e.clipboardData?.getData("text/plain")?.trim() ?? "";
-      if (text.startsWith("http://") || text.startsWith("https://")) {
-        e.preventDefault();
-        setUrlValue(text);
-        inputRef.current?.focus();
-      }
-    };
-    window.addEventListener("paste", onPaste);
-    return () => window.removeEventListener("paste", onPaste);
-  }, []);
-
-  return (
-    <div className="fsb-section">
-      <div className="fsb-section-head">
-        <span className="fsb-section-title">References</span>
-      </div>
-
-      <label className="fsb-drop-zone" htmlFor="fsb-file-input">
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
-          <path d="M7 1v8M4 6l3-3 3 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
-          <path d="M2 10v1.5a.5.5 0 0 0 .5.5h9a.5.5 0 0 0 .5-.5V10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
-        </svg>
-        Drop files or paste URL
-        <input id="fsb-file-input" type="file" multiple style={{ display: "none" }} />
-      </label>
-
-      <div className="fsb-url-row">
-        <input
-          ref={inputRef}
-          className="fsb-url-input"
-          type="url"
-          placeholder="Paste a URL…"
-          value={urlValue}
-          onChange={(e) => setUrlValue(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && urlValue.trim()) {
-              window.dispatchEvent(new CustomEvent("references:add-url", { detail: urlValue.trim() }));
-              setUrlValue("");
-            }
-            if (e.key === "Escape") setUrlValue("");
-          }}
-        />
-      </div>
-    </div>
-  );
-}
-
-// ── Media Management Section ──────────────────────────────────────────────────────
-function MediaSection() {
-  const workspacePath = useEditorStore((s) => s.workspacePath);
-  const [mediaFiles, setMediaFiles] = useState<FileEntry[]>([]);
-
-  const loadMedia = useCallback(async () => {
-    if (!workspacePath) return;
-    const mediaDir = `${workspacePath}/assets`;
-    try {
-      const exists = await invoke<boolean>("path_exists", { path: mediaDir });
-      if (!exists) {
-        setMediaFiles([]);
-        return;
-      }
-      const entries = await invoke<FileEntry[]>("list_dir", { path: mediaDir });
-      setMediaFiles(entries.filter(e => !e.is_dir && /\.(png|jpg|jpeg|gif|svg|webp|mp4|webm|mov)$/i.test(e.name)));
-    } catch (e) {
-      console.error(e);
-    }
-  }, [workspacePath]);
-
-  useEffect(() => {
-    loadMedia();
-  }, [loadMedia]);
-
-  const onDrop = async (e: React.DragEvent) => {
-    e.preventDefault();
-    if (!workspacePath) return;
-    const mediaDir = `${workspacePath}/assets`;
-    try {
-      const exists = await invoke<boolean>("path_exists", { path: mediaDir });
-      if (!exists) {
-        await invoke("create_dir", { path: mediaDir });
-      }
-      const files = Array.from(e.dataTransfer.files);
-      for (const f of files) {
-        if (!f.type.startsWith("image/") && !f.type.startsWith("video/")) continue;
-        const dest = `${mediaDir}/${f.name}`;
-        const buf = new Uint8Array(await f.arrayBuffer());
-        await invoke("write_file_bytes", { path: dest, bytes: Array.from(buf) });
-      }
-      loadMedia();
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const onClickUpload = () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.multiple = true;
-    input.accept = 'image/*,video/*';
-    input.onchange = async (e) => {
-      const files = (e.target as HTMLInputElement).files;
-      if (!files || !workspacePath) return;
-      const mediaDir = `${workspacePath}/assets`;
-      try {
-        const exists = await invoke<boolean>("path_exists", { path: mediaDir });
-        if (!exists) {
-          await invoke("create_dir", { path: mediaDir });
-        }
-        for (const f of Array.from(files)) {
-          const dest = `${mediaDir}/${f.name}`;
-          const buf = new Uint8Array(await f.arrayBuffer());
-          await invoke("write_file_bytes", { path: dest, bytes: Array.from(buf) });
-        }
-        loadMedia();
-      } catch (err) {
-        console.error(err);
-      }
-    };
-    input.click();
-  };
-
-  return (
-    <div className="fsb-section">
-      <div className="fsb-section-head">
-        <span className="fsb-section-title">Media</span>
-        <button className="fsb-section-action" title="Upload Media" onClick={onClickUpload}>
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
-            <path d="M6 2v8M2 6h8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
-          </svg>
-        </button>
-      </div>
-      <div 
-        className="fsb-drop-zone" 
-        onDragOver={(e) => e.preventDefault()} 
-        onDrop={onDrop}
-        style={{ marginTop: 0 }}
-      >
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
-          <path d="M7 1v8M4 6l3-3 3 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
-          <path d="M2 10v1.5a.5.5 0 0 0 .5.5h9a.5.5 0 0 0 .5-.5V10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
-        </svg>
-        Drop images/videos here
-      </div>
-      <div className="fsb-file-list">
-        {mediaFiles.length === 0 && <span className="fsb-empty-hint">No media in assets/</span>}
-        {mediaFiles.map(f => (
-          <div key={f.path} className="fsb-file-item" title="Click to copy name" onClick={() => navigator.clipboard.writeText(f.name)}>
-            <span className="fsb-file-dot" style={{ background: "var(--accent)" }} />
-            <span className="fsb-file-name">{f.name}</span>
           </div>
         ))}
       </div>

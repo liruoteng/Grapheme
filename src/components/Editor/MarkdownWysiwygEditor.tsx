@@ -28,6 +28,7 @@ import { useEditorStore, type Reference } from "../../stores/editorStore";
 import { copyImageFilesToAssets } from "../../lib/utils";
 import { getActiveDragSource } from "../FileExplorer/fileDrag";
 import { SlashMenu, type SlashCommand } from "./SlashMenu";
+import { codeBlockLanguages } from "./codeBlockLanguages";
 import {
   insertColumnIntoTable,
   insertRowIntoTable,
@@ -238,57 +239,6 @@ const prismAliases: Record<string, string> = {
   "objective-c": "objectivec",
 };
 
-const codeBlockLanguages = [
-  "",
-  "bash",
-  "c",
-  "clojure",
-  "cpp",
-  "csharp",
-  "css",
-  "dart",
-  "diff",
-  "docker",
-  "elixir",
-  "erlang",
-  "git",
-  "go",
-  "graphql",
-  "haskell",
-  "html",
-  "java",
-  "javascript",
-  "jsx",
-  "json",
-  "julia",
-  "kotlin",
-  "latex",
-  "lisp",
-  "lua",
-  "makefile",
-  "markdown",
-  "objectivec",
-  "perl",
-  "php",
-  "powershell",
-  "python",
-  "r",
-  "regex",
-  "ruby",
-  "rust",
-  "scala",
-  "scheme",
-  "scss",
-  "sql",
-  "swift",
-  "toml",
-  "tsx",
-  "typescript",
-  "vim",
-  "xml",
-  "yaml",
-  "zig",
-];
 const codeSyntaxHighlightMaxDocLength = 100_000;
 const previewUpdateDebounceMs = 500;
 
@@ -2959,13 +2909,19 @@ function CitationMenu({
   return (
     <div
       className="cm-md-citation-menu"
+      role="listbox"
+      aria-label="Citation suggestions"
+      aria-activedescendant={state.options[state.activeIndex] ? `citation-option-${state.options[state.activeIndex].key}` : undefined}
       style={{ left: state.x, top: state.y }}
       onMouseDown={(event) => event.preventDefault()}
     >
       {state.options.map((option, index) => (
         <button
           key={option.key}
+          id={`citation-option-${option.key}`}
           type="button"
+          role="option"
+          aria-selected={index === state.activeIndex}
           className={`cm-md-citation-menu-item${index === state.activeIndex ? " is-active" : ""}`}
           onMouseEnter={() => onHover(index)}
           onClick={() => onSelect(option)}
@@ -2989,6 +2945,7 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
   const scrollbarTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pointerSelectionActiveRef = useRef(false);
   const themeCompartment = useRef(new Compartment());
+  const lastExternalSeq = useRef<number | undefined>(undefined);
   const onSaveRef = useRef(onSave);
   const onSnapshotRef = useRef(onSnapshot);
   const onPreviewRef = useRef(onPreviewTrigger);
@@ -3380,6 +3337,8 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
 
   useEffect(() => {
     if (!externalContent || !viewRef.current) return;
+    if (lastExternalSeq.current === externalContent.seq) return;
+    lastExternalSeq.current = externalContent.seq;
     const view = viewRef.current;
     view.dispatch({
       changes: { from: 0, to: view.state.doc.length, insert: externalContent.content },
@@ -3387,7 +3346,7 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
     });
     const path = pathRef.current;
     if (path) updateTabContent(path, externalContent.content);
-  }, [externalContent?.seq, updateTabContent]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [externalContent, updateTabContent]);
 
   // Subscribe to active tab content changes from store (e.g., file watcher).
   // Uses Zustand's subscribe API (no re-renders). When content changes for the
@@ -3399,12 +3358,13 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
       const tab = state.tabs.find((t) => t.path === state.activeTabPath);
       if (!tab) return;
       const { content, path } = tab;
-      if (content === prevContent || path !== prevPath) {
+      if (prevContent !== undefined && (content === prevContent || path !== prevPath)) {
         prevContent = content;
         prevPath = path;
         return;
       }
       prevContent = content;
+      prevPath = path;
       const view = viewRef.current;
       if (!view) return;
       if (content !== view.state.doc.toString()) {

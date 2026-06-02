@@ -267,6 +267,7 @@ export function MonacoEditor({ onSave, onSnapshot, onNewFile, onPreviewTrigger, 
   const lspChangeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const previewTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const lastExternalSeq = useRef<number | undefined>(undefined);
   const onSnapshotRef = useRef(onSnapshot);
   const onPreviewTriggerRef = useRef(onPreviewTrigger);
   useEffect(() => { onSnapshotRef.current = onSnapshot; }, [onSnapshot]);
@@ -316,13 +317,13 @@ export function MonacoEditor({ onSave, onSnapshot, onNewFile, onPreviewTrigger, 
       const tab = state.tabs.find((t) => t.path === state.activeTabPath);
       if (!tab) return;
       const { content, path } = tab;
-      // Skip tab switches — handled by the activeTabPath effect above.
-      if (content === prevContent || path !== prevPath) {
+      if (prevContent !== undefined && (content === prevContent || path !== prevPath)) {
         prevContent = content;
         prevPath = path;
         return;
       }
       prevContent = content;
+      prevPath = path;
       const editor = editorRef.current;
       if (!editor) return;
       if (content !== editor.getValue()) {
@@ -406,10 +407,12 @@ export function MonacoEditor({ onSave, onSnapshot, onNewFile, onPreviewTrigger, 
   // Imperatively restore content when a snapshot is loaded
   useEffect(() => {
     if (!externalContent || !editorRef.current) return;
+    if (lastExternalSeq.current === externalContent.seq) return;
+    lastExternalSeq.current = externalContent.seq;
     editorRef.current.setValue(externalContent.content);
     const path = useEditorStore.getState().activeTabPath;
     if (path) useEditorStore.getState().updateTabContent(path, externalContent.content);
-  }, [externalContent?.seq]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [externalContent]);
 
   useEffect(() => {
     return () => {

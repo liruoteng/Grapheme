@@ -169,6 +169,8 @@ export function SelectionToolbar({ getEditor }: SelToolbarProps) {
     <div
       ref={toolbarRef}
       className="selection-toolbar"
+      role="toolbar"
+      aria-label="Text formatting"
       style={{ left: pos.x, top: pos.y }}
       onMouseDown={(e) => e.preventDefault()}
     >
@@ -178,17 +180,19 @@ export function SelectionToolbar({ getEditor }: SelToolbarProps) {
           className="selection-toolbar-btn"
           onClick={() => applyFormat(action)}
           title={action.label}
+          aria-label={action.label}
         >
           {action.icon}
         </button>
       ))}
-      <div className="selection-toolbar-sep" />
+      <div className="selection-toolbar-sep" role="separator" />
       {BLOCK_ACTIONS.map((action) => (
         <button
           key={action.id}
           className="selection-toolbar-btn"
           onClick={() => applyFormat(action)}
           title={action.label}
+          aria-label={action.label}
         >
           {action.icon}
         </button>

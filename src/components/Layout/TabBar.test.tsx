@@ -7,7 +7,9 @@ beforeEach(() => {
   useEditorStore.setState({
     tabs: [],
     activeTabPath: null,
+    confirmOnClose: true,
   });
+  vi.restoreAllMocks();
 });
 
 describe("TabBar", () => {
@@ -42,6 +44,15 @@ describe("TabBar", () => {
     expect(useEditorStore.getState().activeTabPath).toBe("/b.typ");
   });
 
+  it("switches tabs with arrow keys", () => {
+    useEditorStore.getState().openTab("/a.typ", "a.typ", "");
+    useEditorStore.getState().openTab("/b.typ", "b.typ", "");
+    useEditorStore.getState().setActiveTab("/a.typ");
+    render(<TabBar />);
+    fireEvent.keyDown(screen.getAllByRole("tab")[0], { key: "ArrowRight" });
+    expect(useEditorStore.getState().activeTabPath).toBe("/b.typ");
+  });
+
   it("closes a tab when close button is clicked", () => {
     useEditorStore.getState().openTab("/a.typ", "a.typ", "");
     render(<TabBar />);
@@ -50,9 +61,33 @@ describe("TabBar", () => {
     expect(useEditorStore.getState().tabs).toHaveLength(0);
   });
 
+  it("asks before closing a dirty tab when confirmOnClose is enabled", () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    useEditorStore.getState().openTab("/a.typ", "a.typ", "");
+    useEditorStore.getState().updateTabContent("/a.typ", "changed");
+    render(<TabBar />);
+    const closeBtn = document.querySelector(".tab-close")!;
+    fireEvent.click(closeBtn);
+    expect(confirmSpy).toHaveBeenCalledWith('Close "a.typ" without saving?');
+    expect(useEditorStore.getState().tabs).toHaveLength(1);
+  });
+
+  it("closes dirty tabs without asking when confirmOnClose is disabled", () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    useEditorStore.setState({ confirmOnClose: false });
+    useEditorStore.getState().openTab("/a.typ", "a.typ", "");
+    useEditorStore.getState().updateTabContent("/a.typ", "changed");
+    render(<TabBar />);
+    const closeBtn = document.querySelector(".tab-close")!;
+    fireEvent.click(closeBtn);
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(useEditorStore.getState().tabs).toHaveLength(0);
+  });
+
   it("shows context menu on right-click", () => {
     useEditorStore.getState().openTab("/a.typ", "a.typ", "");
     render(<TabBar />);
+    expect(screen.getByRole("tablist", { name: "Open files" })).toBeInTheDocument();
     fireEvent.contextMenu(screen.getByText("a.typ"));
     expect(screen.getByText("Close Tab")).toBeInTheDocument();
     expect(screen.getByText("Copy Path")).toBeInTheDocument();

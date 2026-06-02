@@ -523,9 +523,9 @@ function FileTree({ onOpenFolder }, ref) {
     let mounted = true;
     const bump = bumpRefreshRef.current;
 
-    import("@tauri-apps/plugin-fs").then(({ watch }) => {
+    import("@tauri-apps/plugin-fs").then(({ watchImmediate }) => {
       if (!mounted) return;
-      watch(
+      watchImmediate(
         workspacePath,
         (event) => {
           const paths = event.paths;
@@ -541,8 +541,24 @@ function FileTree({ onOpenFolder }, ref) {
             if (isRemove) {
               const store = useEditorStore.getState();
               const tab = store.tabs.find((t) => t.path === p);
-              if (tab && !tab.isDirty) {
-                store.closeTab(p);
+              if (tab && !tab.isDirty && !tab.isTemp) {
+                // Check if file still exists — atomic save (rename) can produce
+                // a remove event even though the file was recreated at same path.
+                invoke<string>("read_file", { path: p })
+                  .then((content) => {
+                    useEditorStore.setState((s) => ({
+                      tabs: s.tabs.map((t) =>
+                        t.path === p ? { ...t, content, isDirty: false } : t
+                      ),
+                    }));
+                  })
+                  .catch(() => {
+                    const current = useEditorStore.getState();
+                    const curTab = current.tabs.find((t) => t.path === p);
+                    if (curTab && !curTab.isDirty) {
+                      current.closeTab(p);
+                    }
+                  });
               }
               bump(parentOf(p));
               continue;
@@ -563,7 +579,6 @@ function FileTree({ onOpenFolder }, ref) {
               if (tab.isTemp || isRecentlyWritten(p)) continue;
 
               if (tab.isDirty) {
-                // File changed externally while we have unsaved edits — ask the user.
                 const name = p.split("/").pop() ?? p;
                 import("@tauri-apps/plugin-dialog").then(({ ask }) => {
                   ask(

@@ -120,16 +120,27 @@ export function SlashMenu({ x, y, filter, onSelect, onClose }: SlashMenuProps) {
 
   let flatIdx = 0;
   return (
-    <div className="slash-menu" ref={menuRef} style={{ left: x, top: y }} onMouseDown={(e) => e.preventDefault()}>
+    <div
+      className="slash-menu"
+      ref={menuRef}
+      role="listbox"
+      aria-label="Insert block"
+      aria-activedescendant={flat[selectedIndex] ? `slash-command-${flat[selectedIndex].id}` : undefined}
+      style={{ left: x, top: y }}
+      onMouseDown={(e) => e.preventDefault()}
+    >
       {Object.entries(grouped).map(([category, cmds]) => (
-        <div key={category} className="slash-menu-group">
+        <div key={category} className="slash-menu-group" role="presentation">
           <div className="slash-menu-category">{category}</div>
           {cmds.map((cmd) => {
             const idx = flatIdx++;
             return (
               <div
                 key={cmd.id}
+                id={`slash-command-${cmd.id}`}
                 data-index={idx}
+                role="option"
+                aria-selected={idx === selectedIndex}
                 className={`slash-menu-item${idx === selectedIndex ? " selected" : ""}`}
                 onMouseEnter={() => setSelectedIndex(idx)}
                 onClick={() => onSelect(cmd)}

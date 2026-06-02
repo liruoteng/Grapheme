@@ -406,12 +406,13 @@ function WritingModeEditorInner({ path, initialContent, externalContent, onSave,
             const tab = state.tabs.find((t) => t.path === state.activeTabPath);
             if (!tab) return;
             const { content, path } = tab;
-            if (content === prevContent || path !== prevPath) {
+            if (prevContent !== undefined && (content === prevContent || path !== prevPath)) {
                 prevContent = content;
                 prevPath = path;
                 return;
             }
             prevContent = content;
+            prevPath = path;
             const editor = getEditorRef.current();
             if (!editor) return;
             editor.action((ctx: any) => {

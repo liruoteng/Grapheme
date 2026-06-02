@@ -144,8 +144,9 @@ export function startLspClient(
       return;
     }
 
-    // Server-initiated notification
+    // Server-initiated notification — drop if handshake isn't complete yet
     if ("method" in msg) {
+      if (!initialized) return;
       const notif = msg as JsonRpcNotification;
       if (notif.method === "textDocument/publishDiagnostics") {
         handleDiagnostics(notif.params as DiagnosticsParams);
@@ -187,12 +188,13 @@ export function startLspClient(
     const completionProvider = monaco.languages.registerCompletionItemProvider("typst", {
       triggerCharacters: [".", "#", "("],
       provideCompletionItems: async (model, position) => {
-        if (!initialized) return { suggestions: [] };
+        if (!initialized || model.isDisposed()) return { suggestions: [] };
         const result = await request("textDocument/completion", {
           textDocument: { uri: model.uri.toString() },
           position: { line: position.lineNumber - 1, character: position.column - 1 },
         }) as CompletionResult | null;
 
+        if (!initialized || model.isDisposed()) return { suggestions: [] };
         if (!result) return { suggestions: [] };
         const items = Array.isArray(result) ? result : result.items ?? [];
         const suggestions: Monaco.languages.CompletionItem[] = items.map((item: CompletionItem) => ({
@@ -220,13 +222,13 @@ export function startLspClient(
 
     const hoverProvider = monaco.languages.registerHoverProvider("typst", {
       provideHover: async (model, position) => {
-        if (!initialized) return null;
+        if (!initialized || model.isDisposed()) return null;
         const result = await request("textDocument/hover", {
           textDocument: { uri: model.uri.toString() },
           position: { line: position.lineNumber - 1, character: position.column - 1 },
         }) as HoverResult | null;
 
-        if (!result?.contents) return null;
+        if (!initialized || model.isDisposed() || !result?.contents) return null;
         const contents = Array.isArray(result.contents)
           ? result.contents
           : [result.contents];
