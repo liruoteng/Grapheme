@@ -80,7 +80,7 @@ export function startLspClient(
   let stopped = false;
   let initialized = false;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  const pendingRequests = new Map<number, (result: unknown) => void>();
+  const pendingRequests = new Map<number, { resolve: (result: unknown) => void; reject: (error: Error) => void }>();
   let disposables: Monaco.IDisposable[] = [];
 
   // ── Send helpers ──────────────────────────────────────────────────────
@@ -92,8 +92,8 @@ export function startLspClient(
 
   function request(method: string, params: unknown): Promise<unknown> {
     const id = nextId();
-    return new Promise((resolve) => {
-      pendingRequests.set(id, resolve);
+    return new Promise((resolve, reject) => {
+      pendingRequests.set(id, { resolve, reject });
       send({ jsonrpc: "2.0", id, method, params });
     });
   }
@@ -130,11 +130,16 @@ export function startLspClient(
     try { msg = JSON.parse(raw); } catch { return; }
 
     // Response to a pending request
-    if ("id" in msg && "result" in msg) {
-      const cb = pendingRequests.get((msg as JsonRpcResponse).id);
-      if (cb) {
+    if ("id" in msg && ("result" in msg || "error" in msg)) {
+      const pending = pendingRequests.get((msg as JsonRpcResponse).id);
+      if (pending) {
         pendingRequests.delete((msg as JsonRpcResponse).id);
-        cb((msg as JsonRpcResponse).result);
+        const response = msg as JsonRpcResponse;
+        if (response.error) {
+          pending.reject(new Error(response.error.message));
+        } else {
+          pending.resolve(response.result);
+        }
       }
       return;
     }
@@ -273,6 +278,10 @@ export function startLspClient(
     socket.onclose = () => {
       initialized = false;
       onStatusChange("disconnected");
+      for (const { reject } of pendingRequests.values()) {
+        reject(new Error("LSP connection closed"));
+      }
+      pendingRequests.clear();
       scheduleReconnect();
     };
   }
@@ -308,6 +317,10 @@ export function startLspClient(
       stopped = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
       disposables.forEach((d) => d.dispose());
+      for (const { reject } of pendingRequests.values()) {
+        reject(new Error("LSP client stopped"));
+      }
+      pendingRequests.clear();
       ws?.close();
     },
   };

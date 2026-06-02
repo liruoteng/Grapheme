@@ -1,8 +1,8 @@
 import type { Tool, Tools } from "../types";
 import { LiteratureSearchTool } from "./LiteratureSearchTool";
-import { CitationTool } from "./CitationTool";
-import { SectionDraftTool } from "./SectionDraftTool";
-import { OutlineTool } from "./OutlineTool";
+import { CitationTool, clearCitationStore } from "./CitationTool";
+import { SectionDraftTool, clearSectionStore } from "./SectionDraftTool";
+import { OutlineTool, clearOutline } from "./OutlineTool";
 
 const ALL_TOOLS: Tools = [
   LiteratureSearchTool,
@@ -38,4 +38,10 @@ export function getToolsForPhase(
 
 export function getToolPromptSummary(tools: Tools): string {
   return tools.map((t) => `- **${t.name}**: ${t.description}`).join("\n");
+}
+
+export function clearAllToolState(): void {
+  clearCitationStore();
+  clearSectionStore();
+  clearOutline();
 }

@@ -21,7 +21,7 @@ import { editorViewCtx } from "@milkdown/core";
 import { toggleMark, setBlockType } from "@milkdown/prose/commands";
 import { wrapInList } from "@milkdown/prose/schema-list";
 import { TextSelection } from "@milkdown/prose/state";
-import { useEditorStore } from "../../stores/editorStore";
+import { useEditorStore, useActiveTab } from "../../stores/editorStore";
 import type { Reference } from "../../stores/editorStore";
 import { slashMenuPlugin } from "./slashMenuPlugin";
 import type { SlashState } from "./slashMenuPlugin";
@@ -227,6 +227,12 @@ function WritingModeEditorInner({ path, initialContent, externalContent, onSave,
     const contentRef = useRef(initialContent);
     const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+    useEffect(() => {
+        return () => {
+            if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+        };
+    }, []);
+
     const onSaveRef = useRef(onSave);
     const onPreviewRef = useRef(onPreviewTrigger);
     const pathRef = useRef(path);
@@ -389,6 +395,38 @@ function WritingModeEditorInner({ path, initialContent, externalContent, onSave,
             dispatch(state.tr.replaceWith(0, state.doc.content.size, doc));
         });
     }, [externalContent]);
+
+    // Subscribe to active tab content changes from store (e.g., file watcher).
+    // Uses Zustand's subscribe API (no re-renders). When content changes for the
+    // same active tab, update the Milkdown/ProseMirror document imperatively.
+    useEffect(() => {
+        let prevContent: string | undefined;
+        let prevPath: string | undefined;
+        const unsub = useEditorStore.subscribe((state) => {
+            const tab = state.tabs.find((t) => t.path === state.activeTabPath);
+            if (!tab) return;
+            const { content, path } = tab;
+            if (content === prevContent || path !== prevPath) {
+                prevContent = content;
+                prevPath = path;
+                return;
+            }
+            prevContent = content;
+            const editor = getEditorRef.current();
+            if (!editor) return;
+            editor.action((ctx: any) => {
+                const view = ctx.get(editorViewCtx);
+                const { state, dispatch } = view;
+                const current = state.doc.textBetween(0, state.doc.content.size);
+                if (content !== current) {
+                    const { body } = extractFrontmatter(content);
+                    const doc = state.schema.text(body);
+                    dispatch(state.tr.replaceWith(0, state.doc.content.size, doc));
+                }
+            });
+        });
+        return unsub;
+    }, []);
 
     const handleFrontmatterChange = useCallback((nextFrontmatter: string) => {
         frontmatterRef.current = nextFrontmatter;
@@ -843,7 +881,7 @@ function WritingModeEditorInner({ path, initialContent, externalContent, onSave,
 }
 
 export function WritingModeEditor({ onSave, onSnapshot, onPreviewTrigger, externalContent }: WritingModeEditorProps) {
-    const activeTab = useEditorStore((s) => s.activeTab());
+    const activeTab = useActiveTab();
 
     if (!activeTab) {
         return <div className="wme-empty">No file open</div>;

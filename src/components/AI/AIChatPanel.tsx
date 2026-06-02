@@ -9,7 +9,7 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import { useEditorStore, type AiMessage } from "../../stores/editorStore";
+import { useEditorStore, useActiveTab, type AiMessage } from "../../stores/editorStore";
 import {
   getAcademicWorkflowPrompt,
   getGraphemeActionSystemPrompt,
@@ -198,7 +198,7 @@ export function AIChatPanel() {
 
   // ── Provider settings ──────────────────────────────────────────────────
   const selectedText = useEditorStore((s) => s.selectedText);
-  const activeTab = useEditorStore((s) => s.activeTab());
+  const activeTab = useActiveTab();
   const aiProvider   = useEditorStore((s) => s.aiProvider);
   const setAiProvider  = useEditorStore((s) => s.setAiProvider);
   const ollamaUrl      = useEditorStore((s) => s.ollamaUrl);

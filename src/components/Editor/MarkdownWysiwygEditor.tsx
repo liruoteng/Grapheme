@@ -9,7 +9,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import katex from "katex";
 import { refractor } from "refractor/all";
 import type { Element as HastElement, Nodes as HastNode, Root as HastRoot, Text as HastText } from "hast";
-import { EditorSelection, EditorState, StateEffect, StateField } from "@codemirror/state";
+import { EditorSelection, EditorState, StateEffect, StateField, Compartment } from "@codemirror/state";
 import type { Extension, Range, TransactionSpec } from "@codemirror/state";
 import {
   Decoration,
@@ -2988,6 +2988,7 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
   const pointerScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollbarTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pointerSelectionActiveRef = useRef(false);
+  const themeCompartment = useRef(new Compartment());
   const onSaveRef = useRef(onSave);
   const onSnapshotRef = useRef(onSnapshot);
   const onPreviewRef = useRef(onPreviewTrigger);
@@ -3320,14 +3321,14 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
         return false;
       },
     }),
-    EditorView.theme({
+    themeCompartment.current.of(EditorView.theme({
       "&": {
         height: "100%",
-        fontSize: `${editorFontSize}px`,
-        fontFamily: editorMdFont,
+        fontSize: "16px",
+        fontFamily: "system-ui, sans-serif",
       },
-    }),
-  ], [centerCursorIfNeeded, editorFontSize, editorMdFont, handleChange, insertImageMarkdown, preservePointerScroll, releasePointerScrollSnapshot, updateCitationMenu]);
+    })),
+  ], [centerCursorIfNeeded, handleChange, insertImageMarkdown, preservePointerScroll, releasePointerScrollSnapshot, updateCitationMenu]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -3364,6 +3365,20 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
   }, [editorFile?.path, extensions]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({
+      effects: themeCompartment.current.reconfigure(EditorView.theme({
+        "&": {
+          height: "100%",
+          fontSize: `${editorFontSize}px`,
+          fontFamily: editorMdFont,
+        },
+      })),
+    });
+  }, [editorFontSize, editorMdFont]);
+
+  useEffect(() => {
     if (!externalContent || !viewRef.current) return;
     const view = viewRef.current;
     view.dispatch({
@@ -3373,6 +3388,34 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
     const path = pathRef.current;
     if (path) updateTabContent(path, externalContent.content);
   }, [externalContent?.seq, updateTabContent]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Subscribe to active tab content changes from store (e.g., file watcher).
+  // Uses Zustand's subscribe API (no re-renders). When content changes for the
+  // same active tab, update the CodeMirror document imperatively.
+  useEffect(() => {
+    let prevContent: string | undefined;
+    let prevPath: string | undefined;
+    const unsub = useEditorStore.subscribe((state) => {
+      const tab = state.tabs.find((t) => t.path === state.activeTabPath);
+      if (!tab) return;
+      const { content, path } = tab;
+      if (content === prevContent || path !== prevPath) {
+        prevContent = content;
+        prevPath = path;
+        return;
+      }
+      prevContent = content;
+      const view = viewRef.current;
+      if (!view) return;
+      if (content !== view.state.doc.toString()) {
+        view.dispatch({
+          changes: { from: 0, to: view.state.doc.length, insert: content },
+          selection: EditorSelection.cursor(0),
+        });
+      }
+    });
+    return unsub;
+  }, []);
 
   useEffect(() => {
     const handler = (event: Event) => {

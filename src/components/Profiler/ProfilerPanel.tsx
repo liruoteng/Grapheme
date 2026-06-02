@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Activity, Cpu, Clock, Gauge, MemoryStick, Trash2 } from "lucide-react";
-import { useEditorStore } from "../../stores/editorStore";
+import { useEditorStore, useActiveTab } from "../../stores/editorStore";
 import {
   clearProfilerMetrics,
   recordProfilerMetric,
@@ -69,7 +69,7 @@ export function ProfilerPanel() {
   const lastFpsAtRef = useRef(performance.now());
   const lastThreadSampleAtRef = useRef(performance.now());
   const longTaskMsRef = useRef(0);
-  const activeTab = useEditorStore((s) => s.activeTab());
+  const activeTab = useActiveTab();
   const tabs = useEditorStore((s) => s.tabs);
   const activePanels = useEditorStore((s) => s.activePanels);
 

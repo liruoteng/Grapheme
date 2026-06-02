@@ -47,6 +47,8 @@ export class QueryEngine {
   async *submitMessage(prompt: string): AsyncGenerator<QueryEvent, QueryResult> {
     const { provider, tools, systemPrompt, maxTurns = 20, context } = this.config;
 
+    this.abortController = new AbortController();
+
     this.messages.push({ role: "user", content: prompt });
 
     let turnsUsed = 0;

@@ -306,6 +306,32 @@ export function MonacoEditor({ onSave, onSnapshot, onNewFile, onPreviewTrigger, 
     }
   }, [activeTabPath, lspClient, setDocumentOutline]);
 
+  // Subscribe to active tab content changes from store (e.g., file watcher).
+  // Uses Zustand's subscribe API (no re-renders). When content changes for the
+  // same active tab, update the Monaco model imperatively via setValue.
+  useEffect(() => {
+    let prevContent: string | undefined;
+    let prevPath: string | undefined;
+    const unsub = useEditorStore.subscribe((state) => {
+      const tab = state.tabs.find((t) => t.path === state.activeTabPath);
+      if (!tab) return;
+      const { content, path } = tab;
+      // Skip tab switches — handled by the activeTabPath effect above.
+      if (content === prevContent || path !== prevPath) {
+        prevContent = content;
+        prevPath = path;
+        return;
+      }
+      prevContent = content;
+      const editor = editorRef.current;
+      if (!editor) return;
+      if (content !== editor.getValue()) {
+        editor.setValue(content);
+      }
+    });
+    return unsub;
+  }, []);
+
   // Switch Monaco theme live when the app theme changes
   useEffect(() => {
     if (monacoInstance) {
@@ -388,6 +414,8 @@ export function MonacoEditor({ onSave, onSnapshot, onNewFile, onPreviewTrigger, 
   useEffect(() => {
     return () => {
       if (previewTimer.current) clearTimeout(previewTimer.current);
+      if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+      if (lspChangeTimer.current) clearTimeout(lspChangeTimer.current);
     };
   }, []);
 

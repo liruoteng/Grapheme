@@ -13,7 +13,7 @@ import {
   File,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { useEditorStore } from "../../stores/editorStore";
+import { useEditorStore, useActiveTab } from "../../stores/editorStore";
 import "./StatusBar.css";
 
 interface StatusBarProps {
@@ -111,7 +111,7 @@ export function StatusBar({
   lspStatus = "disconnected",
   onShowHistory,
 }: StatusBarProps) {
-  const activeTab    = useEditorStore((s) => s.activeTab());
+  const activeTab    = useActiveTab();
   const activeTabPath = useEditorStore((s) => s.activeTabPath);
   const { errors: errorCount, warnings: warningCount, jumpToFirst } = useActiveMarkers(activeTabPath);
   const converterWarnings = useEditorStore((s) => s.converterWarnings);

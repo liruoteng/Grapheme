@@ -28,8 +28,10 @@ function createEmptyPaper(): PaperState {
   };
 }
 
+type PapersRecord = Record<string, PaperState>;
+
 interface PaperStore {
-  papers: Map<string, PaperState>;
+  papers: PapersRecord;
   activePaperId: string | null;
 
   createPaper: (title?: string) => string;
@@ -61,17 +63,16 @@ interface PaperStore {
 }
 
 export const usePaperStore = create<PaperStore>((set, get) => ({
-  papers: new Map(),
+  papers: {},
   activePaperId: null,
 
   createPaper: (title) => {
     const paper = createEmptyPaper();
     if (title) paper.title = title;
-    set((state) => {
-      const papers = new Map(state.papers);
-      papers.set(paper.id, paper);
-      return { papers, activePaperId: paper.id };
-    });
+    set((state) => ({
+      papers: { ...state.papers, [paper.id]: paper },
+      activePaperId: paper.id,
+    }));
     return paper.id;
   },
 
@@ -79,8 +80,9 @@ export const usePaperStore = create<PaperStore>((set, get) => ({
 
   deletePaper: (id) =>
     set((state) => {
-      const papers = new Map(state.papers);
-      papers.delete(id);
+      const papers = Object.fromEntries(
+        Object.entries(state.papers).filter(([key]) => key !== id)
+      );
       return {
         papers,
         activePaperId: state.activePaperId === id ? null : state.activePaperId,
@@ -90,159 +92,186 @@ export const usePaperStore = create<PaperStore>((set, get) => ({
   getActivePaper: () => {
     const { papers, activePaperId } = get();
     if (!activePaperId) return null;
-    return papers.get(activePaperId) ?? null;
+    return papers[activePaperId] ?? null;
   },
 
   updatePaperMeta: (id, updates) =>
     set((state) => {
-      const paper = state.papers.get(id);
+      const paper = state.papers[id];
       if (!paper) return state;
-      const papers = new Map(state.papers);
-      papers.set(id, { ...paper, ...updates, updatedAt: Date.now() });
-      return { papers };
+      return {
+        papers: {
+          ...state.papers,
+          [id]: { ...paper, ...updates, updatedAt: Date.now() },
+        },
+      };
     }),
 
   setPhase: (id, phase) =>
     set((state) => {
-      const paper = state.papers.get(id);
+      const paper = state.papers[id];
       if (!paper) return state;
-      const papers = new Map(state.papers);
-      papers.set(id, { ...paper, phase, updatedAt: Date.now() });
-      return { papers };
+      return {
+        papers: {
+          ...state.papers,
+          [id]: { ...paper, phase, updatedAt: Date.now() },
+        },
+      };
     }),
 
   addSection: (id, section) =>
     set((state) => {
-      const paper = state.papers.get(id);
+      const paper = state.papers[id];
       if (!paper) return state;
       const newSection: PaperSection = {
         ...section,
         id: generateId(),
         status: "pending",
       };
-      const papers = new Map(state.papers);
-      papers.set(id, {
-        ...paper,
-        sections: [...paper.sections, newSection],
-        updatedAt: Date.now(),
-      });
-      return { papers };
+      return {
+        papers: {
+          ...state.papers,
+          [id]: {
+            ...paper,
+            sections: [...paper.sections, newSection],
+            updatedAt: Date.now(),
+          },
+        },
+      };
     }),
 
   updateSection: (id, sectionId, updates) =>
     set((state) => {
-      const paper = state.papers.get(id);
+      const paper = state.papers[id];
       if (!paper) return state;
-      const papers = new Map(state.papers);
-      papers.set(id, {
-        ...paper,
-        sections: paper.sections.map((s) =>
-          s.id === sectionId ? { ...s, ...updates, status: "drafting" } : s,
-        ),
-        updatedAt: Date.now(),
-      });
-      return { papers };
+      return {
+        papers: {
+          ...state.papers,
+          [id]: {
+            ...paper,
+            sections: paper.sections.map((s) =>
+              s.id === sectionId ? { ...s, ...updates, status: "drafting" } : s,
+            ),
+            updatedAt: Date.now(),
+          },
+        },
+      };
     }),
 
   removeSection: (id, sectionId) =>
     set((state) => {
-      const paper = state.papers.get(id);
+      const paper = state.papers[id];
       if (!paper) return state;
-      const papers = new Map(state.papers);
-      papers.set(id, {
-        ...paper,
-        sections: paper.sections.filter((s) => s.id !== sectionId),
-        updatedAt: Date.now(),
-      });
-      return { papers };
+      return {
+        papers: {
+          ...state.papers,
+          [id]: {
+            ...paper,
+            sections: paper.sections.filter((s) => s.id !== sectionId),
+            updatedAt: Date.now(),
+          },
+        },
+      };
     }),
 
   addCitation: (id, citation) =>
     set((state) => {
-      const paper = state.papers.get(id);
+      const paper = state.papers[id];
       if (!paper) return state;
       const newCitation: Citation = { ...citation, id: generateId() };
-      const papers = new Map(state.papers);
-      papers.set(id, {
-        ...paper,
-        citations: [...paper.citations, newCitation],
-        updatedAt: Date.now(),
-      });
-      return { papers };
+      return {
+        papers: {
+          ...state.papers,
+          [id]: {
+            ...paper,
+            citations: [...paper.citations, newCitation],
+            updatedAt: Date.now(),
+          },
+        },
+      };
     }),
 
   removeCitation: (id, citationId) =>
     set((state) => {
-      const paper = state.papers.get(id);
+      const paper = state.papers[id];
       if (!paper) return state;
-      const papers = new Map(state.papers);
-      papers.set(id, {
-        ...paper,
-        citations: paper.citations.filter((c) => c.id !== citationId),
-        updatedAt: Date.now(),
-      });
-      return { papers };
+      return {
+        papers: {
+          ...state.papers,
+          [id]: {
+            ...paper,
+            citations: paper.citations.filter((c) => c.id !== citationId),
+            updatedAt: Date.now(),
+          },
+        },
+      };
     }),
 
   setOutline: (id, outline) =>
     set((state) => {
-      const paper = state.papers.get(id);
+      const paper = state.papers[id];
       if (!paper) return state;
-      const papers = new Map(state.papers);
-      papers.set(id, { ...paper, outline, updatedAt: Date.now() });
-      return { papers };
+      return {
+        papers: {
+          ...state.papers,
+          [id]: { ...paper, outline, updatedAt: Date.now() },
+        },
+      };
     }),
 
   addOutlineNode: (id, node, parentId) =>
     set((state) => {
-      const paper = state.papers.get(id);
+      const paper = state.papers[id];
       if (!paper) return state;
-      const papers = new Map(state.papers);
-      if (parentId) {
-        papers.set(id, {
-          ...paper,
-          outline: addChildToOutline(paper.outline, parentId, node),
-          updatedAt: Date.now(),
-        });
-      } else {
-        papers.set(id, {
-          ...paper,
-          outline: [...paper.outline, node],
-          updatedAt: Date.now(),
-        });
-      }
-      return { papers };
+      return {
+        papers: {
+          ...state.papers,
+          [id]: {
+            ...paper,
+            outline: parentId
+              ? addChildToOutline(paper.outline, parentId, node)
+              : [...paper.outline, node],
+            updatedAt: Date.now(),
+          },
+        },
+      };
     }),
 
   removeOutlineNode: (id, nodeId) =>
     set((state) => {
-      const paper = state.papers.get(id);
+      const paper = state.papers[id];
       if (!paper) return state;
-      const papers = new Map(state.papers);
-      papers.set(id, {
-        ...paper,
-        outline: removeFromOutline(paper.outline, nodeId),
-        updatedAt: Date.now(),
-      });
-      return { papers };
+      return {
+        papers: {
+          ...state.papers,
+          [id]: {
+            ...paper,
+            outline: removeFromOutline(paper.outline, nodeId),
+            updatedAt: Date.now(),
+          },
+        },
+      };
     }),
 
   addRevision: (id, revision) =>
     set((state) => {
-      const paper = state.papers.get(id);
+      const paper = state.papers[id];
       if (!paper) return state;
       const entry: RevisionEntry = {
         ...revision,
         id: generateId(),
         timestamp: Date.now(),
       };
-      const papers = new Map(state.papers);
-      papers.set(id, {
-        ...paper,
-        revisionLog: [...paper.revisionLog, entry],
-        updatedAt: Date.now(),
-      });
-      return { papers };
+      return {
+        papers: {
+          ...state.papers,
+          [id]: {
+            ...paper,
+            revisionLog: [...paper.revisionLog, entry],
+            updatedAt: Date.now(),
+          },
+        },
+      };
     }),
 }));
 

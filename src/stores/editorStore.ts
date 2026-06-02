@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { useShallow } from "zustand/react/shallow";
 import { invoke } from "@tauri-apps/api/core";
 import type { LspStatus } from "../components/Editor/lsp-client";
 import { extractOutline, formatOutlineForContext, formatReferencesForContext, formatTabsForContext, type OutlineItem } from "../lib/utils";
@@ -633,3 +634,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     return tabs.find((t) => t.path === activeTabPath) ?? null;
   },
 }));
+
+export function useActiveTab() {
+  return useEditorStore(
+    useShallow((s) => s.tabs.find((t) => t.path === s.activeTabPath) ?? null)
+  );
+}

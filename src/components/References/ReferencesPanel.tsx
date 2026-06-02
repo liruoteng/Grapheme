@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { X, ArrowDownToLine, Copy, Search } from "lucide-react";
-import { useEditorStore, type Reference } from "../../stores/editorStore";
+import { useEditorStore, useActiveTab, type Reference } from "../../stores/editorStore";
 import { getActiveDragSource, getFileDragMime, setActiveDragSource } from "../FileExplorer/fileDrag";
 import "./ReferencesPanel.css";
 
@@ -207,7 +207,7 @@ export function ReferencesPanel() {
   const addReference = useEditorStore((s) => s.addReference);
   const removeReference = useEditorStore((s) => s.removeReference);
   const workspacePath = useEditorStore((s) => s.workspacePath);
-  const activeTab = useEditorStore((s) => s.activeTab());
+  const activeTab = useActiveTab();
 
   const [dropHover, setDropHover] = useState(false);
   const [busy, setBusy] = useState(false);

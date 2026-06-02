@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useEditorStore } from "../../stores/editorStore";
+import { useEditorStore, useActiveTab } from "../../stores/editorStore";
 import "./TableOfContents.css";
 
 interface TocEntry {
@@ -22,7 +22,7 @@ function parseHeadings(content: string, isMarkdown: boolean): TocEntry[] {
 }
 
 export function TableOfContents() {
-  const activeTab     = useEditorStore((s) => s.activeTab());
+  const activeTab     = useActiveTab();
   const setScrollToLine = useEditorStore((s) => s.setScrollToLine);
 
   const isMd = !!activeTab && (activeTab.path.endsWith(".md") || activeTab.path.endsWith(".markdown"));

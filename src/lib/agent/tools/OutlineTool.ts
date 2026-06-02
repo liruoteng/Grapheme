@@ -144,3 +144,7 @@ export function getOutline(): OutlineNode[] {
 export function setOutline(outline: OutlineNode[]): void {
   currentOutline = outline;
 }
+
+export function clearOutline(): void {
+  currentOutline = [];
+}
