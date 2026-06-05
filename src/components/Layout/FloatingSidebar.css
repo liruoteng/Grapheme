@@ -1,17 +1,17 @@
 /* ── Floating rail/sidebar ────────────────────────────────────────────────── */
 .fsb {
   position: absolute;
-  top: 10px;
-  bottom: 10px;
-  left: 10px;
+  top: var(--space-2);
+  bottom: var(--space-2);
+  left: var(--space-2);
   z-index: 350;
   width: 40px;
   display: flex;
   flex-direction: column;
   background: var(--bg-surface);
-  border: 1px solid var(--border-medium);
-  border-radius: 12px;
-  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.24);
+  border: var(--border-hairline-medium);
+  border-radius: var(--radius-floating);
+  box-shadow: var(--shadow-floating);
   transition: width 0.24s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.16s ease, border-color 0.16s ease;
   overflow: hidden;
   backdrop-filter: blur(14px);
@@ -19,7 +19,7 @@
 .fsb--open {
   min-width: 160px;
   border-color: var(--border-medium);
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.34);
+  box-shadow: var(--shadow-floating);
 }
 
 /* ── Top bar ─────────────────────────────────────────────────────────────── */
@@ -27,19 +27,19 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0 8px;
-  height: 42px;
+  padding: 0 var(--space-2);
+  height: 40px;
   flex-shrink: 0;
   background: transparent;
   gap: 0;
 }
 .fsb--open .fsb-topbar {
   justify-content: space-between;
-  padding: 0 12px;
+  padding: 0 var(--space-3);
 }
 
 .fsb-brand {
-  font-size: 13px;
+  font-size: var(--type-ui-body);
   font-weight: 700;
   color: var(--text-muted);
   letter-spacing: -0.01em;
@@ -54,7 +54,7 @@
 .fsb-topbar-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-1);
 }
 .fsb:not(.fsb--open) .fsb-topbar-actions {
   justify-content: center;
@@ -66,11 +66,11 @@
   justify-content: center;
   width: 28px;
   height: 28px;
-  border-radius: 8px;
+  border-radius: var(--radius-panel);
   border: none;
   background: transparent;
   color: var(--text-muted);
-  font-size: 14px;
+  font-size: var(--type-ui-title);
   cursor: pointer;
   flex-shrink: 0;
   transition: background 0.12s, color 0.12s;
@@ -85,7 +85,7 @@
 .fsb-section {
   display: none;
   flex-direction: column;
-  border-bottom: 1px solid var(--border);
+  border-bottom: var(--border-hairline);
   flex-shrink: 0;
 }
 .fsb--open .fsb-section {
@@ -102,10 +102,10 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px 6px;
+  padding: var(--space-2) var(--space-3) var(--space-1);
 }
 .fsb-section-title {
-  font-size: 11px;
+  font-size: var(--type-ui-caption);
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -121,7 +121,7 @@
   background: transparent;
   color: var(--text-dim);
   cursor: pointer;
-  border-radius: 5px;
+  border-radius: var(--radius-control);
   transition: background 0.12s, color 0.12s;
 }
 .fsb-section-action:hover {
@@ -134,12 +134,13 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  margin: 0 12px 10px;
-  padding: 10px 12px;
-  border: 1.5px dashed var(--border-medium);
-  border-radius: 8px;
-  font-size: 12px;
+  gap: var(--space-2);
+  margin: 0 var(--space-3) var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-hairline-medium);
+  border-style: dashed;
+  border-radius: var(--radius-panel);
+  font-size: var(--type-ui-small);
   color: var(--text-dim);
   cursor: pointer;
   transition: border-color 0.15s, color 0.15s, background 0.15s;
@@ -155,22 +156,22 @@
 .fsb-file-list {
   display: flex;
   flex-direction: column;
-  padding-bottom: 8px;
+  padding-bottom: var(--space-2);
 }
 .fsb-empty-hint {
-  font-size: 12px;
+  font-size: var(--type-ui-small);
   color: var(--text-dim);
-  padding: 4px 14px 6px;
+  padding: var(--space-1) var(--space-3) var(--space-1);
 }
 .fsb-file-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 12px;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
   border: none;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--type-ui-body);
   font-family: inherit;
   text-align: left;
   cursor: pointer;
@@ -212,9 +213,9 @@
 .fsb-workspace-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 12px 10px;
-  font-size: 13px;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3) var(--space-2);
+  font-size: var(--type-ui-body);
   color: var(--text-secondary);
 }
 .fsb-workspace-item--active { color: var(--text); }
@@ -232,13 +233,13 @@
   flex: 1;
 }
 .fsb-open-folder-btn {
-  margin: 0 12px 10px;
-  padding: 6px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  margin: 0 var(--space-3) var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-hairline);
+  border-radius: var(--radius-panel);
   background: transparent;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--type-ui-small);
   font-family: inherit;
   cursor: pointer;
   text-align: left;
@@ -262,21 +263,21 @@
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  border-top: 1px solid var(--border);
-  padding: 6px 0;
+  border-top: var(--border-hairline);
+  padding: var(--space-1) 0;
 }
 .fsb-bottom-btn {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-2);
   width: 100%;
   height: 34px;
   padding: 0;
-  padding-left: 12px;
+  padding-left: var(--space-3);
   border: none;
   background: transparent;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--type-ui-body);
   font-family: inherit;
   cursor: pointer;
   border-radius: 0;
@@ -292,7 +293,7 @@
   justify-content: center;
 }
 .fsb-bottom-label {
-  font-size: 13px;
+  font-size: var(--type-ui-body);
 }
 .fsb:not(.fsb--open) .fsb-bottom-label {
   display: none;
@@ -332,15 +333,15 @@
 
 /* ── URL paste row ──────────────────────────────────────────── */
 .fsb-url-row {
-  padding: 0 12px 6px;
+  padding: 0 var(--space-3) var(--space-1);
 }
 .fsb-url-input {
   width: 100%;
-  padding: 5px 9px;
-  font-size: 0.85rem;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--type-ui-body);
   background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  border: var(--border-hairline);
+  border-radius: var(--radius-control);
   color: var(--text-secondary);
   outline: none;
   transition: border-color 0.12s;
@@ -354,7 +355,7 @@
 
 /* ── Search section ──────────────────────────────────────────── */
 .fsb-search-section {
-  border-bottom: 1px solid var(--border);
+  border-bottom: var(--border-hairline);
   max-height: 50%;
   display: flex;
   flex-direction: column;
@@ -363,18 +364,18 @@
 .fsb-search-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 12px 6px;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) var(--space-1);
 }
 
 .fsb-search-input {
   flex: 1;
   min-width: 0;
-  padding: 5px 9px;
-  font-size: 0.85rem;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--type-ui-body);
   background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  border: var(--border-hairline);
+  border-radius: var(--radius-control);
   color: var(--text-secondary);
   outline: none;
   font-family: inherit;
@@ -397,7 +398,7 @@
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  border-radius: 5px;
+  border-radius: var(--radius-control);
   flex-shrink: 0;
   transition: background 0.12s, color 0.12s;
 }
@@ -407,9 +408,9 @@
 }
 
 .fsb-search-status {
-  font-size: 12px;
+  font-size: var(--type-ui-small);
   color: var(--text-dim);
-  padding: 10px 14px;
+  padding: var(--space-2) var(--space-3);
 }
 
 .fsb-search-results {
@@ -419,15 +420,15 @@
 }
 
 .fsb-search-file-group {
-  padding-bottom: 6px;
+  padding-bottom: var(--space-1);
 }
 
 .fsb-search-file-path {
-  font-size: 11px;
+  font-size: var(--type-ui-caption);
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--text-muted);
-  padding: 6px 12px 3px;
+  padding: var(--space-1) var(--space-3);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -436,13 +437,13 @@
 .fsb-search-result-row {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--space-2);
   width: 100%;
-  padding: 3px 12px;
+  padding: var(--space-1) var(--space-3);
   border: none;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--type-ui-small);
   font-family: inherit;
   text-align: left;
   cursor: pointer;
@@ -456,7 +457,7 @@
 .fsb-search-line-num {
   flex-shrink: 0;
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--type-ui-caption);
   font-family: monospace;
   min-width: 28px;
   text-align: right;

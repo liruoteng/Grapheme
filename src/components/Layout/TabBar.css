@@ -2,13 +2,13 @@
   display: flex;
   align-items: center;
   background: var(--bg-elevated);
-  border-bottom: 1px solid var(--border);
+  border-bottom: var(--border-hairline);
   overflow-x: auto;
   overflow-y: hidden;
   flex-shrink: 0;
   height: 40px;
-  padding: 0 6px;
-  gap: 4px;
+  padding: 0 var(--space-2);
+  gap: var(--space-1);
 }
 
 .tab-bar::-webkit-scrollbar { height: 3px; }
@@ -17,12 +17,12 @@
 .tab {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 12px;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
   height: 32px;
   cursor: pointer;
-  border-radius: 8px;
-  font-size: 13px;
+  border-radius: var(--radius-panel);
+  font-size: var(--type-ui-body);
   font-weight: 500;
   color: var(--text-tab);
   white-space: nowrap;
@@ -38,7 +38,7 @@
   background: var(--bg-active-tab);
   color: var(--text);
   border-color: var(--border);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  box-shadow: var(--shadow-resting);
 }
 
 /* Blue top accent line on active tab */
@@ -46,11 +46,11 @@
   content: "";
   position: absolute;
   top: -1px;
-  left: 10px;
-  right: 10px;
-  height: 2.5px;
+  left: var(--space-2);
+  right: var(--space-2);
+  height: 2px;
   background: var(--accent-tab-bar);
-  border-radius: 0 0 3px 3px;
+  border-radius: 0 0 var(--radius-control) var(--radius-control);
 }
 
 .tab-name {
@@ -61,7 +61,7 @@
 
 .tab-dirty {
   color: var(--dirty);
-  font-size: 14px;
+  font-size: var(--type-ui-title);
 }
 
 .tab-close {
@@ -69,9 +69,9 @@
   border: none;
   color: inherit;
   cursor: pointer;
-  font-size: 11px;
-  padding: 3px 4px;
-  border-radius: 5px;
+  font-size: var(--type-ui-caption);
+  padding: var(--space-1);
+  border-radius: var(--radius-control);
   opacity: 0;
   transition: opacity 0.1s, background 0.1s;
   line-height: 1;

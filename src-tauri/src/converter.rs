@@ -830,7 +830,7 @@ fn collect_table<'a>(lines: &[&'a str], start: usize) -> (Vec<Vec<String>>, usiz
 fn split_table_row(line: &str) -> Vec<String> {
     let line = line.trim().trim_matches('|');
     let mut cells: Vec<String> = Vec::new();
-    let mut current_start = 0;
+    let mut current_start_byte = 0;
     let chars: Vec<char> = line.chars().collect();
     let mut i = 0;
     while i < chars.len() {
@@ -839,13 +839,14 @@ fn split_table_row(line: &str) -> Vec<String> {
             continue;
         }
         if chars[i] == '|' {
-            let cell = &line[current_start..i];
+            let end_byte = line[..].char_indices().nth(i).map(|(b, _)| b).unwrap_or(line.len());
+            let cell = &line[current_start_byte..end_byte];
             cells.push(cell.trim().replace("\\|", "|"));
-            current_start = i + 1;
+            current_start_byte = end_byte + 1;
         }
         i += 1;
     }
-    let cell = &line[current_start..];
+    let cell = &line[current_start_byte..];
     cells.push(cell.trim().replace("\\|", "|"));
     cells
 }

@@ -65,6 +65,20 @@ describe("MarkdownWysiwygEditor", () => {
     });
   });
 
+  it("renders block widgets in the lower part of long markdown documents", async () => {
+    const filler = Array.from({ length: 10 }, (_, index) => `Paragraph ${index + 1}`).join("\n\n");
+    const content = `${filler}\n\n![Deep image](assets/deep.png)\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n`;
+    const path = "/workspace/examples/markdown/long.md";
+    useEditorStore.getState().openTab(path, "long.md", content);
+
+    const { container } = render(<MarkdownWysiwygEditor />);
+
+    await waitFor(() => {
+      expect(container.querySelector(".cm-md-image-render img")).toHaveAttribute("src", "/workspace/examples/markdown/assets/deep.png");
+      expect(container.querySelector(".cm-md-table-render")).toBeInTheDocument();
+    });
+  });
+
   it("reveals the scrollbar while scrolling and hides it again when idle", async () => {
     const path = "/workspace/examples/markdown/scrollbar.md";
     useEditorStore.getState().openTab(path, "scrollbar.md", "# Scrollbar\n");

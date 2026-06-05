@@ -30,4 +30,9 @@ Element.prototype.scrollIntoView = () => {};
 // CodeMirror calls Range.getClientRects() in requestAnimationFrame callbacks
 // after a test has torn down, causing false-positive "not a function" errors.
 // Return an empty array so CodeMirror's measurement loop is a no-op.
-Range.prototype.getClientRects = () => [];
+const emptyDomRects: DOMRect[] = [];
+Range.prototype.getClientRects = () => ({
+  length: 0,
+  item: () => null,
+  [Symbol.iterator]: emptyDomRects[Symbol.iterator].bind(emptyDomRects),
+});

@@ -42,6 +42,7 @@ import { activeMarkdownSyntaxPlugin } from "./activeMarkdownSyntaxPlugin";
 import { tableControlsPlugin } from "./tableControlsPlugin";
 import { prism, prismConfig } from "@milkdown/plugin-prism";
 import { refractor } from "refractor";
+import { bulletListInputRulePlugin } from "./bulletListInputRule";
 
 // Register additional languages for code block highlighting
 void function registerExtraLanguages() {
@@ -334,6 +335,7 @@ function WritingModeEditorInner({ path, initialContent, externalContent, onSave,
             .use(taskItemPlugin)
             .use(lineNumberPlugin(lineNumberOptionsRef.current))
             .use(activeMarkdownSyntaxPlugin)
+            .use(bulletListInputRulePlugin)
             .use(tableControlsPlugin)
             .use(prism)
             .config((ctx) => {

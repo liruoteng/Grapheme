@@ -10,7 +10,7 @@ import katex from "katex";
 import { refractor } from "refractor/all";
 import type { Element as HastElement, Nodes as HastNode, Root as HastRoot, Text as HastText } from "hast";
 import { EditorSelection, EditorState, StateEffect, StateField, Compartment } from "@codemirror/state";
-import type { Extension, Range, TransactionSpec } from "@codemirror/state";
+import type { Extension, Range, Transaction, TransactionSpec } from "@codemirror/state";
 import {
   Decoration,
   EditorView,
@@ -254,6 +254,7 @@ const prismAliases: Record<string, string> = {
 const codeSyntaxHighlightMaxDocLength = 100_000;
 const previewUpdateDebounceMs = 500;
 const inlineDecorationContextLineCount = 200;
+const layoutDecorationContextLineCount = 12;
 
 const blockHtmlTagNames = new Set([
   "address", "article", "aside", "blockquote", "body", "caption",
@@ -2456,6 +2457,104 @@ function externalInsertRange(view: EditorView, text: string) {
   return link ? { from: link.to, to: link.to } : { from: selection.from, to: selection.to };
 }
 
+function rangesIntersect(a: DecorationBuildRange, b: DecorationBuildRange) {
+  return a.from <= b.to && b.from <= a.to;
+}
+
+function mergeDecorationBuildRanges(ranges: DecorationBuildRange[]) {
+  ranges.sort((a, b) => a.from - b.from || a.to - b.to);
+  const merged: DecorationBuildRange[] = [];
+  for (const range of ranges) {
+    const previous = merged[merged.length - 1];
+    if (previous && range.from <= previous.to + 1) {
+      previous.to = Math.max(previous.to, range.to);
+    } else {
+      merged.push({ ...range });
+    }
+  }
+  return merged;
+}
+
+function lineRangeToBuildRange(state: EditorState, fromLine: number, toLine: number): DecorationBuildRange {
+  const doc = state.doc;
+  const safeFromLine = Math.max(1, Math.min(fromLine, doc.lines));
+  const safeToLine = Math.max(safeFromLine, Math.min(toLine, doc.lines));
+  return {
+    from: doc.line(safeFromLine).from,
+    to: doc.line(safeToLine).to,
+  };
+}
+
+function expandLayoutDirtyRange(state: EditorState, from: number, to: number): DecorationBuildRange {
+  const doc = state.doc;
+  if (doc.length === 0) return { from: 0, to: 0 };
+
+  const safeFrom = Math.max(0, Math.min(from, doc.length));
+  const safeTo = Math.max(safeFrom, Math.min(to, doc.length));
+  const changedFromLine = doc.lineAt(safeFrom).number;
+  const changedToLine = doc.lineAt(safeTo).number;
+  let dirty = lineRangeToBuildRange(
+    state,
+    changedFromLine - layoutDecorationContextLineCount,
+    changedToLine + layoutDecorationContextLineCount,
+  );
+
+  const expandTo = (range: DecorationBuildRange | null | undefined) => {
+    if (!range || !rangesIntersect(dirty, range)) return;
+    dirty = {
+      from: Math.min(dirty.from, range.from),
+      to: Math.max(dirty.to, range.to),
+    };
+  };
+
+  if (frontmatterAtTop(state)) expandTo(frontmatterAtTop(state) ?? undefined);
+
+  const scanFrom = doc.lineAt(dirty.from).number;
+  const scanTo = doc.lineAt(dirty.to).number;
+  for (let lineNumber = scanFrom; lineNumber <= scanTo; lineNumber += 1) {
+    const line = doc.line(lineNumber);
+    expandTo(mathBlockAt(state, lineNumber));
+    expandTo(codeBlockAt(state, lineNumber));
+    expandTo(imageAtLine(line.text, line.from));
+    expandTo(htmlCommentAt(state, lineNumber));
+    expandTo(htmlBlockAt(state, lineNumber));
+    expandTo(footnoteDefinitionAt(state, lineNumber));
+    expandTo(tableAt(doc, lineNumber));
+  }
+
+  return dirty;
+}
+
+function layoutDirtyRangesForTransaction(transaction: Transaction) {
+  const ranges: DecorationBuildRange[] = [];
+  transaction.changes.iterChangedRanges((_fromA, _toA, fromB, toB) => {
+    ranges.push(expandLayoutDirtyRange(transaction.state, fromB, toB));
+  });
+  return mergeDecorationBuildRanges(ranges);
+}
+
+function decorationRangesToSet(ranges: DecorationRange[]) {
+  const decorations: Range<Decoration>[] = [];
+  for (const range of ranges) {
+    if (range.point && range.widget) {
+      decorations.push(
+        Decoration.widget({ widget: range.widget, block: range.block, side: range.side })
+          .range(range.from),
+      );
+    } else if (range.line && range.className) {
+      decorations.push(Decoration.line({ class: range.className }).range(range.from));
+    } else if (range.from < range.to) {
+      decorations.push(
+        (range.replace
+          ? Decoration.replace({ widget: range.widget, block: range.block })
+          : Decoration.mark({ class: range.className }))
+          .range(range.from, range.to),
+      );
+    }
+  }
+  return Decoration.set(decorations, true);
+}
+
 function buildMarkdownDecorations(state: EditorState, options: MarkdownDecorationBuildOptions = {}) {
   const includeLayout = options.includeLayout ?? true;
   const includeInline = options.includeInline ?? true;
@@ -2766,33 +2865,23 @@ function buildMarkdownDecorations(state: EditorState, options: MarkdownDecoratio
       } else if (contentUnordered) {
         const markerFrom = contentFrom + contentUnordered[1].length;
         const markerTo = contentFrom + contentUnordered[0].length;
-        const activeListMarker = cursorTo >= markerFrom && cursorFrom <= markerTo;
-        if (activeListMarker) {
-          pushInline(markerRange(markerFrom, markerTo, true, "cm-md-active-list-marker"));
-        } else {
-          pushInline({
-            from: markerFrom,
-            to: markerTo,
-            replace: true,
-            widget: new ListMarkerWidget("bullet"),
-          });
-        }
+        pushInline({
+          from: markerFrom,
+          to: markerTo,
+          replace: true,
+          widget: new ListMarkerWidget("bullet"),
+        });
         pushInline({ from: markerTo, to: line.to, className: "cm-md-blockquote" });
         addInline(text, contentFrom, contentUnordered[0].length, cursorFrom, cursorTo);
       } else if (contentOrdered) {
         const markerFrom = contentFrom + contentOrdered[1].length;
         const markerTo = contentFrom + contentOrdered[0].length;
-        const activeListMarker = cursorTo >= markerFrom && cursorFrom <= markerTo;
-        if (activeListMarker) {
-          pushInline(markerRange(markerFrom, markerTo, true, "cm-md-active-list-marker"));
-        } else {
-          pushInline({
-            from: markerFrom,
-            to: markerTo,
-            replace: true,
-            widget: new ListMarkerWidget("ordered", contentOrdered[2]),
-          });
-        }
+        pushInline({
+          from: markerFrom,
+          to: markerTo,
+          replace: true,
+          widget: new ListMarkerWidget("ordered", contentOrdered[2]),
+        });
         pushInline({ from: markerTo, to: line.to, className: "cm-md-blockquote" });
         addInline(text, contentFrom, contentOrdered[0].length, cursorFrom, cursorTo);
       } else {
@@ -2822,30 +2911,22 @@ function buildMarkdownDecorations(state: EditorState, options: MarkdownDecoratio
     } else if (unordered) {
       const unorderedIndent = Math.floor(unordered[1].length / 2);
       pushLayout({ from: line.from, to: line.from, line: true, className: `cm-md-indent-${unorderedIndent}` });
-      if (activeLine) {
-        pushInline(markerRange(line.from + unordered[1].length, line.from + unordered[0].length, true, "cm-md-active-list-marker"));
-      } else {
-        pushInline({
-          from: line.from + unordered[1].length,
-          to: line.from + unordered[0].length,
-          replace: true,
-          widget: new ListMarkerWidget("bullet"),
-        });
-      }
+      pushInline({
+        from: line.from + unordered[1].length,
+        to: line.from + unordered[0].length,
+        replace: true,
+        widget: new ListMarkerWidget("bullet"),
+      });
       addInline(text, line.from, unordered[0].length, cursorFrom, cursorTo);
     } else if (ordered) {
       const orderedIndent = Math.floor(ordered[1].length / 2);
       pushLayout({ from: line.from, to: line.from, line: true, className: `cm-md-indent-${orderedIndent}` });
-      if (activeLine) {
-        pushInline(markerRange(line.from + ordered[1].length, line.from + ordered[0].length, true, "cm-md-active-list-marker"));
-      } else {
-        pushInline({
-          from: line.from + ordered[1].length,
-          to: line.from + ordered[0].length,
-          replace: true,
-          widget: new ListMarkerWidget("ordered", ordered[2]),
-        });
-      }
+      pushInline({
+        from: line.from + ordered[1].length,
+        to: line.from + ordered[0].length,
+        replace: true,
+        widget: new ListMarkerWidget("ordered", ordered[2]),
+      });
       addInline(text, line.from, ordered[0].length, cursorFrom, cursorTo);
     } else {
       addInline(text, line.from, 0, cursorFrom, cursorTo);
@@ -2853,25 +2934,7 @@ function buildMarkdownDecorations(state: EditorState, options: MarkdownDecoratio
     }
   }
 
-  const decorations: Range<Decoration>[] = [];
-  for (const range of ranges) {
-    if (range.point && range.widget) {
-      decorations.push(
-        Decoration.widget({ widget: range.widget, block: range.block, side: range.side })
-          .range(range.from),
-      );
-    } else if (range.line && range.className) {
-      decorations.push(Decoration.line({ class: range.className }).range(range.from));
-    } else if (range.from < range.to) {
-      decorations.push(
-        (range.replace
-          ? Decoration.replace({ widget: range.widget, block: range.block })
-          : Decoration.mark({ class: range.className }))
-          .range(range.from, range.to),
-      );
-    }
-  }
-  return Decoration.set(decorations, true);
+  return decorationRangesToSet(ranges);
 }
 
 function buildMarkdownImageAtomicRanges(state: EditorState) {
@@ -2907,8 +2970,29 @@ function markdownWysiwygDecorations(isPointerSelectionActive?: () => boolean): E
   const decorationField = StateField.define<DecorationSet>({
     create: (state) => buildMarkdownDecorations(state, { includeInline: false }),
     update(value, transaction) {
+      if (transaction.docChanged) {
+        const dirtyRanges = layoutDirtyRangesForTransaction(transaction);
+        if (dirtyRanges.length === 0) return value.map(transaction.changes);
+
+        const additions = buildMarkdownDecorations(transaction.state, {
+          includeInline: false,
+          ranges: dirtyRanges,
+        });
+        const additionRanges: Range<Decoration>[] = [];
+        const cursor = additions.iter();
+        while (cursor.value) {
+          additionRanges.push(cursor.value.range(cursor.from, cursor.to));
+          cursor.next();
+        }
+
+        return value.map(transaction.changes).update({
+          filter: (from, to) => !dirtyRanges.some((range) => rangesIntersect(range, { from, to })),
+          add: additionRanges,
+          sort: true,
+        });
+      }
+
       if (
-        transaction.docChanged ||
         transaction.effects.some((effect) => effect.is(revealMarkdownSyntaxEffect)) ||
         (transaction.selection && !isPointerSelectionActive?.())
       ) {

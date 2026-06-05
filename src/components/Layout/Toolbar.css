@@ -2,7 +2,7 @@
 .toolbar {
   display: flex;
   align-items: stretch;
-  height: 42px;
+  height: 40px;
   background: var(--bg-toolbar);
   flex-shrink: 0;
   overflow: hidden;
@@ -13,16 +13,16 @@
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  padding: 0 8px;
+  padding: 0 var(--space-2);
   flex-shrink: 0;
-  border-right: 1px solid var(--border);
+  border-right: var(--border-hairline);
 }
 
 /* ── Explorer action buttons inside toolbar-left ─────────────────────────── */
 .toolbar-explorer-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-1);
 }
 
 /* Square icon buttons for the sidebar toolbar — same size/shape as the toggle */
@@ -49,46 +49,46 @@
   height: 100%;
   background: transparent;
   border-bottom: none;
-  padding: 5px 5px 0;
-  gap: 4px;
+  padding: var(--space-1) var(--space-1) 0;
+  gap: var(--space-1);
 }
 
 .toolbar-tabs .tab {
   height: 100%;
-  border-radius: 8px 8px 0 0;
+  border-radius: var(--radius-panel) var(--radius-panel) 0 0;
   border-bottom: none;
-  font-size: 13px;
+  font-size: var(--type-ui-body);
 }
 
 .toolbar-tabs .tab.active {
   background: var(--bg-base);
-  border: 1px solid var(--border);
+  border: var(--border-hairline);
   border-bottom: 1px solid var(--bg-base);
   box-shadow: none;
 }
 
 /* The blue top accent line on the active tab */
 .toolbar-tabs .tab.active::before {
-  border-radius: 3px 3px 0 0;
-  height: 2.5px;
+  border-radius: var(--radius-control) var(--radius-control) 0 0;
+  height: 2px;
 }
 
 /* ── Right: action buttons ────────────────────────────────────────────────── */
 .toolbar-right {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 0 10px;
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
   flex-shrink: 0;
-  border-left: 1px solid var(--border);
+  border-left: var(--border-hairline);
 }
 
 /* ── Icon button (toolbar actions) ───────────────────────────────────────── */
 .toolbar-btn-icon {
-  padding: 0 7px;
-  font-size: 13px;
+  padding: 0 var(--space-2);
+  font-size: var(--type-ui-body);
   line-height: 1;
-  border-radius: 8px;
+  border-radius: var(--radius-panel);
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-secondary);
@@ -120,7 +120,7 @@
 }
 
 .toolbar-btn-icon--text {
-  font-size: 11px;
+  font-size: var(--type-ui-caption);
   font-weight: 600;
   letter-spacing: 0.02em;
   font-family: "JetBrains Mono", ui-monospace, monospace;
@@ -128,18 +128,18 @@
 
 .dirty-badge {
   color: var(--dirty);
-  font-size: 14px;
+  font-size: var(--type-ui-title);
 }
 
 /* ── Legacy classes kept for compatibility ────────────────────────────────── */
 .toolbar-btn {
-  padding: 5px 14px;
+  padding: var(--space-1) var(--space-3);
   background: transparent;
   border: 1px solid var(--border-btn);
-  border-radius: 8px;
+  border-radius: var(--radius-panel);
   color: var(--text);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--type-ui-body);
   font-weight: 500;
   font-family: inherit;
   transition: background 0.12s;
