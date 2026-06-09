@@ -30,16 +30,11 @@ import { getActiveDragSource } from "../FileExplorer/fileDrag";
 import { SlashMenu, type SlashCommand } from "./SlashMenu";
 import { codeBlockLanguages } from "./codeBlockLanguages";
 import {
-  insertColumnIntoTable,
-  insertColumnIntoTableAt,
-  insertRowIntoTable,
-  insertRowIntoTableAt,
-  moveTableColumn,
-  moveTableVisualRow,
-  serializeTable,
+  serializeTableWithLayout,
   tableAt,
   tableSnippet,
   type MarkdownTable,
+  type MarkdownTableLayout,
 } from "./markdownTable";
 import "katex/dist/katex.min.css";
 import "./MarkdownWysiwygEditor.css";
@@ -1013,12 +1008,19 @@ class MarkdownTableWidget extends WidgetType {
     let stopColumnResize: (() => void) | null = null;
     let stopAxisDrag: ((event?: MouseEvent) => void) | null = null;
     let activeAxisDropTarget: HTMLElement | null = null;
-    let syncRowHandles = () => {};
+    let syncTableHandles = () => {};
     let activeRowIndex: number | null = null;
     let activeColIndex: number | null = null;
     let verticalResizeGuide: HTMLDivElement | null = null;
     let horizontalResizeGuide: HTMLDivElement | null = null;
-    const colWidths = this.table.header.map(() => 100 / Math.max(1, this.table.header.length));
+    const initialColWidths = this.table.layout?.colWidths?.length === this.table.header.length
+      ? [...this.table.layout.colWidths]
+      : this.table.header.map(() => 100 / Math.max(1, this.table.header.length));
+    const rowHeights = this.table.layout?.rowHeights
+      ? this.table.layout.rowHeights.slice(0, this.table.rows.length + 1)
+      : [];
+    const colWidths = initialColWidths;
+    let layoutIsPersisted = Boolean(this.table.layout);
 
     const cellKey = (row: number, col: number) => `${row}:${col}`;
     const normalizeRange = (from: { row: number; col: number }, to: { row: number; col: number }) => ({
@@ -1076,12 +1078,55 @@ class MarkdownTableWidget extends WidgetType {
       }
     };
 
-    const commitTableEdit = () => {
-      const nextSource = serializeTable({
-        header: draftHeader,
-        alignments: this.table.alignments,
-        rows: draftRows,
+    const moveArray = <T,>(items: T[], fromIndex: number, toIndex: number) => {
+      if (fromIndex === toIndex) return [...items];
+      if (fromIndex < 0 || fromIndex >= items.length || toIndex < 0 || toIndex >= items.length) return [...items];
+      const next = [...items];
+      const [item] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, item);
+      return next;
+    };
+
+    const measuredRowHeights = () => {
+      const rows = visualRowElements();
+      if (rows.length === draftRows.length + 1) {
+        return rows.map((row, index) => rowHeights[index] ?? row.getBoundingClientRect().height);
+      }
+      return rowHeights.slice(0, draftRows.length + 1);
+    };
+
+    const measuredLayout = (): MarkdownTableLayout => ({
+      colWidths: colWidths.slice(0, draftHeader.length),
+      rowHeights: measuredRowHeights(),
+    });
+
+    const currentLayout = () => layoutIsPersisted ? measuredLayout() : undefined;
+
+    const tableSource = (
+      header: string[],
+      alignments: MarkdownTable["alignments"],
+      rows: string[][],
+      layout = currentLayout(),
+    ) => serializeTableWithLayout({ header, alignments, rows }, layout);
+    const persistedLayout = (layout: MarkdownTableLayout) => layoutIsPersisted ? layout : undefined;
+
+    const persistLayoutToSource = () => {
+      layoutIsPersisted = true;
+      const nextSource = tableSource(draftHeader, draftAlignments, draftRows, measuredLayout());
+      if (committedSource === nextSource) return;
+      view.dispatch({
+        changes: { from: tableFrom, to: tableTo, insert: nextSource },
       });
+      tableTo = tableFrom + nextSource.length;
+      committedSource = nextSource;
+    };
+
+    const commitTableEdit = () => {
+      const nextSource = tableSource(
+        draftHeader,
+        draftAlignments,
+        draftRows,
+      );
       if (committedSource === nextSource) return;
 
       view.dispatch({
@@ -1124,16 +1169,11 @@ class MarkdownTableWidget extends WidgetType {
     };
 
     const nextTableSource = (header: string[], alignments: MarkdownTable["alignments"], rows: string[][]) => (
-      serializeTable({ header, alignments, rows })
+      tableSource(header, alignments, rows, layoutIsPersisted ? {
+        colWidths: colWidths.slice(0, header.length),
+        rowHeights: measuredRowHeights().slice(0, rows.length + 1),
+      } : undefined)
     );
-
-    const draftTable = (): MarkdownTable => ({
-      from: tableFrom,
-      to: tableTo,
-      header: draftHeader,
-      alignments: draftAlignments,
-      rows: draftRows,
-    });
 
     const replaceWithTableSource = (nextSource: string) => {
       commitTableEdit();
@@ -1232,9 +1272,27 @@ class MarkdownTableWidget extends WidgetType {
         document.removeEventListener("mouseup", onMouseUp);
         stopAxisDrag = null;
         if (!handle || !wrap.contains(handle) || !Number.isFinite(toIndex) || toIndex === fromIndex) return;
-        replaceWithTableSource(kind === "row"
-          ? moveTableVisualRow(draftTable(), fromIndex, toIndex)
-          : moveTableColumn(draftTable(), fromIndex, toIndex));
+        if (kind === "row") {
+          const visualRows = moveArray([draftHeader, ...draftRows], fromIndex, toIndex);
+          const visualHeights = moveArray(measuredRowHeights(), fromIndex, toIndex);
+          replaceWithTableSource(tableSource(
+            visualRows[0] ?? draftHeader,
+            draftAlignments,
+            visualRows.slice(1),
+            persistedLayout({ colWidths: colWidths.slice(0, draftHeader.length), rowHeights: visualHeights }),
+          ));
+          return;
+        }
+
+        replaceWithTableSource(tableSource(
+          moveArray(draftHeader, fromIndex, toIndex),
+          moveArray(draftAlignments, fromIndex, toIndex),
+          draftRows.map((row) => moveArray(row, fromIndex, toIndex)),
+          persistedLayout({
+            colWidths: moveArray(colWidths, fromIndex, toIndex),
+            rowHeights: measuredRowHeights(),
+          }),
+        ));
       };
 
       stopAxisDrag = onMouseUp;
@@ -1271,7 +1329,7 @@ class MarkdownTableWidget extends WidgetType {
         colWidths[colIndex] = nextCurrent;
         colWidths[colIndex + 1] = total - nextCurrent;
         applyColumnWidths();
-        syncRowHandles();
+        syncTableHandles();
         showVerticalResizeGuide(colElements[colIndex].getBoundingClientRect().right);
       };
       const onMouseUp = () => {
@@ -1279,8 +1337,9 @@ class MarkdownTableWidget extends WidgetType {
         document.removeEventListener("mousemove", onMouseMove);
         document.removeEventListener("mouseup", onMouseUp);
         stopColumnResize = null;
-        syncRowHandles();
+        syncTableHandles();
         verticalResizeGuide?.classList.remove("is-visible");
+        persistLayoutToSource();
       };
 
       stopColumnResize = onMouseUp;
@@ -1350,16 +1409,18 @@ class MarkdownTableWidget extends WidgetType {
 
       const onMouseMove = (moveEvent: MouseEvent) => {
         const nextHeight = Math.max(minHeight, startHeight + moveEvent.clientY - startY);
+        rowHeights[rowIndex] = nextHeight;
         row.style.height = `${nextHeight}px`;
-        syncRowHandles();
+        syncTableHandles();
         showHorizontalResizeGuide(row.getBoundingClientRect().bottom);
       };
       const onMouseUp = () => {
         wrap.classList.remove("is-resizing-row");
         document.removeEventListener("mousemove", onMouseMove);
         document.removeEventListener("mouseup", onMouseUp);
-        syncRowHandles();
+        syncTableHandles();
         horizontalResizeGuide?.classList.remove("is-visible");
+        persistLayoutToSource();
       };
 
       horizontalResizeGuide?.classList.add("is-visible");
@@ -1516,7 +1577,7 @@ class MarkdownTableWidget extends WidgetType {
     this.cleanup = () => {
       stopColumnResize?.();
       stopAxisDrag?.();
-      window.removeEventListener("resize", syncRowHandles);
+      window.removeEventListener("resize", syncTableHandles);
       document.removeEventListener("mousemove", trackTableSelection);
       document.removeEventListener("mousemove", trackAxisHover);
       document.removeEventListener("mouseup", finishTableSelection);
@@ -1570,12 +1631,16 @@ class MarkdownTableWidget extends WidgetType {
     rowBtn.addEventListener("mousedown", (event) => event.preventDefault());
     rowBtn.addEventListener("click", (event) => {
       event.preventDefault();
-      view.dispatch({
-        changes: { from: this.table.from, to: this.table.to, insert: insertRowIntoTable(this.table) },
-        selection: EditorSelection.cursor(this.table.from),
-        scrollIntoView: true,
-      });
-      view.focus();
+      const heights = measuredRowHeights();
+      replaceWithTableSource(tableSource(
+        draftHeader,
+        draftAlignments,
+        [...draftRows, draftHeader.map(() => "")],
+        persistedLayout({
+          colWidths: colWidths.slice(0, draftHeader.length),
+          rowHeights: [...heights, heights[heights.length - 1] ?? 43],
+        }),
+      ));
     });
     actions.appendChild(rowBtn);
 
@@ -1585,12 +1650,17 @@ class MarkdownTableWidget extends WidgetType {
     colBtn.addEventListener("mousedown", (event) => event.preventDefault());
     colBtn.addEventListener("click", (event) => {
       event.preventDefault();
-      view.dispatch({
-        changes: { from: this.table.from, to: this.table.to, insert: insertColumnIntoTable(this.table) },
-        selection: EditorSelection.cursor(this.table.from),
-        scrollIntoView: true,
-      });
-      view.focus();
+      const nextColWidth = 100 / (draftHeader.length + 1);
+      const scaledColWidths = colWidths.map((width) => width * (100 - nextColWidth) / 100);
+      replaceWithTableSource(tableSource(
+        [...draftHeader, `Column ${draftHeader.length + 1}`],
+        [...draftAlignments, null],
+        draftRows.map((row) => [...row, ""]),
+        persistedLayout({
+          colWidths: [...scaledColWidths, nextColWidth],
+          rowHeights: measuredRowHeights(),
+        }),
+      ));
     });
     actions.appendChild(colBtn);
 
@@ -1661,7 +1731,6 @@ class MarkdownTableWidget extends WidgetType {
 
     const columnControls = document.createElement("div");
     columnControls.className = "cm-md-table-column-controls";
-    columnControls.style.gridTemplateColumns = `repeat(${Math.max(1, draftHeader.length)}, minmax(0, 1fr))`;
     columnHandleElements = [];
     for (let index = 0; index < draftHeader.length; index += 1) {
       const handle = document.createElement("button");
@@ -1690,7 +1759,15 @@ class MarkdownTableWidget extends WidgetType {
         const [kind, value] = (event.dataTransfer?.getData("text/plain") ?? "").split(":");
         const fromIndex = Number(value);
         if (kind !== "column" || !Number.isFinite(fromIndex) || fromIndex === index) return;
-        replaceWithTableSource(moveTableColumn(draftTable(), fromIndex, index));
+        replaceWithTableSource(tableSource(
+          moveArray(draftHeader, fromIndex, index),
+          moveArray(draftAlignments, fromIndex, index),
+          draftRows.map((row) => moveArray(row, fromIndex, index)),
+          persistedLayout({
+            colWidths: moveArray(colWidths, fromIndex, index),
+            rowHeights: measuredRowHeights(),
+          }),
+        ));
       });
       columnHandleElements.push(handle);
       columnControls.appendChild(handle);
@@ -1727,7 +1804,16 @@ class MarkdownTableWidget extends WidgetType {
         const [kind, value] = (event.dataTransfer?.getData("text/plain") ?? "").split(":");
         const fromIndex = Number(value);
         if (kind !== "row" || !Number.isFinite(fromIndex) || fromIndex === index) return;
-        replaceWithTableSource(moveTableVisualRow(draftTable(), fromIndex, index));
+        const visualRows = moveArray([draftHeader, ...draftRows], fromIndex, index);
+        replaceWithTableSource(tableSource(
+          visualRows[0] ?? draftHeader,
+          draftAlignments,
+          visualRows.slice(1),
+          persistedLayout({
+            colWidths: colWidths.slice(0, draftHeader.length),
+            rowHeights: moveArray(measuredRowHeights(), fromIndex, index),
+          }),
+        ));
       });
       rowHandleElements.push(handle);
       rowControls.appendChild(handle);
@@ -1742,12 +1828,22 @@ class MarkdownTableWidget extends WidgetType {
     addColumnControl.addEventListener("mousedown", (event) => event.preventDefault());
     addColumnControl.addEventListener("click", (event) => {
       event.preventDefault();
+      const nextColWidth = 100 / (draftHeader.length + 1);
+      const scaledColWidths = colWidths.map((width) => width * (100 - nextColWidth) / 100);
       pendingTableControlRestore = {
         tableFrom,
         rowIndex: activeRowIndex ?? 0,
         colIndex: draftHeader.length,
       };
-      replaceWithTableSource(insertColumnIntoTableAt(draftTable(), draftHeader.length));
+      replaceWithTableSource(tableSource(
+        [...draftHeader, `Column ${draftHeader.length + 1}`],
+        [...draftAlignments, null],
+        draftRows.map((row) => [...row, ""]),
+        persistedLayout({
+          colWidths: [...scaledColWidths, nextColWidth],
+          rowHeights: measuredRowHeights(),
+        }),
+      ));
     });
     frame.appendChild(addColumnControl);
 
@@ -1759,12 +1855,21 @@ class MarkdownTableWidget extends WidgetType {
     addRowControl.addEventListener("mousedown", (event) => event.preventDefault());
     addRowControl.addEventListener("click", (event) => {
       event.preventDefault();
+      const heights = measuredRowHeights();
       pendingTableControlRestore = {
         tableFrom,
         rowIndex: draftRows.length + 1,
         colIndex: activeColIndex ?? 0,
       };
-      replaceWithTableSource(insertRowIntoTableAt(draftTable(), draftRows.length));
+      replaceWithTableSource(tableSource(
+        draftHeader,
+        draftAlignments,
+        [...draftRows, draftHeader.map(() => "")],
+        persistedLayout({
+          colWidths: colWidths.slice(0, draftHeader.length),
+          rowHeights: [...heights, heights[heights.length - 1] ?? 43],
+        }),
+      ));
     });
     frame.appendChild(addRowControl);
 
@@ -1805,11 +1910,27 @@ class MarkdownTableWidget extends WidgetType {
       tbody.appendChild(tr);
     }
     table.appendChild(tbody);
+    for (const [index, row] of [headRow, ...tbody.rows].entries()) {
+      if (rowHeights[index]) row.style.height = `${rowHeights[index]}px`;
+    }
     frame.appendChild(table);
     wrap.appendChild(frame);
 
-    syncRowHandles = () => {
+    syncTableHandles = () => {
       const frameRect = frame.getBoundingClientRect();
+      const headerCells = [...headRow.cells];
+      for (const [index, handle] of columnHandleElements.entries()) {
+        const cell = headerCells[index];
+        if (!cell) {
+          handle.style.display = "none";
+          continue;
+        }
+        const cellRect = cell.getBoundingClientRect();
+        handle.style.display = "";
+        handle.style.left = `${cellRect.left - frameRect.left}px`;
+        handle.style.width = `${cellRect.width}px`;
+      }
+
       const rows = [headRow, ...tbody.rows];
       for (const [index, handle] of rowHandleElements.entries()) {
         const row = rows[index];
@@ -1824,7 +1945,7 @@ class MarkdownTableWidget extends WidgetType {
       }
     };
     requestAnimationFrame(() => {
-      syncRowHandles();
+      syncTableHandles();
       if (pendingTableControlRestore?.tableFrom !== tableFrom) return;
 
       const nextRowIndex = pendingTableControlRestore.rowIndex == null
@@ -1836,7 +1957,7 @@ class MarkdownTableWidget extends WidgetType {
       setActiveHandles(nextRowIndex, nextColIndex);
       pendingTableControlRestore = null;
     });
-    window.addEventListener("resize", syncRowHandles);
+    window.addEventListener("resize", syncTableHandles);
 
     return wrap;
   }

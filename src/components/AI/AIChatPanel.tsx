@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, type ReactNode } from "react";
 import { invoke, Channel } from "@tauri-apps/api/core";
 import {
   BookOpen,
@@ -133,6 +133,149 @@ function parseActionEdit(response: string): ActionEdit | null {
     if (text !== null) return { kind, text };
   }
   return null;
+}
+
+function isMarkdownBlockStart(line: string) {
+  return /^(```|#{1,6}\s+|>\s?|[-*]\s+|\d+[.)]\s+)/.test(line.trimStart());
+}
+
+function renderInlineMarkdown(text: string, keyPrefix: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  const pattern = /(`[^`\n]+`|\*\*[^*\n]+?\*\*|\*[^*\n]+?\*|\[[^\]\n]+\]\(https?:\/\/[^\s)]+\))/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(text))) {
+    if (match.index > lastIndex) nodes.push(text.slice(lastIndex, match.index));
+    const token = match[0];
+    const key = `${keyPrefix}-${match.index}`;
+
+    if (token.startsWith("`")) {
+      nodes.push(<code key={key}>{token.slice(1, -1)}</code>);
+    } else if (token.startsWith("**")) {
+      nodes.push(<strong key={key}>{renderInlineMarkdown(token.slice(2, -2), `${key}-strong`)}</strong>);
+    } else if (token.startsWith("*")) {
+      nodes.push(<em key={key}>{renderInlineMarkdown(token.slice(1, -1), `${key}-em`)}</em>);
+    } else {
+      const link = token.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/);
+      nodes.push(link ? (
+        <a key={key} href={link[2]} target="_blank" rel="noreferrer">
+          {renderInlineMarkdown(link[1], `${key}-link`)}
+        </a>
+      ) : token);
+    }
+
+    lastIndex = pattern.lastIndex;
+  }
+
+  if (lastIndex < text.length) nodes.push(text.slice(lastIndex));
+  return nodes;
+}
+
+function renderInlineMarkdownWithBreaks(text: string, keyPrefix: string) {
+  return text.split("\n").flatMap((line, index) => [
+    ...(index > 0 ? [<br key={`${keyPrefix}-br-${index}`} />] : []),
+    ...renderInlineMarkdown(line, `${keyPrefix}-${index}`),
+  ]);
+}
+
+function MarkdownMessage({ content }: { content: string }) {
+  const lines = content.replace(/\r\n/g, "\n").split("\n");
+  const blocks: ReactNode[] = [];
+
+  for (let i = 0; i < lines.length;) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      i += 1;
+      continue;
+    }
+
+    const fence = trimmed.match(/^```(\S*)\s*$/);
+    if (fence) {
+      const codeLines: string[] = [];
+      i += 1;
+      while (i < lines.length && !lines[i].trim().startsWith("```")) {
+        codeLines.push(lines[i]);
+        i += 1;
+      }
+      if (i < lines.length) i += 1;
+      blocks.push(
+        <pre key={`code-${i}`} data-language={fence[1] || undefined}>
+          <code>{codeLines.join("\n")}</code>
+        </pre>
+      );
+      continue;
+    }
+
+    const heading = trimmed.match(/^(#{1,6})\s+(.+)$/);
+    if (heading) {
+      const level = Math.min(heading[1].length, 6);
+      blocks.push(
+        <div key={`h-${i}`} className={`ai-chat-md-heading ai-chat-md-heading--${level}`}>
+          {renderInlineMarkdown(heading[2], `h-${i}`)}
+        </div>
+      );
+      i += 1;
+      continue;
+    }
+
+    if (/^>\s?/.test(trimmed)) {
+      const quoteLines: string[] = [];
+      while (i < lines.length && /^>\s?/.test(lines[i].trim())) {
+        quoteLines.push(lines[i].trim().replace(/^>\s?/, ""));
+        i += 1;
+      }
+      blocks.push(
+        <blockquote key={`quote-${i}`}>
+          {renderInlineMarkdownWithBreaks(quoteLines.join("\n"), `quote-${i}`)}
+        </blockquote>
+      );
+      continue;
+    }
+
+    if (/^[-*]\s+/.test(trimmed)) {
+      const items: string[] = [];
+      while (i < lines.length && /^[-*]\s+/.test(lines[i].trim())) {
+        items.push(lines[i].trim().replace(/^[-*]\s+/, ""));
+        i += 1;
+      }
+      blocks.push(
+        <ul key={`ul-${i}`}>
+          {items.map((item, idx) => <li key={idx}>{renderInlineMarkdown(item, `ul-${i}-${idx}`)}</li>)}
+        </ul>
+      );
+      continue;
+    }
+
+    if (/^\d+[.)]\s+/.test(trimmed)) {
+      const items: string[] = [];
+      while (i < lines.length && /^\d+[.)]\s+/.test(lines[i].trim())) {
+        items.push(lines[i].trim().replace(/^\d+[.)]\s+/, ""));
+        i += 1;
+      }
+      blocks.push(
+        <ol key={`ol-${i}`}>
+          {items.map((item, idx) => <li key={idx}>{renderInlineMarkdown(item, `ol-${i}-${idx}`)}</li>)}
+        </ol>
+      );
+      continue;
+    }
+
+    const paragraphLines: string[] = [];
+    while (i < lines.length && lines[i].trim() && !isMarkdownBlockStart(lines[i])) {
+      paragraphLines.push(lines[i]);
+      i += 1;
+    }
+    blocks.push(
+      <p key={`p-${i}`}>
+        {renderInlineMarkdownWithBreaks(paragraphLines.join("\n"), `p-${i}`)}
+      </p>
+    );
+  }
+
+  return <div className="ai-chat-markdown">{blocks}</div>;
 }
 
 export function AIChatPanel() {
@@ -836,7 +979,9 @@ export function AIChatPanel() {
                   )}
                 </div>
               ) : (
-                <div className="ai-chat-message-body">{msg.content}</div>
+                <div className="ai-chat-message-body">
+                  <MarkdownMessage content={msg.content} />
+                </div>
               )}
               {showFooter && (
                 <div className="ai-msg-footer">

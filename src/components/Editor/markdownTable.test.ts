@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   splitTableRow,
   serializeTable,
+  serializeTableWithLayout,
   insertRowIntoTable,
   insertColumnIntoTable,
   insertColumnIntoTableAt,
@@ -84,6 +85,22 @@ describe("serializeTable", () => {
       rows: [["Foo | Bar"]],
     });
     expect(result).toContain("| Foo \\| Bar |");
+  });
+});
+
+describe("serializeTableWithLayout", () => {
+  it("serializes table layout metadata as a hidden comment", () => {
+    const result = serializeTableWithLayout({
+      header: ["A", "B"],
+      alignments: [null, null],
+      rows: [["1", "2"]],
+    }, {
+      colWidths: [62, 38],
+      rowHeights: [44, 80],
+    });
+
+    expect(result.split("\n")[0]).toBe("<!-- type-studio-table-layout:{\"colWidths\":[62,38],\"rowHeights\":[44,80]} -->");
+    expect(result).toContain("| A | B |");
   });
 });
 
@@ -309,5 +326,23 @@ describe("tableAt", () => {
       0,
     );
     expect(table!.alignments).toEqual(["left", "center", "right"]);
+  });
+
+  it("parses layout metadata from the line before a table", () => {
+    const table = tableAt(
+      makeDoc([
+        "<!-- type-studio-table-layout:{\"colWidths\":[62,38],\"rowHeights\":[44,80]} -->",
+        "| A | B |",
+        "| --- | --- |",
+        "| 1 | 2 |",
+      ]),
+      1,
+    );
+
+    expect(table?.from).toBe(0);
+    expect(table?.layout).toEqual({
+      colWidths: [62, 38],
+      rowHeights: [44, 80],
+    });
   });
 });

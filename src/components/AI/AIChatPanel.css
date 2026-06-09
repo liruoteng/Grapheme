@@ -386,7 +386,6 @@
   font-size: var(--type-ui-body);
   line-height: 1.55;
   max-width: min(88%, 520px);
-  white-space: pre-wrap;
   word-break: break-word;
 }
 
@@ -398,8 +397,84 @@
   font-size: var(--type-ui-body);
   line-height: 1.6;
   max-width: 640px;
-  white-space: pre-wrap;
   word-break: break-word;
+}
+
+.ai-chat-markdown {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.ai-chat-markdown p {
+  margin: 0;
+}
+
+.ai-chat-markdown ul,
+.ai-chat-markdown ol {
+  margin: 0;
+  padding-left: var(--space-4);
+}
+
+.ai-chat-markdown li + li {
+  margin-top: var(--space-1);
+}
+
+.ai-chat-markdown blockquote {
+  margin: 0;
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--border-medium);
+  color: var(--text-secondary);
+}
+
+.ai-chat-markdown pre {
+  margin: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  padding: var(--space-2);
+  background: var(--bg-elevated);
+  border: var(--border-hairline-medium);
+  border-radius: var(--radius-control);
+}
+
+.ai-chat-markdown code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--type-ui-code);
+}
+
+.ai-chat-markdown :not(pre) > code {
+  padding: 1px 4px;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-control);
+}
+
+.ai-chat-markdown pre code {
+  display: block;
+  white-space: pre;
+}
+
+.ai-chat-markdown a {
+  color: var(--accent-bright);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.ai-chat-md-heading {
+  color: var(--text);
+  font-weight: 650;
+  line-height: var(--line-ui-tight);
+}
+
+.ai-chat-md-heading--1,
+.ai-chat-md-heading--2 {
+  font-size: var(--type-ui-title);
+}
+
+.ai-chat-md-heading--3,
+.ai-chat-md-heading--4,
+.ai-chat-md-heading--5,
+.ai-chat-md-heading--6 {
+  font-size: var(--type-ui-body);
 }
 
 /* ── Thinking indicator ──────────────────────────────────────────────────── */

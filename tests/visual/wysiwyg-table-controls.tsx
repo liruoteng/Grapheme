@@ -22,9 +22,26 @@ window.__TAURI_INTERNALS__ = {
 };
 
 const { MarkdownWysiwygEditor } = await import("../../src/components/Editor/MarkdownWysiwygEditor");
-const { useEditorStore } = await import("../../src/stores/editorStore");
+const { useActiveTab, useEditorStore } = await import("../../src/stores/editorStore");
+
+const defaultContent = [
+  "# Tables",
+  "",
+  "| Name | Role | Status |",
+  "| --- | --- | --- |",
+  "| Alice | Engineer | Active |",
+  "| Bob | Designer | Active |",
+  "| Charlie | Manager | On leave |",
+  "",
+].join("\n");
+
+function openTableControlsContent(content: string) {
+  useEditorStore.getState().openTab("/visual/table-controls.md", "table-controls.md", content);
+}
 
 function TableControlsHarness() {
+  const activeTab = useActiveTab();
+
   useEffect(() => {
     useEditorStore.setState(useEditorStore.getInitialState(), true);
     useEditorStore.setState({
@@ -33,23 +50,16 @@ function TableControlsHarness() {
       theme: "dark",
       workspacePath: "/visual",
     });
-    useEditorStore.getState().openTab(
-      "/visual/table-controls.md",
-      "table-controls.md",
-      [
-        "# Tables",
-        "",
-        "| Name | Role | Status |",
-        "| --- | --- | --- |",
-        "| Alice | Engineer | Active |",
-        "| Bob | Designer | Active |",
-        "| Charlie | Manager | On leave |",
-        "",
-      ].join("\n"),
-    );
+    const urlContent = new URLSearchParams(window.location.search).get("content");
+    openTableControlsContent(urlContent ?? defaultContent);
   }, []);
 
-  return <MarkdownWysiwygEditor />;
+  return (
+    <>
+      <MarkdownWysiwygEditor />
+      <textarea data-testid="table-controls-content" readOnly hidden value={activeTab?.content ?? ""} />
+    </>
+  );
 }
 
 const style = document.createElement("style");

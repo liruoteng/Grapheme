@@ -978,11 +978,10 @@
 }
 
 .markdown-wysiwyg .cm-md-table-column-controls {
-  grid-column: 2;
-  grid-row: 1;
-  display: grid;
-  gap: 0;
-  padding: 0 1px;
+  position: absolute;
+  inset: 0 0 auto;
+  height: 28px;
+  pointer-events: none;
 }
 
 .markdown-wysiwyg .cm-md-table-row-controls {
@@ -1064,6 +1063,9 @@
 }
 
 .markdown-wysiwyg .cm-md-table-column-handle {
+  position: absolute;
+  top: 0;
+  height: 28px;
   border-radius: 6px 6px 0 0;
   transform: translateY(1px);
 }

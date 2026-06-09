@@ -1,3 +1,5 @@
+import type { Node as ProseMirrorNode, NodeType, NodeRange, Attrs } from "prosemirror-model";
+
 import { Plugin, PluginKey } from "@milkdown/prose/state";
 import { $prose } from "@milkdown/utils";
 
@@ -32,7 +34,7 @@ export const bulletListInputRulePlugin = $prose(() => {
                 const deleteFrom = from - (match[0].length - text.length);
                 const deleteTo = to;
 
-                let tr = state.tr.delete(deleteFrom, deleteTo);
+                const tr = state.tr.delete(deleteFrom, deleteTo);
                 const $start = tr.doc.resolve(deleteFrom);
                 const range = $start.blockRange();
 
@@ -43,7 +45,7 @@ export const bulletListInputRulePlugin = $prose(() => {
 
                 tr.wrap(range, wrapping);
 
-                let before = tr.doc.resolve(deleteFrom - 1).nodeBefore;
+                const before = tr.doc.resolve(deleteFrom - 1).nodeBefore;
                 if (before && before.type === bulletList && canJoin(tr.doc, deleteFrom - 1)) {
                     tr.join(deleteFrom - 1);
                 }
@@ -55,19 +57,19 @@ export const bulletListInputRulePlugin = $prose(() => {
     });
 });
 
-function findWrapping(range: any, nodeType: any, attrs: any = null): any[] | null {
+function findWrapping(range: NodeRange, nodeType: NodeType, attrs: Attrs | null = null): { type: NodeType; attrs: Attrs | null }[] | null {
     const { parent, startIndex, endIndex } = range;
 
-    let around = parent.contentMatchAt(startIndex).findWrapping(nodeType);
+    const around = parent.contentMatchAt(startIndex).findWrapping(nodeType);
     if (!around) return null;
 
-    let outer = around.length ? around[0] : nodeType;
+    const outer = around.length ? around[0] : nodeType;
     if (!parent.canReplaceWith(startIndex, endIndex, outer)) return null;
 
-    return around.map((w: any) => ({ type: w.type, attrs: w.attrs || null })).concat({ type: nodeType, attrs });
+    return [...around.map((w) => ({ type: w, attrs: null as Attrs | null })), { type: nodeType, attrs }];
 }
 
-function canJoin(doc: any, pos: number): boolean {
+function canJoin(doc: ProseMirrorNode, pos: number): boolean {
     if (pos === 0) return false;
     const nodeBefore = doc.nodeAt(pos);
     const nodeAfter = doc.nodeAt(pos + 1);

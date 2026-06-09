@@ -6,12 +6,20 @@ export type MarkdownTable = {
   header: string[];
   alignments: Array<"left" | "center" | "right" | null>;
   rows: string[][];
+  layout?: MarkdownTableLayout;
+};
+
+export type MarkdownTableLayout = {
+  colWidths?: number[];
+  rowHeights?: number[];
 };
 
 type MarkdownDocLike = {
   lines: number;
   line(lineNumber: number): { from: number; to: number; text: string };
 };
+
+const tableLayoutCommentPrefix = "type-studio-table-layout:";
 
 export function splitTableRow(text: string) {
   const normalized = normalizeTableDelimiterEscapes(text).trim();
@@ -65,6 +73,44 @@ export function serializeTable(table: Pick<MarkdownTable, "header" | "alignments
     formatTableRow(separator),
     ...table.rows.map(formatTableRow),
   ].join("\n");
+}
+
+function cleanLayoutNumbers(values: unknown) {
+  if (!Array.isArray(values)) return undefined;
+  const numbers = values.filter((value): value is number => (
+    typeof value === "number" && Number.isFinite(value) && value > 0
+  ));
+  return numbers.length > 0 ? numbers : undefined;
+}
+
+function cleanTableLayout(layout: MarkdownTableLayout | undefined): MarkdownTableLayout | undefined {
+  if (!layout) return undefined;
+  const colWidths = cleanLayoutNumbers(layout.colWidths);
+  const rowHeights = cleanLayoutNumbers(layout.rowHeights);
+  if (!colWidths && !rowHeights) return undefined;
+  return { colWidths, rowHeights };
+}
+
+function parseTableLayoutComment(text: string): MarkdownTableLayout | null {
+  const match = text.trim().match(/^<!--\s*type-studio-table-layout:(.*?)\s*-->$/);
+  if (!match) return null;
+
+  try {
+    return cleanTableLayout(JSON.parse(match[1]) as MarkdownTableLayout) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function serializeTableWithLayout(
+  table: Pick<MarkdownTable, "header" | "alignments" | "rows">,
+  layout?: MarkdownTableLayout,
+) {
+  const source = serializeTable(table);
+  const cleanLayout = cleanTableLayout(layout);
+  if (!cleanLayout) return source;
+
+  return `<!-- ${tableLayoutCommentPrefix}${JSON.stringify(cleanLayout)} -->\n${source}`;
 }
 
 export function insertRowIntoTable(table: MarkdownTable) {
@@ -162,6 +208,17 @@ export function tableAt(doc: MarkdownDocLike, lineNumber: number): MarkdownTable
   const separatorLine = doc.line(lineNumber + 1);
   if (!isTableRow(headerLine.text)) return null;
 
+  let previousLine: ReturnType<MarkdownDocLike["line"]> | null = null;
+  if (lineNumber > 0) {
+    try {
+      previousLine = doc.line(lineNumber - 1);
+    } catch {
+      previousLine = null;
+    }
+  }
+  const layout = previousLine ? parseTableLayoutComment(previousLine.text) ?? undefined : undefined;
+  const layoutLine = layout ? previousLine : null;
+
   const alignments = parseTableAlignment(separatorLine.text);
   if (!alignments) return null;
 
@@ -180,10 +237,11 @@ export function tableAt(doc: MarkdownDocLike, lineNumber: number): MarkdownTable
   }
 
   return {
-    from: headerLine.from,
+    from: layoutLine?.from ?? headerLine.from,
     to: lastLine.to,
     header,
     alignments,
     rows,
+    layout,
   };
 }
