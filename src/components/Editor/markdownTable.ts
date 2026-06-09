@@ -68,19 +68,71 @@ export function serializeTable(table: Pick<MarkdownTable, "header" | "alignments
 }
 
 export function insertRowIntoTable(table: MarkdownTable) {
+  return insertRowIntoTableAt(table, table.rows.length);
+}
+
+export function insertRowIntoTableAt(table: MarkdownTable, rowIndex: number) {
+  const nextRows = [...table.rows];
+  nextRows.splice(Math.max(0, Math.min(rowIndex, nextRows.length)), 0, table.header.map(() => ""));
   return serializeTable({
     header: table.header,
     alignments: table.alignments,
-    rows: [...table.rows, table.header.map(() => "")],
+    rows: nextRows,
   });
 }
 
 export function insertColumnIntoTable(table: MarkdownTable) {
+  return insertColumnIntoTableAt(table, table.header.length);
+}
+
+export function insertColumnIntoTableAt(table: MarkdownTable, colIndex: number) {
+  const insertAt = Math.max(0, Math.min(colIndex, table.header.length));
   const nextColumn = `Column ${table.header.length + 1}`;
+  const insertInto = <T>(items: T[], value: T) => {
+    const next = [...items];
+    next.splice(insertAt, 0, value);
+    return next;
+  };
+
   return serializeTable({
-    header: [...table.header, nextColumn],
-    alignments: [...table.alignments, null],
-    rows: table.rows.map((row) => [...row, ""]),
+    header: insertInto(table.header, nextColumn),
+    alignments: insertInto(table.alignments, null),
+    rows: table.rows.map((row) => insertInto(row, "")),
+  });
+}
+
+function moveItem<T>(items: T[], fromIndex: number, toIndex: number) {
+  if (fromIndex === toIndex) return [...items];
+  if (fromIndex < 0 || fromIndex >= items.length || toIndex < 0 || toIndex >= items.length) return [...items];
+
+  const next = [...items];
+  const [item] = next.splice(fromIndex, 1);
+  next.splice(toIndex, 0, item);
+  return next;
+}
+
+export function moveTableRow(table: MarkdownTable, fromIndex: number, toIndex: number) {
+  return serializeTable({
+    header: table.header,
+    alignments: table.alignments,
+    rows: moveItem(table.rows, fromIndex, toIndex),
+  });
+}
+
+export function moveTableVisualRow(table: MarkdownTable, fromIndex: number, toIndex: number) {
+  const rows = moveItem([table.header, ...table.rows], fromIndex, toIndex);
+  return serializeTable({
+    header: rows[0] ?? table.header,
+    alignments: table.alignments,
+    rows: rows.slice(1),
+  });
+}
+
+export function moveTableColumn(table: MarkdownTable, fromIndex: number, toIndex: number) {
+  return serializeTable({
+    header: moveItem(table.header, fromIndex, toIndex),
+    alignments: moveItem(table.alignments, fromIndex, toIndex),
+    rows: table.rows.map((row) => moveItem(row, fromIndex, toIndex)),
   });
 }
 

@@ -960,14 +960,144 @@
 }
 
 .markdown-wysiwyg .cm-md-table-render table {
+  grid-column: 2;
+  grid-row: 2;
   width: 100%;
   border-collapse: collapse;
   font-size: 0.92em;
   table-layout: fixed;
 }
 
+.markdown-wysiwyg .cm-md-table-frame {
+  position: relative;
+  display: grid;
+  grid-template-columns: 34px minmax(280px, 1fr) 34px;
+  grid-template-rows: 28px auto 28px;
+  align-items: stretch;
+  min-width: min(100%, 420px);
+}
+
+.markdown-wysiwyg .cm-md-table-column-controls {
+  grid-column: 2;
+  grid-row: 1;
+  display: grid;
+  gap: 0;
+  padding: 0 1px;
+}
+
+.markdown-wysiwyg .cm-md-table-row-controls {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 34px;
+  pointer-events: none;
+}
+
+.markdown-wysiwyg .cm-md-table-resize-guide {
+  position: absolute;
+  z-index: 2;
+  background: var(--accent);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.markdown-wysiwyg .cm-md-table-resize-guide.is-visible {
+  opacity: 1;
+}
+
+.markdown-wysiwyg .cm-md-table-resize-guide--vertical {
+  width: 4px;
+  transform: translateX(-2px);
+}
+
+.markdown-wysiwyg .cm-md-table-resize-guide--horizontal {
+  height: 4px;
+  transform: translateY(-2px);
+}
+
+.markdown-wysiwyg .cm-md-table-axis-handle,
+.markdown-wysiwyg .cm-md-table-margin-add {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: grab;
+  font: inherit;
+  font-size: 0.86em;
+  line-height: 1;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease, color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+
+.markdown-wysiwyg .cm-md-table-render.is-controls-active .cm-md-table-axis-handle.is-active-axis,
+.markdown-wysiwyg .cm-md-table-render.is-controls-active .cm-md-table-margin-add,
+.markdown-wysiwyg .cm-md-table-render.is-dragging-axis .cm-md-table-axis-handle,
+.markdown-wysiwyg .cm-md-table-render.is-dragging-axis .cm-md-table-margin-add,
+.markdown-wysiwyg .cm-md-table-render.is-resizing-column .cm-md-table-axis-handle.is-active-axis,
+.markdown-wysiwyg .cm-md-table-render.is-resizing-column .cm-md-table-margin-add {
+  opacity: 0.7;
+  pointer-events: auto;
+}
+
+.markdown-wysiwyg .cm-md-table-render.is-controls-active .cm-md-table-axis-handle {
+  pointer-events: auto;
+}
+
+.markdown-wysiwyg .cm-md-table-render.is-controls-active .cm-md-table-axis-handle.is-active-axis {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.markdown-wysiwyg .cm-md-table-axis-handle:hover,
+.markdown-wysiwyg .cm-md-table-axis-handle.is-hover-axis,
+.markdown-wysiwyg .cm-md-table-axis-handle.is-drop-target,
+.markdown-wysiwyg .cm-md-table-margin-add:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg-hover));
+  color: var(--text);
+  opacity: 1;
+}
+
+.markdown-wysiwyg .cm-md-table-axis-handle:active {
+  cursor: grabbing;
+}
+
+.markdown-wysiwyg .cm-md-table-column-handle {
+  border-radius: 6px 6px 0 0;
+  transform: translateY(1px);
+}
+
+.markdown-wysiwyg .cm-md-table-row-handle {
+  position: absolute;
+  left: 0;
+  width: 34px;
+  border-radius: 6px 0 0 6px;
+  writing-mode: vertical-rl;
+  transform: translateX(1px);
+}
+
+.markdown-wysiwyg .cm-md-table-margin-add {
+  cursor: pointer;
+  font-size: 1.15em;
+  font-weight: 700;
+}
+
+.markdown-wysiwyg .cm-md-table-add-column {
+  grid-column: 3;
+  grid-row: 2;
+  border-radius: 0 6px 6px 0;
+}
+
+.markdown-wysiwyg .cm-md-table-add-row {
+  grid-column: 2;
+  grid-row: 3;
+  border-radius: 0 0 6px 6px;
+}
+
 .markdown-wysiwyg .cm-md-table-render th,
 .markdown-wysiwyg .cm-md-table-render td {
+  position: relative;
   border: 1px solid var(--border);
   padding: 8px 14px;
   vertical-align: top;
@@ -986,6 +1116,28 @@
   cursor: text;
   outline: none;
   user-select: text;
+}
+
+.markdown-wysiwyg .cm-md-table-render th.is-column-boundary-hover,
+.markdown-wysiwyg .cm-md-table-render td.is-column-boundary-hover {
+  cursor: col-resize;
+}
+
+.markdown-wysiwyg .cm-md-table-render th.is-row-boundary-hover,
+.markdown-wysiwyg .cm-md-table-render td.is-row-boundary-hover {
+  cursor: row-resize;
+}
+
+.markdown-wysiwyg .cm-md-table-render.is-resizing-column,
+.markdown-wysiwyg .cm-md-table-render.is-resizing-column * {
+  cursor: col-resize !important;
+  user-select: none;
+}
+
+.markdown-wysiwyg .cm-md-table-render.is-resizing-row,
+.markdown-wysiwyg .cm-md-table-render.is-resizing-row * {
+  cursor: row-resize !important;
+  user-select: none;
 }
 
 .markdown-wysiwyg .cm-md-table-render.is-selecting-cells th[contenteditable="true"],

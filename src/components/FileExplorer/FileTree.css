@@ -71,17 +71,21 @@
 
 .open-folder-text-btn {
   padding: var(--space-2) var(--space-4);
-  background: var(--accent-btn);
-  color: #ffffff;
-  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-medium);
   border-radius: var(--radius-panel);
   cursor: pointer;
   font-size: var(--type-ui-small);
   font-weight: 500;
   font-family: inherit;
-  transition: background 0.12s;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
-.open-folder-text-btn:hover { background: var(--accent-btn-hover); }
+.open-folder-text-btn:hover {
+  background: var(--bg-hover);
+  border-color: color-mix(in srgb, var(--text-muted) 45%, transparent);
+  color: var(--text);
+}
 
 /* Tree rows */
 .tree-row {

@@ -5,7 +5,7 @@ import {
   Clipboard,
   Option,
   PenLine,
-  Send,
+  ArrowUp,
   Sparkles,
   X,
 } from "lucide-react";
@@ -21,19 +21,12 @@ import {
   filterSlashCommands,
   type GraphemeSlashCommand,
 } from "../../lib/agent/slashCommands";
-import { prepareWithSegments, measureNaturalWidth } from "@chenglou/pretext";
+import matrixLoaderSvg from "../../../matrix-loader-effect.svg?raw";
 import "./AIChatPanel.css";
 
-// Measure Send/Stop text at the button's font so both share a stable min-width.
-const _BTN_FONT = "500 13px ui-sans-serif, system-ui, sans-serif";
-const _BTN_PAD  = 32; // 16px left + 16px right
-const BTN_MIN_WIDTH =
-  Math.ceil(
-    Math.max(
-      measureNaturalWidth(prepareWithSegments("Send", _BTN_FONT)),
-      measureNaturalWidth(prepareWithSegments("Stop", _BTN_FONT)),
-    )
-  ) + _BTN_PAD;
+const svgToDataUrl = (svg: string) => `data:image/svg+xml,${encodeURIComponent(svg)}`;
+const matrixLoaderDarkUrl = svgToDataUrl(matrixLoaderSvg);
+const matrixLoaderLightUrl = svgToDataUrl(matrixLoaderSvg.replace(/#261D10/g, "#FFFFFF"));
 
 interface CitationAuthor {
   name: string;
@@ -53,6 +46,7 @@ type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 type ChatMode = "plan" | "action";
 
 const ACADEMIC_MODES: { id: AcademicWorkflowMode; label: string }[] = [
+  { id: "general", label: "Chat" },
   { id: "clarify", label: "Clarify" },
   { id: "research", label: "Research" },
   { id: "outline", label: "Outline" },
@@ -143,6 +137,7 @@ function parseActionEdit(response: string): ActionEdit | null {
 
 export function AIChatPanel() {
   // ── Sessions from store ────────────────────────────────────────────────
+  const theme               = useEditorStore((s) => s.theme);
   const chatSessions        = useEditorStore((s) => s.chatSessions);
   const activeChatSessionId = useEditorStore((s) => s.activeChatSessionId);
   const createChatSession     = useEditorStore((s) => s.createChatSession);
@@ -154,6 +149,7 @@ export function AIChatPanel() {
   const deleteChatSession     = useEditorStore((s) => s.deleteChatSession);
 
   const activeSession = chatSessions.find((s) => s.id === activeChatSessionId) ?? null;
+  const matrixLoaderUrl = theme === "dark" ? matrixLoaderDarkUrl : matrixLoaderLightUrl;
 
   // ── Local view state ───────────────────────────────────────────────────
   const showAiSessions = useEditorStore((s) => s.showAiSessions);
@@ -186,11 +182,13 @@ export function AIChatPanel() {
   const [effort, setEffort] = useState<Effort>("medium");
   const [thinking, setThinking] = useState(false);
   const [chatMode, setChatMode] = useState<ChatMode>("plan");
-  const [academicMode, setAcademicMode] = useState<AcademicWorkflowMode>("clarify");
+  const [academicMode, setAcademicMode] = useState<AcademicWorkflowMode>("general");
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
   const isReadOnlyMode = isReadOnlyAcademicMode(academicMode);
+  const isActionDisabled = isReadOnlyMode;
+  const isActionMode = chatMode === "action" && !isActionDisabled;
   const systemPrompt =
-    chatMode === "action"
+    isActionMode
       ? getGraphemeActionSystemPrompt(academicMode)
       : getGraphemeWritingSystemPrompt(academicMode);
   const slashCommands = filterSlashCommands(input);
@@ -232,17 +230,17 @@ export function AIChatPanel() {
   }, [activeChatSessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Commit local messages back to the store when streaming finishes or on unmount
-  const commitMessages = useCallback((msgs: AiMessage[]) => {
+  const commitMessages = useCallback((msgs: AiMessage[], options?: { deleteIfEmpty?: boolean }) => {
     if (!activeChatSessionId) return;
     if (msgs.length === 0) {
-      deleteChatSession(activeChatSessionId);
+      if (options?.deleteIfEmpty !== false) deleteChatSession(activeChatSessionId);
     } else {
       updateChatSession(activeChatSessionId, msgs);
     }
   }, [activeChatSessionId, updateChatSession, deleteChatSession]);
 
   useEffect(() => {
-    return () => { commitMessages(localMessagesRef.current); };
+    return () => { commitMessages(localMessagesRef.current, { deleteIfEmpty: false }); };
   }, [commitMessages]);
 
   useEffect(() => {
@@ -256,14 +254,19 @@ export function AIChatPanel() {
     return () => clearInterval(interval);
   }, [isLoading]);
 
-  // ── Always start with a fresh session on mount ────────────────────────
+  // ── Ensure there is an active session without resetting existing chat ──
   useEffect(() => {
-    createChatSession();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    if (activeSession) return;
+    if (chatSessions.length > 0) {
+      setActiveChatSession(chatSessions[chatSessions.length - 1].id);
+    } else {
+      createChatSession();
+    }
+  }, [activeSession, chatSessions, createChatSession, setActiveChatSession]);
 
   useEffect(() => {
-    if (isReadOnlyMode) setChatMode("plan");
-  }, [isReadOnlyMode]);
+    if (isActionDisabled) setChatMode("plan");
+  }, [isActionDisabled]);
 
   const handleNewSession = useCallback(() => {
     commitMessages(localMessagesRef.current);
@@ -429,7 +432,7 @@ export function AIChatPanel() {
     }
 
     let contextualContent = trimmed;
-    if (chatMode === "action") {
+    if (isActionMode) {
       contextualContent =
         `${systemPrompt}\n\n` +
         `User request:\n${trimmed}\n\n` +
@@ -438,7 +441,7 @@ export function AIChatPanel() {
       if (selectedText) {
         contextualContent += `\n\nSelected text:\n\`\`\`\n${selectedText}\n\`\`\``;
       }
-    } else {
+    } else if (academicMode !== "general") {
       contextualContent = `${getAcademicWorkflowPrompt(academicMode)}\n\nUser request:\n${trimmed}`;
       if (selectedText) {
         contextualContent += `\n\nSelected text:\n\`\`\`\n${selectedText}\n\`\`\``;
@@ -448,6 +451,8 @@ export function AIChatPanel() {
           `\n\nActive document path: ${activeTab?.path ?? "(untitled)"}\n\n` +
           `Current document:\n\`\`\`\n${activeTab?.content ?? ""}\n\`\`\``;
       }
+    } else if (selectedText) {
+      contextualContent += `\n\nSelected text:\n\`\`\`\n${selectedText}\n\`\`\``;
     }
 
     const withUser: AiMessage[] = [...localMessages, { role: "user", content: trimmed, timestamp: Date.now() }];
@@ -539,7 +544,7 @@ export function AIChatPanel() {
       setLocalMessages(finalMsgs);
       commitMessages(finalMsgs);
 
-      if (chatMode === "action") {
+      if (isActionMode) {
         const last = finalMsgs[finalMsgs.length - 1];
         const edit = last?.role === "assistant" ? parseActionEdit(last.content) : null;
         const actionMsgs = finalMsgs.map((m, i) => {
@@ -796,10 +801,6 @@ export function AIChatPanel() {
               <Sparkles size={15} />
               Essay copilot
             </div>
-            <h2>Write, revise, and cite without leaving the editor.</h2>
-            <p>
-              Select a passage to edit it in place, or start with a writing task below.
-            </p>
             <div className="ai-starter-grid">
               {EMPTY_STARTERS.map((starter) => (
                 <button
@@ -826,7 +827,10 @@ export function AIChatPanel() {
             <div key={i} className={`ai-chat-message ai-chat-message--${msg.role}`}>
               {isThinking ? (
                 <div className="ai-chat-message-body ai-thinking-body">
-                  <div className="ai-thinking-label">Thinking {thinkingSeconds}s</div>
+                  <div className="ai-thinking-status">
+                    <img className="ai-thinking-loader" src={matrixLoaderUrl} alt="" aria-hidden="true" />
+                    <div className="ai-thinking-label">Thinking {thinkingSeconds}s</div>
+                  </div>
                   {thinkingHint && (
                     <div className="ai-thinking-hint">{thinkingHint}{thinkingHint.length >= 200 ? "…" : ""}</div>
                   )}
@@ -940,117 +944,117 @@ export function AIChatPanel() {
             ))}
           </div>
         )}
-        <textarea
-          ref={chatInputRef}
-          className="ai-chat-input"
-          value={input}
-          onChange={(e) => {
-            setInput(e.target.value);
-            setSlashCommandIndex(0);
-          }}
-          onKeyDown={handleKeyDown}
-          placeholder={selectedText ? "Tell AI what to do with the selection…" : "Ask for drafting, editing, rephrasing, or /cite query"}
-          rows={3}
-          disabled={isLoading}
-        />
-        <div className="ai-chat-input-actions">
-          <select
-            className="ai-toolbar-select"
-            value={academicMode}
-            onChange={(e) => setAcademicMode(e.target.value as AcademicWorkflowMode)}
-            title="Academic workflow mode"
-          >
-            {ACADEMIC_MODES.map((mode) => (
-              <option key={mode.id} value={mode.id}>{mode.label}</option>
-            ))}
-          </select>
-
-          <span className="ai-toolbar-sep" />
-
-          <select
-            className="ai-toolbar-model"
-            value={modelValue}
-            onChange={handleModelChange}
-            title="Model"
-          >
-            <optgroup label="Claude">
-              {CLAUDE_MODELS.map((m) => (
-                <option key={m.id} value={`claude-cli:${m.id}`}>{m.label}</option>
+        <div className="ai-chat-composer">
+          <textarea
+            ref={chatInputRef}
+            className="ai-chat-input"
+            value={input}
+            onChange={(e) => {
+              setInput(e.target.value);
+              setSlashCommandIndex(0);
+            }}
+            onKeyDown={handleKeyDown}
+            placeholder={selectedText ? "Tell AI what to do with the selection…" : "Ask for drafting, editing, rephrasing, or /cite query"}
+            rows={3}
+            disabled={isLoading}
+          />
+          <div className="ai-chat-input-actions">
+            <select
+              className="ai-toolbar-select"
+              value={academicMode}
+              onChange={(e) => setAcademicMode(e.target.value as AcademicWorkflowMode)}
+              title="Academic workflow mode"
+            >
+              {ACADEMIC_MODES.map((mode) => (
+                <option key={mode.id} value={mode.id}>{mode.label}</option>
               ))}
-            </optgroup>
-            {ollamaModels.length > 0 && (
-              <optgroup label="Ollama (local)">
-                {ollamaModels.map((m) => (
-                  <option key={m} value={`ollama:${m}`}>{m}</option>
+            </select>
+
+            <span className="ai-toolbar-sep" />
+
+            <select
+              className="ai-toolbar-model"
+              value={modelValue}
+              onChange={handleModelChange}
+              title="Model"
+            >
+              <optgroup label="Claude">
+                {CLAUDE_MODELS.map((m) => (
+                  <option key={m.id} value={`claude-cli:${m.id}`}>{m.label}</option>
                 ))}
-                {aiProvider === "ollama" && !ollamaModels.includes(ollamaModel) && (
-                  <option value={`ollama:${ollamaModel}`}>{ollamaModel}</option>
-                )}
               </optgroup>
-            )}
-          </select>
+              {ollamaModels.length > 0 && (
+                <optgroup label="Ollama (local)">
+                  {ollamaModels.map((m) => (
+                    <option key={m} value={`ollama:${m}`}>{m}</option>
+                  ))}
+                  {aiProvider === "ollama" && !ollamaModels.includes(ollamaModel) && (
+                    <option value={`ollama:${ollamaModel}`}>{ollamaModel}</option>
+                  )}
+                </optgroup>
+              )}
+            </select>
 
-          <span className="ai-toolbar-sep" />
+            <span className="ai-toolbar-sep" />
 
-          <span className="ai-toolbar-label">Effort:</span>
-          <select
-            className="ai-toolbar-select"
-            value={effort}
-            onChange={(e) => setEffort(e.target.value as Effort)}
-            title="Effort"
-          >
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-            {claudeModel === "claude-opus-4-7" && (
-              <option value="xhigh">XHigh</option>
-            )}
-            <option value="max">Max</option>
-          </select>
+            <select
+              className="ai-toolbar-select"
+              value={effort}
+              onChange={(e) => setEffort(e.target.value as Effort)}
+              title="Effort"
+            >
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+              {claudeModel === "claude-opus-4-7" && (
+                <option value="xhigh">XHigh</option>
+              )}
+              <option value="max">Max</option>
+            </select>
 
-          <button
-            className={`ai-think-btn${thinking ? " active" : ""}`}
-            onClick={() => setThinking((t) => !t)}
-            title={thinking ? "Thinking on" : "Thinking off"}
-          >
-            ◑
-          </button>
-
-          <span
-            className="ai-toolbar-tokens"
-            data-tooltip={contextTokens
-              ? `${Math.round(contextTokens.used / 1000)}k / ${Math.round(contextTokens.window / 1000)}k tokens (API)`
-              : `~${Math.round(estimatedTokens / 1000)}k / 200k tokens (est.${thinking && thinkingTokens > 0 ? ` incl. ~${Math.round(thinkingTokens / 1000)}k thinking` : ""})`}
-          >
-            {contextPctDisplay}%
-          </span>
-
-          <span className="ai-toolbar-spacer" />
-
-          <span className="ai-toolbar-label">Act</span>
-          <label
-            className={`ai-mode-toggle${isReadOnlyMode ? " ai-mode-toggle--disabled" : ""}`}
-            title={isReadOnlyMode ? "Review and citation audit are read-only" : chatMode === "action" ? "Auto-insert on" : "Auto-insert off"}
-          >
-            <input
-              type="checkbox"
-              checked={chatMode === "action"}
-              disabled={isReadOnlyMode}
-              onChange={(e) => setChatMode(e.target.checked ? "action" : "plan")}
-            />
-            <span className="ai-mode-toggle-track" />
-          </label>
-
-          <span className="ai-toolbar-sep" />
-
-          {isLoading ? (
-            <button className="ai-chat-btn ai-chat-btn--stop" style={{ minWidth: BTN_MIN_WIDTH }} onClick={handleStop}>Stop</button>
-          ) : (
-            <button className="ai-chat-btn ai-chat-btn--send" style={{ minWidth: BTN_MIN_WIDTH }} onClick={handleSend} disabled={!input.trim()}>
-              <Send size={13} />
-              Send
+            <button
+              className={`ai-think-btn${thinking ? " active" : ""}`}
+              onClick={() => setThinking((t) => !t)}
+              title={thinking ? "Thinking on" : "Thinking off"}
+            >
+              ◑
             </button>
-          )}
+
+            <span
+              className="ai-toolbar-tokens"
+              data-tooltip={contextTokens
+                ? `${Math.round(contextTokens.used / 1000)}k / ${Math.round(contextTokens.window / 1000)}k tokens (API)`
+                : `~${Math.round(estimatedTokens / 1000)}k / 200k tokens (est.${thinking && thinkingTokens > 0 ? ` incl. ~${Math.round(thinkingTokens / 1000)}k thinking` : ""})`}
+            >
+              {contextPctDisplay}%
+            </span>
+
+            <span className="ai-toolbar-spacer" />
+
+            <span className="ai-toolbar-label">Act</span>
+            <label
+              className={`ai-mode-toggle${isActionDisabled ? " ai-mode-toggle--disabled" : ""}`}
+              title={isActionDisabled ? "Review and citation audit are read-only" : chatMode === "action" ? "Auto-insert on" : "Auto-insert off"}
+            >
+              <input
+                type="checkbox"
+                checked={isActionMode}
+                disabled={isActionDisabled}
+                onChange={(e) => setChatMode(e.target.checked ? "action" : "plan")}
+              />
+              <span className="ai-mode-toggle-track" />
+            </label>
+
+            <span className="ai-toolbar-sep" />
+
+            {isLoading ? (
+              <button className="ai-chat-btn ai-chat-btn--stop" onClick={handleStop}>Stop</button>
+            ) : (
+              <button className="ai-chat-btn ai-chat-btn--send" onClick={handleSend} disabled={!input.trim()} aria-label="Send">
+                <ArrowUp size={15} />
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

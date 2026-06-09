@@ -11,13 +11,6 @@
   text-align: center;
 }
 
-.editor-empty-icon {
-  font-size: 52px;
-  margin-bottom: 20px;
-  opacity: 0.25;
-  color: var(--accent-bright);
-}
-
 .editor-empty-message p {
   margin: 6px 0;
   font-size: 15px;
@@ -34,15 +27,17 @@
   font-size: 14px;
   font-weight: 500;
   font-family: inherit;
-  background: var(--accent-btn);
-  color: #fff;
-  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-medium);
   border-radius: 8px;
   cursor: pointer;
-  transition: background 0.12s, opacity 0.12s;
+  transition: background 0.12s, border-color 0.12s, color 0.12s, opacity 0.12s;
 }
 .editor-empty-new-btn:hover {
-  background: var(--accent-btn-hover);
+  background: var(--bg-hover);
+  border-color: color-mix(in srgb, var(--text-muted) 45%, transparent);
+  color: var(--text);
 }
 
 /* ── Diagnostic squigglies ────────────────────────────────────────────────

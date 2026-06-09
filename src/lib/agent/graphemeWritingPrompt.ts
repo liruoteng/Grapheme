@@ -11,6 +11,7 @@ const ACADEMIC_RESEARCH_GUIDANCE = `Use a human-in-the-loop academic workflow:
 - For citations in Typst content, use @bibKey only when that key is present in the supplied material. Recommend /cite query when the user needs source discovery.`;
 
 export type AcademicWorkflowMode =
+  | "general"
   | "clarify"
   | "research"
   | "outline"
@@ -20,6 +21,9 @@ export type AcademicWorkflowMode =
   | "citation-audit";
 
 const WORKFLOW_PROMPTS: Record<AcademicWorkflowMode, string> = {
+  general: `Work in general chat mode. Answer the user's question directly and conversationally.
+
+You may help with writing, editing, explanation, brainstorming, or app usage, but do not force the request into an academic paper workflow unless the user asks for that.`,
   clarify: `Work only in clarify mode. Produce a Research Question Brief, not a draft.
 
 Include:

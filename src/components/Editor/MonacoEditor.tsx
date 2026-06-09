@@ -748,7 +748,6 @@ export function MonacoEditor({ onSave, onSnapshot, onNewFile, onPreviewTrigger, 
     return (
       <div className="editor-empty">
         <div className="editor-empty-message">
-          <div className="editor-empty-icon">✦</div>
           <p>Open a file to start editing</p>
           <p className="editor-empty-hint">Use the file explorer or click "Open Folder"</p>
           {onNewFile && (

@@ -856,7 +856,7 @@ fn render_table_with_options(rows: &[Vec<String>], options: &MarkdownOptions) ->
         return String::new();
     }
     let cols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
-    let mut out = String::from("#table(\n  columns: ");
+    let mut out = String::from("#table(\n  inset: 6pt,\n  align: (col, row) => left,\n  columns: ");
     out.push_str(&cols.to_string());
     out.push_str(",\n");
     for row in rows {

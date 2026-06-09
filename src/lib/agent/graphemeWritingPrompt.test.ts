@@ -8,6 +8,7 @@ import {
 } from "./graphemeWritingPrompt";
 
 const MODES: AcademicWorkflowMode[] = [
+  "general",
   "clarify",
   "research",
   "outline",
@@ -29,7 +30,13 @@ describe("grapheme writing prompts", () => {
   it("keeps review and citation audit read-only", () => {
     expect(isReadOnlyAcademicMode("review")).toBe(true);
     expect(isReadOnlyAcademicMode("citation-audit")).toBe(true);
+    expect(isReadOnlyAcademicMode("general")).toBe(false);
     expect(isReadOnlyAcademicMode("revise")).toBe(false);
+  });
+
+  it("supports general chat without forcing the academic workflow", () => {
+    expect(getAcademicWorkflowPrompt("general")).toContain("general chat mode");
+    expect(getGraphemeWritingSystemPrompt("general")).toContain("unless the user asks for that");
   });
 
   it("requires material gaps instead of unsupported draft claims", () => {

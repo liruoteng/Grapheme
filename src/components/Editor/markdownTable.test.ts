@@ -4,6 +4,11 @@ import {
   serializeTable,
   insertRowIntoTable,
   insertColumnIntoTable,
+  insertColumnIntoTableAt,
+  insertRowIntoTableAt,
+  moveTableColumn,
+  moveTableRow,
+  moveTableVisualRow,
   tableAt,
   tableSnippet,
 } from "./markdownTable";
@@ -97,6 +102,25 @@ describe("insertRowIntoTable", () => {
   });
 });
 
+describe("insertRowIntoTableAt", () => {
+  it("adds an empty row at the requested body index", () => {
+    const result = insertRowIntoTableAt({
+      from: 0,
+      to: 50,
+      header: ["A", "B"],
+      alignments: [null, null],
+      rows: [["a1", "b1"]],
+    }, 0);
+
+    expect(result.split("\n")).toEqual([
+      "| A | B |",
+      "| --- | --- |",
+      "|  |  |",
+      "| a1 | b1 |",
+    ]);
+  });
+});
+
 describe("insertColumnIntoTable", () => {
   it("adds a new column with generated name", () => {
     const result = insertColumnIntoTable({
@@ -125,6 +149,86 @@ describe("insertColumnIntoTable", () => {
       rows: [["x"]],
     });
     expect(result).toContain("Column 2");
+  });
+});
+
+describe("insertColumnIntoTableAt", () => {
+  it("adds a new column at the requested index", () => {
+    const result = insertColumnIntoTableAt({
+      from: 0,
+      to: 50,
+      header: ["A", "B"],
+      alignments: [null, "right"],
+      rows: [["a1", "b1"]],
+    }, 1);
+
+    expect(result.split("\n")).toEqual([
+      "| A | Column 3 | B |",
+      "| --- | --- | ---: |",
+      "| a1 |  | b1 |",
+    ]);
+  });
+});
+
+describe("moveTableRow", () => {
+  it("reorders body rows", () => {
+    const result = moveTableRow({
+      from: 0,
+      to: 50,
+      header: ["A", "B"],
+      alignments: [null, null],
+      rows: [
+        ["1", "2"],
+        ["3", "4"],
+      ],
+    }, 1, 0);
+
+    expect(result.split("\n")).toEqual([
+      "| A | B |",
+      "| --- | --- |",
+      "| 3 | 4 |",
+      "| 1 | 2 |",
+    ]);
+  });
+});
+
+describe("moveTableVisualRow", () => {
+  it("can move a body row into the header position", () => {
+    const result = moveTableVisualRow({
+      from: 0,
+      to: 50,
+      header: ["A", "B"],
+      alignments: [null, null],
+      rows: [
+        ["1", "2"],
+        ["3", "4"],
+      ],
+    }, 2, 0);
+
+    expect(result.split("\n")).toEqual([
+      "| 3 | 4 |",
+      "| --- | --- |",
+      "| A | B |",
+      "| 1 | 2 |",
+    ]);
+  });
+});
+
+describe("moveTableColumn", () => {
+  it("reorders headers, alignments, and body cells", () => {
+    const result = moveTableColumn({
+      from: 0,
+      to: 50,
+      header: ["A", "B", "C"],
+      alignments: [null, "center", "right"],
+      rows: [["1", "2", "3"]],
+    }, 2, 0);
+
+    expect(result.split("\n")).toEqual([
+      "| C | A | B |",
+      "| ---: | --- | :---: |",
+      "| 3 | 1 | 2 |",
+    ]);
   });
 });
 

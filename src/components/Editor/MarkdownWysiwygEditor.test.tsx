@@ -379,6 +379,89 @@ describe("MarkdownWysiwygEditor", () => {
     });
   });
 
+  it("adds rows and columns from rendered table margins", async () => {
+    const path = "/workspace/examples/markdown/table.md";
+    useEditorStore.getState().openTab(path, "table.md", "| A | B |\n| --- | --- |\n| 1 | 2 |\n");
+
+    const { container } = render(<MarkdownWysiwygEditor />);
+
+    let addRow: HTMLElement | null = null;
+    let addColumn: HTMLElement | null = null;
+    await waitFor(() => {
+      addRow = container.querySelector(".cm-md-table-add-row");
+      addColumn = container.querySelector(".cm-md-table-add-column");
+      expect(addRow).toBeInTheDocument();
+      expect(addColumn).toBeInTheDocument();
+    });
+
+    fireEvent.click(addRow!);
+
+    await waitFor(() => {
+      expect(useEditorStore.getState().activeTab()?.content).toBe("| A | B |\n| --- | --- |\n| 1 | 2 |\n|  |  |\n");
+    });
+
+    fireEvent.click(container.querySelector(".cm-md-table-add-column")!);
+
+    await waitFor(() => {
+      expect(useEditorStore.getState().activeTab()?.content).toBe("| A | B | Column 3 |\n| --- | --- | --- |\n| 1 | 2 |  |\n|  |  |  |\n");
+    });
+  });
+
+  it("reorders rows and columns from rendered table handles", async () => {
+    const path = "/workspace/examples/markdown/table.md";
+    useEditorStore.getState().openTab(
+      path,
+      "table.md",
+      "| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 |\n| 4 | 5 | 6 |\n",
+    );
+
+    const { container } = render(<MarkdownWysiwygEditor />);
+
+    let rowHandles: NodeListOf<HTMLElement>;
+    let columnHandles: NodeListOf<HTMLElement>;
+    await waitFor(() => {
+      rowHandles = container.querySelectorAll(".cm-md-table-row-handle");
+      columnHandles = container.querySelectorAll(".cm-md-table-column-handle");
+      expect(rowHandles.length).toBe(3);
+      expect(columnHandles.length).toBe(3);
+    });
+
+    const rowTransfer = {
+      data: "",
+      effectAllowed: "move",
+      setData(_type: string, value: string) {
+        this.data = value;
+      },
+      getData() {
+        return this.data;
+      },
+    };
+    fireEvent.dragStart(rowHandles![2], { dataTransfer: rowTransfer });
+    fireEvent.drop(rowHandles![0], { dataTransfer: rowTransfer });
+
+    await waitFor(() => {
+      expect(useEditorStore.getState().activeTab()?.content).toBe("| 4 | 5 | 6 |\n| --- | --- | --- |\n| A | B | C |\n| 1 | 2 | 3 |\n");
+    });
+
+    const colTransfer = {
+      data: "",
+      effectAllowed: "move",
+      setData(_type: string, value: string) {
+        this.data = value;
+      },
+      getData() {
+        return this.data;
+      },
+    };
+    const latestColumnHandles = container.querySelectorAll(".cm-md-table-column-handle") as NodeListOf<HTMLElement>;
+    fireEvent.dragStart(latestColumnHandles[2], { dataTransfer: colTransfer });
+    fireEvent.drop(latestColumnHandles[0], { dataTransfer: colTransfer });
+
+    await waitFor(() => {
+      expect(useEditorStore.getState().activeTab()?.content).toBe("| 6 | 4 | 5 |\n| --- | --- | --- |\n| C | A | B |\n| 3 | 1 | 2 |\n");
+    });
+  });
+
   it("deletes the whole table from the rendered table toolbar", async () => {
     const path = "/workspace/examples/markdown/table.md";
     useEditorStore.getState().openTab(path, "table.md", "| A | B |\n| --- | --- |\n| 1 | 2 |\n");

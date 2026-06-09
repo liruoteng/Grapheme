@@ -90,7 +90,7 @@ export function FloatingSidebar({ onOpenFolder }: FloatingSidebarProps) {
   const toggle = useCallback(() => setSidebarOpen(!sidebarOpen), [sidebarOpen, setSidebarOpen]);
 
   useEffect(() => {
-    const offset = sidebarOpen ? sidebarWidth + 32 : 52;
+    const offset = sidebarOpen ? sidebarWidth + 16 : 56;
     document.documentElement.style.setProperty("--fsb-content-offset", `${offset}px`);
     return () => {
       document.documentElement.style.removeProperty("--fsb-content-offset");

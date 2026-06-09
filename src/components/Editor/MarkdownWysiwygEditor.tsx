@@ -31,7 +31,11 @@ import { SlashMenu, type SlashCommand } from "./SlashMenu";
 import { codeBlockLanguages } from "./codeBlockLanguages";
 import {
   insertColumnIntoTable,
+  insertColumnIntoTableAt,
   insertRowIntoTable,
+  insertRowIntoTableAt,
+  moveTableColumn,
+  moveTableVisualRow,
   serializeTable,
   tableAt,
   tableSnippet,
@@ -951,6 +955,12 @@ function addLatexSyntaxTokenDecorations(
   }
 }
 
+let pendingTableControlRestore: {
+  tableFrom: number;
+  rowIndex: number | null;
+  colIndex: number | null;
+} | null = null;
+
 class MarkdownTableWidget extends WidgetType {
   private cleanup: (() => void) | null = null;
 
@@ -997,6 +1007,18 @@ class MarkdownTableWidget extends WidgetType {
     let lastClickedCell: { row: number; col: number } | null = null;
     let selectedRange: { startRow: number; endRow: number; startCol: number; endCol: number } | null = null;
     let draggingTableSelection = false;
+    let colElements: HTMLTableColElement[] = [];
+    let columnHandleElements: HTMLButtonElement[] = [];
+    let rowHandleElements: HTMLButtonElement[] = [];
+    let stopColumnResize: (() => void) | null = null;
+    let stopAxisDrag: ((event?: MouseEvent) => void) | null = null;
+    let activeAxisDropTarget: HTMLElement | null = null;
+    let syncRowHandles = () => {};
+    let activeRowIndex: number | null = null;
+    let activeColIndex: number | null = null;
+    let verticalResizeGuide: HTMLDivElement | null = null;
+    let horizontalResizeGuide: HTMLDivElement | null = null;
+    const colWidths = this.table.header.map(() => 100 / Math.max(1, this.table.header.length));
 
     const cellKey = (row: number, col: number) => `${row}:${col}`;
     const normalizeRange = (from: { row: number; col: number }, to: { row: number; col: number }) => ({
@@ -1105,6 +1127,248 @@ class MarkdownTableWidget extends WidgetType {
       serializeTable({ header, alignments, rows })
     );
 
+    const draftTable = (): MarkdownTable => ({
+      from: tableFrom,
+      to: tableTo,
+      header: draftHeader,
+      alignments: draftAlignments,
+      rows: draftRows,
+    });
+
+    const replaceWithTableSource = (nextSource: string) => {
+      commitTableEdit();
+      replaceTableSource(nextSource);
+    };
+
+    const clearAxisDropTarget = () => {
+      activeAxisDropTarget?.classList.remove("is-drop-target");
+      activeAxisDropTarget = null;
+    };
+
+    const clearHoveredAxisHandles = () => {
+      for (const handle of rowHandleElements) handle.classList.remove("is-hover-axis");
+      for (const handle of columnHandleElements) handle.classList.remove("is-hover-axis");
+    };
+
+    const clearActiveCellHandles = () => {
+      wrap.classList.remove("is-controls-active");
+      activeRowIndex = null;
+      activeColIndex = null;
+      clearHoveredAxisHandles();
+      for (const handle of rowHandleElements) handle.classList.remove("is-active-axis");
+      for (const handle of columnHandleElements) handle.classList.remove("is-active-axis");
+    };
+
+    const setActiveHandles = (rowIndex: number | null, colIndex: number | null) => {
+      wrap.classList.add("is-controls-active");
+      activeRowIndex = rowIndex;
+      activeColIndex = colIndex;
+      for (const [index, handle] of rowHandleElements.entries()) {
+        handle.classList.toggle("is-active-axis", index === rowIndex);
+      }
+      for (const [index, handle] of columnHandleElements.entries()) {
+        handle.classList.toggle("is-active-axis", index === colIndex);
+      }
+    };
+
+    const setActiveCellHandles = (rowIndex: number, colIndex: number) => {
+      setActiveHandles(rowIndex, colIndex);
+    };
+
+    const setActiveRowHandle = (rowIndex: number) => {
+      setActiveHandles(rowIndex, activeColIndex);
+    };
+
+    const setActiveColumnHandle = (colIndex: number) => {
+      setActiveHandles(activeRowIndex, colIndex);
+    };
+
+    const handleAtPoint = <T extends HTMLElement>(handles: T[], clientX: number, clientY: number) => {
+      return handles.find((handle) => {
+        const rect = handle.getBoundingClientRect();
+        return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
+      }) ?? null;
+    };
+
+    const trackAxisHover = (event: MouseEvent) => {
+      if (!wrap.classList.contains("is-controls-active")) return;
+      const rowHandle = handleAtPoint(rowHandleElements, event.clientX, event.clientY);
+      const columnHandle = handleAtPoint(columnHandleElements, event.clientX, event.clientY);
+      clearHoveredAxisHandles();
+      if (rowHandle) {
+        rowHandle.classList.add("is-hover-axis");
+        setActiveRowHandle(Number(rowHandle.dataset.index));
+      }
+      if (columnHandle) {
+        columnHandle.classList.add("is-hover-axis");
+        setActiveColumnHandle(Number(columnHandle.dataset.index));
+      }
+    };
+
+    const startAxisDrag = (event: MouseEvent, kind: "row" | "column", fromIndex: number) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      clearBrowserSelection();
+      wrap.classList.add("is-dragging-axis");
+
+      const selector = kind === "row" ? ".cm-md-table-row-handle" : ".cm-md-table-column-handle";
+      const onMouseMove = (moveEvent: MouseEvent) => {
+        const target = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY) as HTMLElement | null;
+        const handle = target?.closest<HTMLElement>(selector);
+        const validTarget = handle && wrap.contains(handle) ? handle : null;
+        if (activeAxisDropTarget === validTarget) return;
+        clearAxisDropTarget();
+        activeAxisDropTarget = validTarget;
+        activeAxisDropTarget?.classList.add("is-drop-target");
+      };
+      const onMouseUp = (upEvent?: MouseEvent) => {
+        const target = upEvent ? document.elementFromPoint(upEvent.clientX, upEvent.clientY) as HTMLElement | null : null;
+        const handle = target?.closest<HTMLElement>(selector);
+        const toIndex = Number(handle?.dataset.index);
+        clearAxisDropTarget();
+        wrap.classList.remove("is-dragging-axis");
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+        stopAxisDrag = null;
+        if (!handle || !wrap.contains(handle) || !Number.isFinite(toIndex) || toIndex === fromIndex) return;
+        replaceWithTableSource(kind === "row"
+          ? moveTableVisualRow(draftTable(), fromIndex, toIndex)
+          : moveTableColumn(draftTable(), fromIndex, toIndex));
+      };
+
+      stopAxisDrag = onMouseUp;
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
+    };
+
+    const applyColumnWidths = () => {
+      for (const [index, col] of colElements.entries()) {
+        col.style.width = `${colWidths[index]}%`;
+      }
+    };
+
+    const startColumnResize = (event: MouseEvent, colIndex: number) => {
+      if (colIndex >= colWidths.length - 1) return;
+      event.preventDefault();
+      event.stopPropagation();
+
+      const tableElement = colElements[colIndex]?.closest("table");
+      const tableWidth = tableElement?.getBoundingClientRect().width ?? 0;
+      if (tableWidth <= 0) return;
+
+      wrap.classList.add("is-resizing-column");
+      clearBrowserSelection();
+      const startX = event.clientX;
+      const startCurrent = colWidths[colIndex];
+      const startNext = colWidths[colIndex + 1];
+      const total = startCurrent + startNext;
+      const minWidth = 8;
+
+      const onMouseMove = (moveEvent: MouseEvent) => {
+        const delta = ((moveEvent.clientX - startX) / tableWidth) * 100;
+        const nextCurrent = Math.max(minWidth, Math.min(total - minWidth, startCurrent + delta));
+        colWidths[colIndex] = nextCurrent;
+        colWidths[colIndex + 1] = total - nextCurrent;
+        applyColumnWidths();
+        syncRowHandles();
+        showVerticalResizeGuide(colElements[colIndex].getBoundingClientRect().right);
+      };
+      const onMouseUp = () => {
+        wrap.classList.remove("is-resizing-column");
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+        stopColumnResize = null;
+        syncRowHandles();
+        verticalResizeGuide?.classList.remove("is-visible");
+      };
+
+      stopColumnResize = onMouseUp;
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
+    };
+
+    const visualRowElements = () => [headRow, ...tbody.rows];
+
+    const showVerticalResizeGuide = (clientX: number) => {
+      if (!verticalResizeGuide) return;
+      const tableRect = table.getBoundingClientRect();
+      const frameRect = frame.getBoundingClientRect();
+      verticalResizeGuide.style.left = `${clientX - frameRect.left}px`;
+      verticalResizeGuide.style.top = `${tableRect.top - frameRect.top}px`;
+      verticalResizeGuide.style.height = `${tableRect.height}px`;
+      verticalResizeGuide.classList.add("is-visible");
+    };
+
+    const showHorizontalResizeGuide = (clientY: number) => {
+      if (!horizontalResizeGuide) return;
+      const tableRect = table.getBoundingClientRect();
+      const frameRect = frame.getBoundingClientRect();
+      horizontalResizeGuide.style.left = `${tableRect.left - frameRect.left}px`;
+      horizontalResizeGuide.style.top = `${clientY - frameRect.top}px`;
+      horizontalResizeGuide.style.width = `${tableRect.width}px`;
+      horizontalResizeGuide.classList.add("is-visible");
+    };
+
+    const hideResizeGuides = () => {
+      verticalResizeGuide?.classList.remove("is-visible");
+      horizontalResizeGuide?.classList.remove("is-visible");
+    };
+
+    const columnBoundaryAt = (event: MouseEvent, cell: HTMLTableCellElement) => {
+      const col = Number(cell.dataset.col);
+      if (!Number.isFinite(col) || col >= draftHeader.length - 1) return null;
+
+      const rect = cell.getBoundingClientRect();
+      if (rect.width <= 0 || Math.abs(rect.right - event.clientX) > 6) return null;
+      return { colIndex: col, x: rect.right };
+    };
+
+    const rowBoundaryAt = (event: MouseEvent, cell: HTMLTableCellElement) => {
+      const row = Number(cell.dataset.row);
+      if (!Number.isFinite(row)) return null;
+
+      const rect = cell.getBoundingClientRect();
+      if (rect.height <= 0 || Math.abs(rect.bottom - event.clientY) > 6) return null;
+      return { rowIndex: row, y: rect.bottom };
+    };
+
+    const startRowResize = (event: MouseEvent, rowIndex: number) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const row = visualRowElements()[rowIndex];
+      const tableRect = table.getBoundingClientRect();
+      const frameRect = frame.getBoundingClientRect();
+      if (!row || tableRect.width <= 0) return;
+
+      wrap.classList.add("is-resizing-row");
+      clearBrowserSelection();
+      const startY = event.clientY;
+      const startHeight = row.getBoundingClientRect().height;
+      const minHeight = 28;
+
+      const onMouseMove = (moveEvent: MouseEvent) => {
+        const nextHeight = Math.max(minHeight, startHeight + moveEvent.clientY - startY);
+        row.style.height = `${nextHeight}px`;
+        syncRowHandles();
+        showHorizontalResizeGuide(row.getBoundingClientRect().bottom);
+      };
+      const onMouseUp = () => {
+        wrap.classList.remove("is-resizing-row");
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+        syncRowHandles();
+        horizontalResizeGuide?.classList.remove("is-visible");
+      };
+
+      horizontalResizeGuide?.classList.add("is-visible");
+      horizontalResizeGuide!.style.left = `${tableRect.left - frameRect.left}px`;
+      horizontalResizeGuide!.style.width = `${tableRect.width}px`;
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
+    };
+
     const makeEditableCell = (
       cell: HTMLTableCellElement,
       value: string,
@@ -1127,6 +1391,16 @@ class MarkdownTableWidget extends WidgetType {
       cell.addEventListener("mousedown", (event) => {
         event.stopPropagation();
         if (event.button !== 0) return;
+        const columnBoundary = columnBoundaryAt(event, cell);
+        if (columnBoundary) {
+          startColumnResize(event, columnBoundary.colIndex);
+          return;
+        }
+        const rowBoundary = rowBoundaryAt(event, cell);
+        if (rowBoundary) {
+          startRowResize(event, rowBoundary.rowIndex);
+          return;
+        }
         if (event.shiftKey && lastClickedCell) {
           event.preventDefault();
           draggingTableSelection = false;
@@ -1134,6 +1408,7 @@ class MarkdownTableWidget extends WidgetType {
           applyTableSelection(lastClickedCell, { row: rowIndex, col: colIndex });
           return;
         }
+        setActiveCellHandles(rowIndex, colIndex);
         clearTableSelection();
         selectionAnchor = { row: rowIndex, col: colIndex };
         draggingTableSelection = false;
@@ -1161,6 +1436,26 @@ class MarkdownTableWidget extends WidgetType {
         draggingTableSelection = false;
       });
       cell.addEventListener("input", updateValue);
+      cell.addEventListener("mousemove", (event) => {
+        setActiveCellHandles(rowIndex, colIndex);
+        const columnBoundary = columnBoundaryAt(event, cell);
+        const rowBoundary = rowBoundaryAt(event, cell);
+        cell.classList.toggle("is-column-boundary-hover", !!columnBoundary);
+        cell.classList.toggle("is-row-boundary-hover", !!rowBoundary && !columnBoundary);
+        if (columnBoundary) showVerticalResizeGuide(columnBoundary.x);
+        else verticalResizeGuide?.classList.remove("is-visible");
+        if (rowBoundary) showHorizontalResizeGuide(rowBoundary.y);
+        else horizontalResizeGuide?.classList.remove("is-visible");
+      });
+      cell.addEventListener("mouseleave", () => {
+        cell.classList.remove("is-column-boundary-hover", "is-row-boundary-hover");
+        if (!wrap.classList.contains("is-resizing-column") && !wrap.classList.contains("is-resizing-row")) {
+          hideResizeGuides();
+        }
+      });
+      cell.addEventListener("focus", () => {
+        setActiveCellHandles(rowIndex, colIndex);
+      });
       cell.addEventListener("blur", () => {
         updateValue();
         commitTableEdit();
@@ -1216,9 +1511,14 @@ class MarkdownTableWidget extends WidgetType {
       applyTableSelection(selectionAnchor, { row, col });
     };
     document.addEventListener("mousemove", trackTableSelection);
+    document.addEventListener("mousemove", trackAxisHover);
     document.addEventListener("mouseup", finishTableSelection);
     this.cleanup = () => {
+      stopColumnResize?.();
+      stopAxisDrag?.();
+      window.removeEventListener("resize", syncRowHandles);
       document.removeEventListener("mousemove", trackTableSelection);
+      document.removeEventListener("mousemove", trackAxisHover);
       document.removeEventListener("mouseup", finishTableSelection);
     };
 
@@ -1235,6 +1535,16 @@ class MarkdownTableWidget extends WidgetType {
     wrap.addEventListener("keydown", (event) => {
       if (event.key !== "Escape" || !selectedRange) return;
       clearTableSelection();
+    });
+    wrap.addEventListener("mouseleave", () => {
+      if (wrap.contains(document.activeElement)) return;
+      clearActiveCellHandles();
+    });
+    wrap.addEventListener("focusout", () => {
+      requestAnimationFrame(() => {
+        if (wrap.contains(document.activeElement)) return;
+        clearActiveCellHandles();
+      });
     });
 
     const actions = document.createElement("div");
@@ -1292,7 +1602,7 @@ class MarkdownTableWidget extends WidgetType {
       event.preventDefault();
       const rowsToDelete = new Set(selectedDataRowIndexes());
       if (rowsToDelete.size === 0) return;
-      replaceTableSource(nextTableSource(
+      replaceWithTableSource(nextTableSource(
         draftHeader,
         draftAlignments,
         draftRows.filter((_, index) => !rowsToDelete.has(index)),
@@ -1309,10 +1619,10 @@ class MarkdownTableWidget extends WidgetType {
       const columnsToDelete = new Set(selectedColumnIndexes());
       if (columnsToDelete.size === 0) return;
       if (columnsToDelete.size >= draftHeader.length) {
-        replaceTableSource("");
+        replaceWithTableSource("");
         return;
       }
-      replaceTableSource(nextTableSource(
+      replaceWithTableSource(nextTableSource(
         draftHeader.filter((_, index) => !columnsToDelete.has(index)),
         draftAlignments.filter((_, index) => !columnsToDelete.has(index)),
         draftRows.map((row) => row.filter((_, index) => !columnsToDelete.has(index))),
@@ -1326,7 +1636,7 @@ class MarkdownTableWidget extends WidgetType {
     deleteTableBtn.addEventListener("mousedown", (event) => event.preventDefault());
     deleteTableBtn.addEventListener("click", (event) => {
       event.preventDefault();
-      replaceTableSource("");
+      replaceWithTableSource("");
     });
     actions.appendChild(deleteTableBtn);
 
@@ -1338,7 +1648,136 @@ class MarkdownTableWidget extends WidgetType {
       view.focus();
     });
 
+    const frame = document.createElement("div");
+    frame.className = "cm-md-table-frame";
+
+    verticalResizeGuide = document.createElement("div");
+    verticalResizeGuide.className = "cm-md-table-resize-guide cm-md-table-resize-guide--vertical";
+    frame.appendChild(verticalResizeGuide);
+
+    horizontalResizeGuide = document.createElement("div");
+    horizontalResizeGuide.className = "cm-md-table-resize-guide cm-md-table-resize-guide--horizontal";
+    frame.appendChild(horizontalResizeGuide);
+
+    const columnControls = document.createElement("div");
+    columnControls.className = "cm-md-table-column-controls";
+    columnControls.style.gridTemplateColumns = `repeat(${Math.max(1, draftHeader.length)}, minmax(0, 1fr))`;
+    columnHandleElements = [];
+    for (let index = 0; index < draftHeader.length; index += 1) {
+      const handle = document.createElement("button");
+      handle.type = "button";
+      handle.className = "cm-md-table-axis-handle cm-md-table-column-handle";
+      handle.draggable = true;
+      handle.dataset.index = `${index}`;
+      handle.textContent = "...";
+      handle.title = "Drag to move column";
+      handle.addEventListener("mouseenter", () => setActiveColumnHandle(index));
+      handle.addEventListener("focus", () => setActiveColumnHandle(index));
+      handle.addEventListener("mousedown", (event) => startAxisDrag(event, "column", index));
+      handle.addEventListener("dragstart", (event) => {
+        if (!event.dataTransfer) return;
+        event.dataTransfer.setData("text/plain", `column:${index}`);
+        event.dataTransfer.effectAllowed = "move";
+      });
+      handle.addEventListener("dragover", (event) => {
+        event.preventDefault();
+        handle.classList.add("is-drop-target");
+      });
+      handle.addEventListener("dragleave", () => handle.classList.remove("is-drop-target"));
+      handle.addEventListener("drop", (event) => {
+        event.preventDefault();
+        handle.classList.remove("is-drop-target");
+        const [kind, value] = (event.dataTransfer?.getData("text/plain") ?? "").split(":");
+        const fromIndex = Number(value);
+        if (kind !== "column" || !Number.isFinite(fromIndex) || fromIndex === index) return;
+        replaceWithTableSource(moveTableColumn(draftTable(), fromIndex, index));
+      });
+      columnHandleElements.push(handle);
+      columnControls.appendChild(handle);
+    }
+    frame.appendChild(columnControls);
+
+    const rowControls = document.createElement("div");
+    rowControls.className = "cm-md-table-row-controls";
+    rowHandleElements = [];
+    for (let index = 0; index < draftRows.length + 1; index += 1) {
+      const handle = document.createElement("button");
+      handle.type = "button";
+      handle.className = "cm-md-table-axis-handle cm-md-table-row-handle";
+      handle.draggable = true;
+      handle.dataset.index = `${index}`;
+      handle.textContent = "...";
+      handle.title = "Drag to move row";
+      handle.addEventListener("mouseenter", () => setActiveRowHandle(index));
+      handle.addEventListener("focus", () => setActiveRowHandle(index));
+      handle.addEventListener("mousedown", (event) => startAxisDrag(event, "row", index));
+      handle.addEventListener("dragstart", (event) => {
+        if (!event.dataTransfer) return;
+        event.dataTransfer.setData("text/plain", `row:${index}`);
+        event.dataTransfer.effectAllowed = "move";
+      });
+      handle.addEventListener("dragover", (event) => {
+        event.preventDefault();
+        handle.classList.add("is-drop-target");
+      });
+      handle.addEventListener("dragleave", () => handle.classList.remove("is-drop-target"));
+      handle.addEventListener("drop", (event) => {
+        event.preventDefault();
+        handle.classList.remove("is-drop-target");
+        const [kind, value] = (event.dataTransfer?.getData("text/plain") ?? "").split(":");
+        const fromIndex = Number(value);
+        if (kind !== "row" || !Number.isFinite(fromIndex) || fromIndex === index) return;
+        replaceWithTableSource(moveTableVisualRow(draftTable(), fromIndex, index));
+      });
+      rowHandleElements.push(handle);
+      rowControls.appendChild(handle);
+    }
+    frame.appendChild(rowControls);
+
+    const addColumnControl = document.createElement("button");
+    addColumnControl.type = "button";
+    addColumnControl.className = "cm-md-table-margin-add cm-md-table-add-column";
+    addColumnControl.textContent = "+";
+    addColumnControl.title = "Add column";
+    addColumnControl.addEventListener("mousedown", (event) => event.preventDefault());
+    addColumnControl.addEventListener("click", (event) => {
+      event.preventDefault();
+      pendingTableControlRestore = {
+        tableFrom,
+        rowIndex: activeRowIndex ?? 0,
+        colIndex: draftHeader.length,
+      };
+      replaceWithTableSource(insertColumnIntoTableAt(draftTable(), draftHeader.length));
+    });
+    frame.appendChild(addColumnControl);
+
+    const addRowControl = document.createElement("button");
+    addRowControl.type = "button";
+    addRowControl.className = "cm-md-table-margin-add cm-md-table-add-row";
+    addRowControl.textContent = "+";
+    addRowControl.title = "Add row";
+    addRowControl.addEventListener("mousedown", (event) => event.preventDefault());
+    addRowControl.addEventListener("click", (event) => {
+      event.preventDefault();
+      pendingTableControlRestore = {
+        tableFrom,
+        rowIndex: draftRows.length + 1,
+        colIndex: activeColIndex ?? 0,
+      };
+      replaceWithTableSource(insertRowIntoTableAt(draftTable(), draftRows.length));
+    });
+    frame.appendChild(addRowControl);
+
     const table = document.createElement("table");
+    const colgroup = document.createElement("colgroup");
+    colElements = draftHeader.map(() => {
+      const col = document.createElement("col");
+      colgroup.appendChild(col);
+      return col;
+    });
+    table.appendChild(colgroup);
+    applyColumnWidths();
+
     const thead = document.createElement("thead");
     const headRow = document.createElement("tr");
     for (const [index, cell] of this.table.header.entries()) {
@@ -1366,7 +1805,38 @@ class MarkdownTableWidget extends WidgetType {
       tbody.appendChild(tr);
     }
     table.appendChild(tbody);
-    wrap.appendChild(table);
+    frame.appendChild(table);
+    wrap.appendChild(frame);
+
+    syncRowHandles = () => {
+      const frameRect = frame.getBoundingClientRect();
+      const rows = [headRow, ...tbody.rows];
+      for (const [index, handle] of rowHandleElements.entries()) {
+        const row = rows[index];
+        if (!row) {
+          handle.style.display = "none";
+          continue;
+        }
+        const rowRect = row.getBoundingClientRect();
+        handle.style.display = "";
+        handle.style.top = `${rowRect.top - frameRect.top}px`;
+        handle.style.height = `${rowRect.height}px`;
+      }
+    };
+    requestAnimationFrame(() => {
+      syncRowHandles();
+      if (pendingTableControlRestore?.tableFrom !== tableFrom) return;
+
+      const nextRowIndex = pendingTableControlRestore.rowIndex == null
+        ? null
+        : Math.max(0, Math.min(pendingTableControlRestore.rowIndex, draftRows.length));
+      const nextColIndex = pendingTableControlRestore.colIndex == null
+        ? null
+        : Math.max(0, Math.min(pendingTableControlRestore.colIndex, draftHeader.length - 1));
+      setActiveHandles(nextRowIndex, nextColIndex);
+      pendingTableControlRestore = null;
+    });
+    window.addEventListener("resize", syncRowHandles);
 
     return wrap;
   }
