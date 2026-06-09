@@ -13,6 +13,22 @@
     overflow-y: auto;
     padding: 56px 0 var(--space-9);
     position: relative;
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+}
+.wme-scroll:hover {
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+.wme-scroll::-webkit-scrollbar {
+    width: 6px;
+}
+.wme-scroll::-webkit-scrollbar-track,
+.wme-scroll::-webkit-scrollbar-thumb {
+    background: transparent;
+}
+.wme-scroll:hover::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 999px;
 }
 
 .wme-page {
@@ -1088,6 +1104,22 @@
     overflow-y: auto;
     padding: 24px 0;
     height: 100%;
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+}
+.wme-source-scroll:hover {
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+.wme-source-scroll::-webkit-scrollbar {
+    width: 6px;
+}
+.wme-source-scroll::-webkit-scrollbar-track,
+.wme-source-scroll::-webkit-scrollbar-thumb {
+    background: transparent;
+}
+.wme-source-scroll:hover::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 999px;
 }
 
 .wme-source-textarea {

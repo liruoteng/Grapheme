@@ -205,6 +205,22 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.references-list:hover {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+.references-list::-webkit-scrollbar {
+  width: 6px;
+}
+.references-list::-webkit-scrollbar-track,
+.references-list::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+.references-list:hover::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
 }
 
 .references-empty {

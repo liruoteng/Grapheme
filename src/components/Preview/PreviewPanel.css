@@ -23,9 +23,12 @@
 .preview-pages-scroll {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   position: relative;
-  overflow-y: scroll;
+  overflow-y: auto;
   overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
   background-image:
     radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.018) 0%, rgba(0, 0, 0, 0) 60%),
     repeating-linear-gradient(
@@ -35,6 +38,29 @@
       transparent 1px,
       transparent 6px
     );
+}
+
+.preview-pages-scroll:hover {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+.preview-pages-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.preview-pages-scroll::-webkit-scrollbar-track,
+.preview-pages-scroll::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+
+.preview-pages-scroll:hover::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
+}
+
+.preview-pages-scroll::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 [data-theme="claude"] .preview-pages-scroll {
@@ -80,6 +106,22 @@
   justify-content: flex-start;
   padding: var(--space-5);
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.preview-error:hover {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+.preview-error::-webkit-scrollbar {
+  width: 6px;
+}
+.preview-error::-webkit-scrollbar-track,
+.preview-error::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+.preview-error:hover::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
 }
 .preview-error-icon {
   align-self: center;
@@ -97,6 +139,22 @@
   margin-top: var(--space-2);
   overflow-y: auto;
   max-height: 100%;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.preview-error-text:hover {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+.preview-error-text::-webkit-scrollbar {
+  width: 6px;
+}
+.preview-error-text::-webkit-scrollbar-track,
+.preview-error-text::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+.preview-error-text:hover::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
 }
 
 /* ── Loading spinner ─────────────────────────────────────────────────────── */
@@ -231,6 +289,26 @@
   gap: 10px;
   background: rgba(0, 0, 0, 0.18);
   border-right: 1px solid var(--border);
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.preview-thumbs:hover {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+.preview-thumbs::-webkit-scrollbar {
+  width: 6px;
+}
+
+.preview-thumbs::-webkit-scrollbar-track,
+.preview-thumbs::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+
+.preview-thumbs:hover::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
 }
 
 [data-theme="claude"] .preview-thumbs {

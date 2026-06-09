@@ -256,6 +256,22 @@
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  scrollbar-color: transparent transparent;
+  scrollbar-width: thin;
+}
+.fsb-explorer-body:hover {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+.fsb-explorer-body::-webkit-scrollbar {
+  width: 6px;
+}
+.fsb-explorer-body::-webkit-scrollbar-track,
+.fsb-explorer-body::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+.fsb-explorer-body:hover::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
 }
 
 /* ── Bottom bar: profile + theme ─────────────────────────────────────────── */
@@ -417,6 +433,22 @@
   flex: 1;
   overflow-y: auto;
   min-height: 0;
+  scrollbar-color: transparent transparent;
+  scrollbar-width: thin;
+}
+.fsb-search-results:hover {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+.fsb-search-results::-webkit-scrollbar {
+  width: 6px;
+}
+.fsb-search-results::-webkit-scrollbar-track,
+.fsb-search-results::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+.fsb-search-results:hover::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
 }
 
 .fsb-search-file-group {

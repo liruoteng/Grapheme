@@ -74,6 +74,22 @@
   overflow-y: auto;
   padding: 6px;
   border-right: 1px solid var(--border-dim);
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.history-panel-list:hover {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+.history-panel-list::-webkit-scrollbar {
+  width: 6px;
+}
+.history-panel-list::-webkit-scrollbar-track,
+.history-panel-list::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+.history-panel-list:hover::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
 }
 
 /* ── Preview pane ────────────────────────────────────────────────────────── */
@@ -103,6 +119,22 @@
   flex: 1;
   overflow-y: auto;
   padding: 16px 20px;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.history-preview-body:hover {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+.history-preview-body::-webkit-scrollbar {
+  width: 6px;
+}
+.history-preview-body::-webkit-scrollbar-track,
+.history-preview-body::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+.history-preview-body:hover::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
 }
 
 .history-preview-text {
@@ -306,6 +338,22 @@
   line-height: 1.65;
   flex: 1;
   padding: 6px 0;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.history-diff:hover {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+.history-diff::-webkit-scrollbar {
+  width: 6px;
+}
+.history-diff::-webkit-scrollbar-track,
+.history-diff::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+.history-diff:hover::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
 }
 
 .diff-line {

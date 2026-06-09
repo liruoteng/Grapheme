@@ -524,6 +524,22 @@
   border-radius: 6px;
   background: var(--bg-elevated);
   box-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.cm-md-citation-menu:hover {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+.cm-md-citation-menu::-webkit-scrollbar {
+  width: 6px;
+}
+.cm-md-citation-menu::-webkit-scrollbar-track,
+.cm-md-citation-menu::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+.cm-md-citation-menu:hover::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
 }
 
 .cm-md-citation-menu-item {
@@ -792,7 +808,6 @@
 }
 
 .markdown-wysiwyg .cm-md-code-language-menu {
-  position: absolute;
   top: 28px;
   right: 28px;
   z-index: 3;
@@ -805,6 +820,22 @@
   border-radius: 6px;
   background: var(--bg-elevated);
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.26);
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.markdown-wysiwyg .cm-md-code-language-menu:hover {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+.markdown-wysiwyg .cm-md-code-language-menu::-webkit-scrollbar {
+  width: 6px;
+}
+.markdown-wysiwyg .cm-md-code-language-menu::-webkit-scrollbar-track,
+.markdown-wysiwyg .cm-md-code-language-menu::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+.markdown-wysiwyg .cm-md-code-language-menu:hover::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
 }
 
 .markdown-wysiwyg .cm-md-code-language-search {
@@ -1025,8 +1056,15 @@
   font-size: 0.86em;
   line-height: 1;
   opacity: 0;
-  pointer-events: none;
   transition: opacity 0.12s ease, color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+
+.markdown-wysiwyg .cm-md-table-axis-handle {
+  pointer-events: auto;
+}
+
+.markdown-wysiwyg .cm-md-table-margin-add {
+  pointer-events: none;
 }
 
 .markdown-wysiwyg .cm-md-table-render.is-controls-active .cm-md-table-axis-handle.is-active-axis,

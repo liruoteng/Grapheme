@@ -1231,9 +1231,9 @@ class MarkdownTableWidget extends WidgetType {
     };
 
     const trackAxisHover = (event: MouseEvent) => {
-      if (!wrap.classList.contains("is-controls-active")) return;
       const rowHandle = handleAtPoint(rowHandleElements, event.clientX, event.clientY);
       const columnHandle = handleAtPoint(columnHandleElements, event.clientX, event.clientY);
+      if (!wrap.classList.contains("is-controls-active") && !rowHandle && !columnHandle) return;
       clearHoveredAxisHandles();
       if (rowHandle) {
         rowHandle.classList.add("is-hover-axis");

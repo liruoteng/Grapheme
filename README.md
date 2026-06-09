@@ -1,8 +1,23 @@
 # Grapheme
 
-A desktop AI-powered writing app for [Typst](https://typst.app) and Markdown.
+A desktop AI-powered writing app for [Typst](https://typst.app) and Markdown. (Fun fact: "grapheme" originally meant "the smallest unit of language" - we're literally giving your words a fresh start!)
 
-Built with [Tauri v2](https://v2.tauri.app), React 19, and Rust. Features a Monaco editor with Typst language support, a WYSIWYG Markdown editor (Milkdown), live PDF preview via tinymist, LSP integration, version snapshots, AI chat (Claude CLI / Ollama), LaTeX import, and a fully customizable panel layout.
+
+
+
+## Highlight Feature Introduction
+
+### AI-assisted writing and research flow
+Use the built-in AI chat panel to plan and structure your paper, generate research outlines, and get real-time assistance with writing and editing. Supports Claude CLI and Ollama.
+
+### Content focusing
+Focus on writing content in Markdown. The template and Typst rendering automatically handle all formatting decisions, so you don't need to worry about layout or presentation.
+
+### Bibliography management
+Manage your paper's references easily with built-in support for PDFs, `.bib` entries, and citation keys. The references panel keeps everything organized and ready for citation.
+
+### Figure Maker
+Create and edit graphs, diagrams, and other visual elements directly in the app for research papers, engineering documentation, and more. Draw flowcharts, diagrams, and other figures with ease.
 
 ## Features
 

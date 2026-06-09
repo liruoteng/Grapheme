@@ -120,7 +120,21 @@
   flex-direction: column;
   gap: 0;
   scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.ai-sessions-list:hover {
   scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+.ai-sessions-list::-webkit-scrollbar {
+  width: 6px;
+}
+.ai-sessions-list::-webkit-scrollbar-track,
+.ai-sessions-list::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+.ai-sessions-list:hover::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
 }
 
 .ai-sessions-empty {
@@ -284,7 +298,21 @@
   flex-direction: column;
   gap: var(--space-3);
   scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.ai-chat-messages:hover {
   scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+.ai-chat-messages::-webkit-scrollbar {
+  width: 6px;
+}
+.ai-chat-messages::-webkit-scrollbar-track,
+.ai-chat-messages::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+.ai-chat-messages:hover::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
 }
 
 .ai-chat-empty {
@@ -722,6 +750,22 @@
   border-radius: var(--radius-panel);
   box-shadow: var(--shadow-menu);
   z-index: 20;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.ai-slash-menu:hover {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+.ai-slash-menu::-webkit-scrollbar {
+  width: 6px;
+}
+.ai-slash-menu::-webkit-scrollbar-track,
+.ai-slash-menu::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+.ai-slash-menu:hover::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
 }
 
 .ai-slash-menu-item {
