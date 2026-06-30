@@ -937,8 +937,9 @@ fn is_typst_math_identifier(word: &str) -> bool {
             | "kappa"
             | "lambda"
             | "mu"
-            | "nu"
+            |         "nu"
             | "xi"
+            | "omicron"
             | "pi"
             | "rho"
             | "sigma"
@@ -1374,6 +1375,11 @@ const LATEX_MATH_COMMANDS: &[LatexMathCommand] = &[
     LatexMathCommand {
         latex: "\\xi",
         typst: "xi",
+        standalone: true,
+    },
+    LatexMathCommand {
+        latex: "\\omicron",
+        typst: "omicron",
         standalone: true,
     },
     LatexMathCommand {
