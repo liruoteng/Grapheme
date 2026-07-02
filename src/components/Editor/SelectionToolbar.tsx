@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { editorViewCtx } from "@milkdown/core";
+import type { Ctx } from "@milkdown/ctx";
 import type { Node as ProseNode } from "@milkdown/prose/model";
 import { setBlockType, toggleMark } from "@milkdown/prose/commands";
 import { TextSelection } from "@milkdown/prose/state";
@@ -7,7 +8,7 @@ import { wrapInList } from "@milkdown/prose/schema-list";
 import "./SelectionToolbar.css";
 
 interface SelToolbarProps {
-  getEditor: () => { action: (fn: (ctx: unknown) => void) => void } | null;
+  getEditor: () => { action: (fn: (ctx: Ctx) => void) => void } | null;
 }
 
 interface FormatAction {
@@ -100,8 +101,7 @@ export function SelectionToolbar({ getEditor }: SelToolbarProps) {
     const editor = getEditor();
     if (!editor) return;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    editor.action((ctx: any) => {
+    editor.action((ctx: Ctx) => {
       const view = ctx.get(editorViewCtx);
       const { state, dispatch } = view;
       const { to, empty } = state.selection;

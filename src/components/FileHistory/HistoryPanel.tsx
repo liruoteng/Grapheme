@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { X } from "lucide-react";
 import * as Diff from "diff";
+import { logger } from "../../lib/logger";
 import "./HistoryPanel.css";
 
 const CURRENT_PATH = "__current__";
@@ -90,7 +91,7 @@ export function HistoryPanel({ filePath, currentContent, onRestore, onClose }: H
   useEffect(() => {
     invoke<SnapshotEntry[]>("list_snapshots", { path: filePath })
       .then(setSnapshots)
-      .catch(console.error)
+      .catch((e) => logger.error("list_snapshots failed", e))
       .finally(() => setLoading(false));
   }, [filePath]);
 
@@ -115,7 +116,7 @@ export function HistoryPanel({ filePath, currentContent, onRestore, onClose }: H
       const content = await resolveContent(entry.path);
       setPreviewContent(content);
     } catch (e) {
-      console.error("preview load error", e);
+      logger.error("preview load error", e);
     } finally {
       setPreviewLoading(false);
     }
@@ -157,7 +158,7 @@ export function HistoryPanel({ filePath, currentContent, onRestore, onClose }: H
         labelB: labelFor(selected[1], snapshots),
       });
     } catch (e) {
-      console.error("diff error", e);
+      logger.error("diff error", e);
     } finally {
       setDiffLoading(false);
     }

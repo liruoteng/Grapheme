@@ -1,5 +1,7 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
 import type { LLMProvider, LLMStreamEvent, Message, Tools, JsonSchema } from "./types";
+import { DEFAULT_OLLAMA_URL } from "../constants";
+import { logger } from "../logger";
 
 export type AiProvider = "claude-cli" | "ollama";
 
@@ -96,7 +98,7 @@ class ToolCallParser {
         const parsed: RawToolCall = JSON.parse(jsonStr);
         events.push({ type: "tool_call", toolCall: parsed });
       } catch {
-        console.warn("Failed to parse tool call JSON:", jsonStr);
+        logger.warn("Failed to parse tool call JSON:", jsonStr);
       }
     }
   }
@@ -191,7 +193,7 @@ export class GraphemeLLMProvider implements LLMProvider {
     return this.streamWithParser(async (onChunk) => {
       await invoke("stream_ai_chat_with_tools", {
         messages: mapMessages(messages),
-        ollamaUrl: this.config.ollamaUrl ?? "http://localhost:11434",
+        ollamaUrl: this.config.ollamaUrl ?? DEFAULT_OLLAMA_URL,
         ollamaModel: this.config.ollamaModel ?? "llama3",
         system: systemPrompt,
         tools: convertTools(tools),

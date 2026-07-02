@@ -1,6 +1,6 @@
-import { useState, useRef, useCallback, memo, useEffect } from "react";
+import { useState, useRef, useCallback, memo, useEffect, lazy, Suspense } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { logger } from "./lib/logger";
 import {
   Check,
   LayoutGrid,
@@ -24,14 +24,19 @@ import { SidecarPreviewPanel } from "./components/Preview/SidecarPreviewPanel";
 import { TableOfContents } from "./components/Preview/TableOfContents";
 import { HistoryPanel } from "./components/FileHistory/HistoryPanel";
 import { SettingsDialog } from "./components/Settings/SettingsDialog";
-import { TemplatePickerDialog } from "./components/Templates/TemplatePickerDialog";
-import { AIChatPanel } from "./components/AI/AIChatPanel";
-import { PDFViewerPanel } from "./components/PdfViewer/PDFViewerPanel";
-import { ReferencesPanel } from "./components/References/ReferencesPanel";
-import { ProfilerPanel } from "./components/Profiler/ProfilerPanel";
+const TemplatePickerDialog = lazy(() => import("./components/Templates/TemplatePickerDialog").then(m => ({ default: m.TemplatePickerDialog })));
+const AIChatPanel = lazy(() => import("./components/AI/AIChatPanel").then(m => ({ default: m.AIChatPanel })));
+const PDFViewerPanel = lazy(() => import("./components/PdfViewer/PDFViewerPanel").then(m => ({ default: m.PDFViewerPanel })));
+const ReferencesPanel = lazy(() => import("./components/References/ReferencesPanel").then(m => ({ default: m.ReferencesPanel })));
+const ProfilerPanel = lazy(() => import("./components/Profiler/ProfilerPanel").then(m => ({ default: m.ProfilerPanel })));
 import { useEditorStore, markPathJustWritten } from "./stores/editorStore";
 import { usePreview, SaveEvent } from "./hooks/usePreview";
+import { useTauriEvents } from "./hooks/useTauriEvents";
+import { useFilePolling } from "./hooks/useFilePolling";
+import { useMenuListeners } from "./hooks/useMenuListeners";
 import { markProfilerDuration } from "./lib/performanceProfiler";
+import { Toaster } from "./components/ui/sonner";
+import { toast } from "sonner";
 import "./App.css";
 
 export default function App() {
@@ -73,36 +78,7 @@ export default function App() {
   usePreview(saveEvent);
   const previewValidationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ── Subscribe to compile actor events ─────────────────────────────────────
-  useEffect(() => {
-    const unlisten1 = listen<{ total_pages: number; updates: { index: number; svg: string }[] }>("preview-result", (e) => {
-      const { applyPreviewUpdate, setLastCompileMs, setPreviewLoading, compileStartedAt } = useEditorStore.getState();
-      if (compileStartedAt !== null) setLastCompileMs(performance.now() - compileStartedAt);
-      applyPreviewUpdate(e.payload.total_pages, e.payload.updates);
-      setPreviewLoading(false);
-    });
-    const unlisten2 = listen<{ message: string }>("preview-error", (e) => {
-      const { setPreviewError } = useEditorStore.getState();
-      setPreviewError(e.payload.message);
-    });
-    const unlistenWarnings = listen<string[]>("converter-warnings", (e) => {
-      useEditorStore.getState().setConverterWarnings(e.payload);
-    });
-    const unlistenGeneratedFile = listen<{ path: string; content: string }>("generated-file-updated", (e) => {
-      useEditorStore.getState().syncCleanTabContent(e.payload.path, e.payload.content);
-    });
-    const unlisten3 = listen("menu:toggle-sidecar-preview", () => {
-      const { useSidecarPreview, setUseSidecarPreview } = useEditorStore.getState();
-      setUseSidecarPreview(!useSidecarPreview);
-    });
-    return () => {
-      unlisten1.then((f) => f());
-      unlisten2.then((f) => f());
-      unlistenWarnings.then((f) => f());
-      unlistenGeneratedFile.then((f) => f());
-      unlisten3.then((f) => f());
-    };
-  }, []);
+  useTauriEvents();
 
   // History panel
   const [showHistory, setShowHistory] = useState(false);
@@ -125,45 +101,7 @@ export default function App() {
     useEditorStore.getState().hydrateSettings();
   }, []);
 
-  // Poll open clean tabs for external file changes every 2 seconds.
-  // Fallback for cases where the FS watcher doesn't deliver events reliably.
-  useEffect(() => {
-    const POLL_MS = 2000;
-    let timer: ReturnType<typeof setInterval> | null = null;
-    let pending = false;
-
-    const poll = async () => {
-      if (pending) return;
-      pending = true;
-      try {
-        const store = useEditorStore.getState();
-        const cleanTabs = store.tabs.filter(
-          (t) => !t.isDirty && !t.isTemp && t.path && !t.path.startsWith("__temp__"),
-        );
-        for (const tab of cleanTabs) {
-          try {
-            const content = await invoke<string>("read_file", { path: tab.path });
-            const current = useEditorStore.getState();
-            const currentTab = current.tabs.find((t) => t.path === tab.path);
-            if (currentTab && !currentTab.isDirty && content !== currentTab.content) {
-              useEditorStore.setState((s) => ({
-                tabs: s.tabs.map((t) =>
-                  t.path === tab.path ? { ...t, content } : t,
-                ),
-              }));
-            }
-          } catch {
-            // file gone — leave tab open, user can close manually
-          }
-        }
-      } finally {
-        pending = false;
-      }
-    };
-
-    timer = setInterval(poll, POLL_MS);
-    return () => { if (timer) clearInterval(timer); };
-  }, []);
+  useFilePolling();
 
   // ── Open Folder ──────────────────────────────────────────────────────────
   const handleOpenFolder = useCallback(async () => {
@@ -174,7 +112,7 @@ export default function App() {
         useEditorStore.getState().setWorkspacePath(selected);
       }
     } catch (e) {
-      console.error("open folder error", e);
+      logger.error("open folder error", e);
     }
   }, []);
 
@@ -249,7 +187,8 @@ export default function App() {
       const { openPath } = await import("@tauri-apps/plugin-opener");
       await openPath(outputPath);
     } catch (e) {
-      console.error("export PDF error", e);
+      logger.error("export PDF error", e);
+      toast.error("Failed to export PDF");
     }
   }, [markTabClean]);
 
@@ -262,7 +201,7 @@ export default function App() {
       await invoke("save_snapshot", { path });
       lastSnapshotTimeRef.current.set(path, Date.now());
     } catch (e) {
-      console.error("snapshot error", e);
+      logger.error("snapshot error", e);
     }
   }, []);
 
@@ -296,7 +235,8 @@ export default function App() {
           setSaveEvent((prev) => ({ path: destPath, n: (prev?.n ?? 0) + 1 }));
         }
       } catch (e) {
-        console.error("save new file error", e);
+        logger.error("save new file error", e);
+        toast.error("Failed to save file");
       } finally {
         markProfilerDuration("file.save", saveStartedAt, path);
       }
@@ -314,11 +254,12 @@ export default function App() {
         if (Date.now() - last > 5 * 60 * 1000) {
           invoke("save_snapshot", { path })
             .then(() => lastSnapshotTimeRef.current.set(path, Date.now()))
-            .catch((e) => console.error("auto-snapshot error", e));
+            .catch((e) => logger.error("auto-snapshot error", e));
         }
       }
     } catch (e) {
-      console.error("save error", e);
+      logger.error("save error", e);
+      toast.error("Failed to save file");
     } finally {
       markProfilerDuration("file.save", saveStartedAt, path);
     }
@@ -343,13 +284,13 @@ export default function App() {
               useEditorStore.getState().setPreviewError(diagnostic || null);
             })
             .catch((e) => {
-              console.error("validate_preview_sidecar_content failed:", JSON.stringify(e), e);
+              logger.error("validate_preview_sidecar_content failed:", JSON.stringify(e), e);
               useEditorStore.getState().setPreviewError(String(e));
             });
         }, 800);
       }).catch((e) => {
         markProfilerDuration("preview.markdown-write", previewStartedAt, path);
-        console.error("write_preview_sidecar_content failed:", JSON.stringify(e), e);
+        logger.error("write_preview_sidecar_content failed:", JSON.stringify(e), e);
         useEditorStore.getState().setPreviewError(String(e));
       });
       return;
@@ -361,7 +302,7 @@ export default function App() {
     // Typst — in-process compile path (e.g. for non-sidecar setups).
     useEditorStore.getState().setPreviewLoading(true);
     invoke("update_preview_source", { path, content }).catch((e) => {
-      console.error("update_preview_source failed:", JSON.stringify(e), e);
+      logger.error("update_preview_source failed:", JSON.stringify(e), e);
       useEditorStore.getState().setPreviewError(String(e));
       useEditorStore.getState().setPreviewLoading(false);
     }).finally(() => {
@@ -421,158 +362,17 @@ export default function App() {
     prevPreviewOpenRef.current = previewOpen;
   }, [previewOpen, handlePreviewTrigger]);
 
-  // ── Native menu wiring ───────────────────────────────────────────────────
-  useEffect(() => {
-    const unlisteners: Promise<() => void>[] = [];
-
-    const isMac = navigator.platform.startsWith("Mac");
-    const modKey = isMac ? "metaKey" : "ctrlKey";
-
-    unlisteners.push(listen("menu:undo", () => {
-      document.activeElement?.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "z", [modKey]: true, bubbles: true, cancelable: true })
-      );
-    }));
-    unlisteners.push(listen("menu:redo", () => {
-      document.activeElement?.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "z", [modKey]: true, shiftKey: true, bubbles: true, cancelable: true })
-      );
-    }));
-
-    unlisteners.push(listen("menu:new-file", () => handleNewFile("typ")));
-    unlisteners.push(listen("menu:new-file-md", () => handleNewFile("md")));
-
-    unlisteners.push(listen("menu:open-file", async () => {
-      try {
-        const { open } = await import("@tauri-apps/plugin-dialog");
-        const selected = await open({ multiple: false });
-        if (typeof selected !== "string") return;
-        const content = await invoke<string>("read_file", { path: selected });
-        const name = selected.split("/").pop() ?? selected;
-        useEditorStore.getState().openTab(selected, name, content);
-      } catch (e) {
-        console.error("open file error", e);
-      }
-    }));
-
-    unlisteners.push(listen("menu:open-folder", handleOpenFolder));
-    unlisteners.push(listen("menu:new-from-template", () => setShowTemplatePicker(true)));
-
-    unlisteners.push(listen("menu:save", async () => {
-      const tab = useEditorStore.getState().activeTab();
-      if (!tab) return;
-      await handleSave(tab.path, tab.content);
-      handleSnapshot(tab.path);
-    }));
-
-    unlisteners.push(listen("menu:save-all", async () => {
-      const tabs = useEditorStore.getState().tabs.filter((t) => t.isDirty && !t.isTemp);
-      for (const t of tabs) {
-        await handleSave(t.path, t.content);
-        handleSnapshot(t.path);
-      }
-    }));
-
-    unlisteners.push(listen("menu:close-tab", () => {
-      const path = useEditorStore.getState().activeTabPath;
-      if (path) useEditorStore.getState().closeTab(path);
-    }));
-
-    unlisteners.push(listen("menu:export-pdf", () => handleExportPdf()));
-
-    unlisteners.push(listen("menu:toggle-sidebar", () => {
-      const { sidebarOpen: open, setSidebarOpen: setOpen } = useEditorStore.getState();
-      setOpen(!open);
-    }));
-
-    unlisteners.push(listen("menu:toggle-preview", () => {
-      const { activePanels: panels, setActivePanels: setPanels } = useEditorStore.getState();
-      if (panels.includes("preview")) {
-        if (panels.length > 1) setPanels(panels.filter((p) => p !== "preview"));
-      } else {
-        if (panels.length < 4) setPanels([...panels, "preview"]);
-      }
-    }));
-
-    unlisteners.push(listen("menu:toggle-outline", () => {
-      const { activePanels: panels, setActivePanels: setPanels } = useEditorStore.getState();
-      if (panels.includes("outline")) {
-        if (panels.length > 1) setPanels(panels.filter((p) => p !== "outline"));
-      } else {
-        if (panels.length < 4) setPanels([...panels, "outline"]);
-      }
-    }));
-
-    unlisteners.push(listen("menu:toggle-writing-mode", () => {
-      const { writingMode: wm, setWritingMode } = useEditorStore.getState();
-      setWritingMode(!wm);
-    }));
-
-    unlisteners.push(listen("menu:toggle-line-numbers", () => {
-      const { editorLineNumbers, setEditorLineNumbers } = useEditorStore.getState();
-      setEditorLineNumbers(!editorLineNumbers);
-    }));
-
-    unlisteners.push(listen("menu:toggle-history", () => {
-      setShowHistory((v) => !v);
-    }));
-
-    unlisteners.push(listen("menu:open-settings", () => {
-      setShowSettings(true);
-    }));
-
-    unlisteners.push(listen("menu:import-latex", async () => {
-      try {
-        const { open } = await import("@tauri-apps/plugin-dialog");
-        const zipPath = await open({
-          multiple: false,
-          filters: [{ name: "Zip Archive", extensions: ["zip"] }],
-          title: "Select LaTeX Template Bundle (.zip)",
-        });
-        if (typeof zipPath !== "string") return;
-
-        const workspace = useEditorStore.getState().workspacePath;
-        let destDir: string;
-        if (workspace) {
-          const stem = zipPath.split("/").pop()?.replace(/\.zip$/i, "") ?? "latex-import";
-          destDir = `${workspace}/${stem}-typst`;
-        } else {
-          const dir = zipPath.slice(0, zipPath.lastIndexOf("/"));
-          const stem = zipPath.split("/").pop()?.replace(/\.zip$/i, "") ?? "latex-import";
-          destDir = `${dir}/${stem}-typst`;
-        }
-
-        const result = await invoke<{
-          profile: string | null;
-          dest_dir: string;
-          main_typ: string;
-          report_path: string;
-          notes: string[];
-        }>("import_latex_template", { zipPath, destDir });
-
-        const content = await invoke<string>("read_file", { path: result.main_typ });
-        const name = result.main_typ.split("/").pop() ?? "main.typ";
-        useEditorStore.getState().openTab(result.main_typ, name, content);
-        if (workspace) {
-          useEditorStore.getState().setWorkspacePath(workspace);
-        }
-
-        setImportResult({
-          mainTyp: result.main_typ,
-          reportPath: result.report_path,
-          profile: result.profile,
-          notes: result.notes,
-        });
-      } catch (e) {
-        console.error("import-latex error", e);
-        alert(`LaTeX import failed:\n${e}`);
-      }
-    }));
-
-    return () => {
-      unlisteners.forEach((p) => p.then((f) => f()));
-    };
-  }, [handleNewFile, handleSave, handleSnapshot, handleExportPdf, handleOpenFolder]);
+  useMenuListeners({
+    handleNewFile,
+    handleSave,
+    handleSnapshot,
+    handleExportPdf,
+    handleOpenFolder,
+    setShowHistory,
+    setShowSettings,
+    setShowTemplatePicker,
+    setImportResult,
+  });
 
   return (
     <div className={"app " + (theme === "dark" ? "dark" : "")} data-theme={theme === "dark" ? undefined : theme}>
@@ -609,7 +409,7 @@ export default function App() {
                 ai: <AiHeaderControlsLeft />
               }}
               contents={{
-                ai: <ErrorBoundary name="AI Chat"><AIChatPanel /></ErrorBoundary>,
+                ai: <ErrorBoundary name="AI Chat"><Suspense fallback={<div className="pm-placeholder">Loading...</div>}><AIChatPanel /></Suspense></ErrorBoundary>,
                 editor: isMdFile && !mdSourceMode ? (
                   <ErrorBoundary name="Markdown Editor">
                     <MarkdownWysiwygEditor
@@ -637,9 +437,9 @@ export default function App() {
                   </div>
                 ),
                 outline: <ErrorBoundary name="Outline"><TableOfContents /></ErrorBoundary>,
-                pdf: <ErrorBoundary name="PDF Viewer"><PDFViewerPanel /></ErrorBoundary>,
-                bibliography: <ErrorBoundary name="References"><ReferencesPanel /></ErrorBoundary>,
-                profiler: <ErrorBoundary name="Profiler"><ProfilerPanel /></ErrorBoundary>,
+                pdf: <ErrorBoundary name="PDF Viewer"><Suspense fallback={<div className="pm-placeholder">Loading...</div>}><PDFViewerPanel /></Suspense></ErrorBoundary>,
+                bibliography: <ErrorBoundary name="References"><Suspense fallback={<div className="pm-placeholder">Loading...</div>}><ReferencesPanel /></Suspense></ErrorBoundary>,
+                profiler: <ErrorBoundary name="Profiler"><Suspense fallback={<div className="pm-placeholder">Loading...</div>}><ProfilerPanel /></Suspense></ErrorBoundary>,
               }}
             />
           </div>
@@ -670,7 +470,7 @@ export default function App() {
 
       <StatusBar lspStatus={lspStatus} onShowHistory={() => setShowHistory((v) => !v)} />
       {showSettings && <SettingsDialog onClose={() => setShowSettings(false)} />}
-      {showTemplatePicker && <TemplatePickerDialog onClose={() => setShowTemplatePicker(false)} />}
+      {showTemplatePicker && <Suspense fallback={null}><TemplatePickerDialog onClose={() => setShowTemplatePicker(false)} /></Suspense>}
       {importResult && (
         <LatexImportResultDialog
           result={importResult}
@@ -680,7 +480,7 @@ export default function App() {
               const name = importResult.reportPath.split("/").pop() ?? "CONVERSION_REPORT.md";
               useEditorStore.getState().openTab(importResult.reportPath, name, content);
             } catch (e) {
-              console.error(e);
+              logger.error(e);
             }
             setImportResult(null);
           }}
@@ -903,7 +703,7 @@ const PreviewPanelControls = memo(function PreviewPanelControls({
       invoke("trigger_preview_compile", { path: tab.path })
         .catch((e: unknown) => { setPreviewError(String(e)); setPreviewLoading(false); });
     } catch (e) {
-      console.error("refresh error", e);
+      logger.error("refresh error", e);
     }
   }, []);
 
@@ -980,6 +780,7 @@ function WelcomeScreen({ onNewFile, onOpenFolder }: { onNewFile: (kind?: "typ" |
         </div>
         <p className="welcome-hint">Use the <span className="welcome-hint-key"><LayoutGrid size={12} /></span> layout button (top-right) to reopen panels.</p>
       </div>
+      <Toaster position="bottom-right" richColors closeButton />
     </div>
   );
 }

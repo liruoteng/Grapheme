@@ -30,6 +30,7 @@ import { SlashMenu } from "./SlashMenu";
 import type { SlashCommand } from "./SlashMenu";
 import { SelectionToolbar } from "./SelectionToolbar";
 import { copyImageFilesToAssets } from "../../lib/utils";
+import { logger } from "../../lib/logger";
 import { getActiveDragSource } from "../FileExplorer/fileDrag";
 import { linkClickPlugin } from "./linkClickPlugin";
 import { imageViewPlugin } from "./imageView";
@@ -368,8 +369,8 @@ function WritingModeEditorInner({ path, initialContent, externalContent, onSave,
     const insertAtCursor = useCallback((text: string) => {
         const editor = getEditor();
         if (!editor) return;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        editor.action((ctx: any) => {
+         
+        editor.action((ctx: Ctx) => {
             const view = ctx.get(editorViewCtx);
             const { state, dispatch } = view;
             dispatch(state.tr.insertText(text));
@@ -387,8 +388,8 @@ function WritingModeEditorInner({ path, initialContent, externalContent, onSave,
 
         const editor = getEditorRef.current();
         if (!editor) return;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        editor.action((ctx: any) => {
+         
+        editor.action((ctx: Ctx) => {
             const view = ctx.get(editorViewCtx);
             const { state, dispatch } = view;
             const { frontmatter: fm, body } = extractFrontmatter(externalContent.content);
@@ -458,8 +459,8 @@ function WritingModeEditorInner({ path, initialContent, externalContent, onSave,
 
         // AI chat command — open AI panel instead of inserting text
         if (command.id === "ai-chat") {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            editor.action((ctx: any) => {
+             
+            editor.action((ctx: Ctx) => {
                 const view = ctx.get(editorViewCtx);
                 const { state, dispatch } = view;
                 const { from } = state.selection;
@@ -473,8 +474,8 @@ function WritingModeEditorInner({ path, initialContent, externalContent, onSave,
             return;
         }
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        editor.action((ctx: any) => {
+         
+        editor.action((ctx: Ctx) => {
             const view = ctx.get(editorViewCtx);
             const { state, dispatch } = view;
             const { from } = state.selection;
@@ -633,7 +634,7 @@ function WritingModeEditorInner({ path, initialContent, externalContent, onSave,
                     }
                 }
             } catch (e) {
-                console.warn("slash command fallback to text", command.id, e);
+                logger.warn("slash command fallback to text", command.id, e);
                 const fallback = command.snippet || "";
                 tr = tr.replaceWith(deleteFrom, deleteFrom, s.text(fallback));
                 const cp = deleteFrom + (command.cursorOffset ?? fallback.length);
@@ -659,8 +660,8 @@ function WritingModeEditorInner({ path, initialContent, externalContent, onSave,
         const insertImagesAtCursor = (srcs: string[]) => {
             const editor = getEditorRef.current();
             if (!editor) return;
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            editor.action((ctx: any) => {
+             
+            editor.action((ctx: Ctx) => {
                 const view = ctx.get(editorViewCtx);
                 const { state, dispatch } = view;
                 for (const src of srcs) {
@@ -691,7 +692,7 @@ function WritingModeEditorInner({ path, initialContent, externalContent, onSave,
                 e.stopPropagation();
                 copyImageFilesToAssets(imageFiles, workspacePath)
                     .then((names) => insertImagesAtCursor(names.map((n) => `assets/${n}`)))
-                    .catch((err) => console.error("image drop error", err));
+                    .catch((err) => logger.error("image drop error", err));
                 return;
             }
 
@@ -742,8 +743,8 @@ function WritingModeEditorInner({ path, initialContent, externalContent, onSave,
         const applyMark = (markName: string) => {
             const editor = getEditor();
             if (!editor) return;
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            editor.action((ctx: any) => {
+             
+            editor.action((ctx: Ctx) => {
                 const view = ctx.get(editorViewCtx);
                 const { state, dispatch } = view;
                 if (state.selection.empty) return;
@@ -756,8 +757,8 @@ function WritingModeEditorInner({ path, initialContent, externalContent, onSave,
         const applyBlock = (nodeName: string, attrs?: Record<string, unknown>) => {
             const editor = getEditor();
             if (!editor) return;
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            editor.action((ctx: any) => {
+             
+            editor.action((ctx: Ctx) => {
                 const view = ctx.get(editorViewCtx);
                 const { state, dispatch } = view;
                 const nodeType = state.schema.nodes[nodeName];
@@ -769,8 +770,8 @@ function WritingModeEditorInner({ path, initialContent, externalContent, onSave,
         const wrapList = (nodeName: string, attrs?: Record<string, unknown>) => {
             const editor = getEditor();
             if (!editor) return;
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            editor.action((ctx: any) => {
+             
+            editor.action((ctx: Ctx) => {
                 const view = ctx.get(editorViewCtx);
                 const { state, dispatch } = view;
                 const nodeType = state.schema.nodes[nodeName];
@@ -815,8 +816,8 @@ function WritingModeEditorInner({ path, initialContent, externalContent, onSave,
     const handleCiteSelect = useCallback((ref: Reference) => {
         const editor = getEditor();
         if (!editor || !ref.bibKey) return;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        editor.action((ctx: any) => {
+         
+        editor.action((ctx: Ctx) => {
             const view = ctx.get(editorViewCtx);
             const { state, dispatch } = view;
             const { from } = state.selection;

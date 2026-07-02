@@ -1,4 +1,5 @@
 import { buildTool } from "../buildTool";
+import { SEMANTIC_SCHOLAR_API_BASE } from "../../constants";
 
 interface SearchInput {
   query: string;
@@ -41,7 +42,7 @@ async function searchSemanticScholar(
   }
 
   const response = await fetch(
-    `https://api.semanticscholar.org/graph/v1/paper/search?${params}`,
+    `${SEMANTIC_SCHOLAR_API_BASE}/paper/search?${params}`,
   );
 
   if (!response.ok) {

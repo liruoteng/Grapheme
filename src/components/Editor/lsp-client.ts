@@ -10,6 +10,7 @@
  * requirement of monaco-languageclient v10.
  */
 import type * as Monaco from "monaco-editor";
+import { logger } from "../../lib/logger";
 
 const LSP_WS_URL = "ws://127.0.0.1:8765";
 const RECONNECT_DELAY_MS = 3000;
@@ -270,7 +271,7 @@ export function startLspClient(
 
     socket.onopen = () => {
       if (stopped) { socket.close(); return; }
-      initialize().catch((e) => console.error("[LSP] initialize failed", e));
+      initialize().catch((e) => logger.error("[LSP] initialize failed", e));
     };
 
     socket.onmessage = (ev) => onMessage(ev.data as string);

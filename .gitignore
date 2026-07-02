@@ -44,5 +44,9 @@ TODOS.md
 LATEX-TYPST-MAP.md
 skills-lock.json
 release.sh
-*.md
+TODOS.md
+FUTURE.md
+CLAUDE.md
+LATEX-TYPST-MAP.md
+TODO-*.md
 .*.preview.typ

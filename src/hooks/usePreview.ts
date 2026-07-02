@@ -7,6 +7,7 @@
 import { useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useEditorStore } from "../stores/editorStore";
+import { logger } from "../lib/logger";
 
 export interface SaveEvent {
   path: string;
@@ -26,7 +27,7 @@ export function usePreview(saveEvent: SaveEvent | null) {
     invoke<string | null>("validate_preview_sidecar_content", { path: p, content: tab.content }).then((diagnostic) => {
       useEditorStore.getState().setPreviewError(diagnostic || null);
     }).catch((e) => {
-      console.error(e);
+      logger.error(e);
       useEditorStore.getState().setPreviewError(String(e));
     });
   }, [saveEvent?.n]); // eslint-disable-line react-hooks/exhaustive-deps

@@ -6,6 +6,7 @@ import { useEditorStore } from "../../stores/editorStore";
 import { useLspClient } from "../../hooks/useLspClient";
 import { SlashMenu, type SlashCommand } from "./SlashMenu";
 import { copyImageFilesToAssets, extractOutline } from "../../lib/utils";
+import { logger } from "../../lib/logger";
 import "./MonacoEditor.css";
 
 interface MonacoEditorProps {
@@ -640,7 +641,7 @@ export function MonacoEditor({ onSave, onSnapshot, onNewFile, onPreviewTrigger, 
           }
           editor.focus();
         })
-        .catch((err) => console.error("image drop error", err));
+        .catch((err) => logger.error("image drop error", err));
     };
 
     domNode.addEventListener("dragover", onNativeDragOver, { capture: true });

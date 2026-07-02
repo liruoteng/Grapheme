@@ -3,9 +3,14 @@ import * as pdfjsLib from "pdfjs-dist";
 import { invoke } from "@tauri-apps/api/core";
 import { ChevronLeft, ChevronRight, Minus, Plus, X } from "lucide-react";
 import { useEditorStore } from "../../stores/editorStore";
+import { SEMANTIC_SCHOLAR_API_BASE } from "../../lib/constants";
+import { logger } from "../../lib/logger";
 import "./PDFViewerPanel.css";
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+  "pdfjs-dist/build/pdf.worker.min.mjs",
+  import.meta.url,
+).href;
 
 const ZOOM_STEP = 0.25;
 const ZOOM_MIN = 0.5;
@@ -65,7 +70,7 @@ async function extractReferences(pdf: pdfjsLib.PDFDocumentProxy): Promise<Map<st
 
 async function searchScholar(query: string): Promise<ScholarResult | null> {
   try {
-    const url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query.slice(0, 200))}&fields=title,authors,year,abstract,url&limit=1`;
+    const url = `${SEMANTIC_SCHOLAR_API_BASE}/paper/search?query=${encodeURIComponent(query.slice(0, 200))}&fields=title,authors,year,abstract,url&limit=1`;
     const res = await fetch(url, { headers: { Accept: "application/json" } });
     if (!res.ok) return null;
     const data = await res.json();
@@ -107,7 +112,7 @@ export function PDFViewerPanel() {
           if (active) setRefMap(refs);
         });
       } catch (e) {
-        console.error("Failed to load PDF:", e);
+        logger.error("Failed to load PDF:", e);
       }
     })();
 
@@ -391,7 +396,7 @@ function PDFPage({ pdf, pageNumber, scale, onCitationClick, pageRef }: PDFPagePr
     };
 
     render().catch((e) => {
-      if (e?.name !== "RenderingCancelledException") console.error(e);
+      if (e?.name !== "RenderingCancelledException") logger.error(e);
     });
 
     return () => {

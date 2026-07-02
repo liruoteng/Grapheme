@@ -6,6 +6,7 @@ import { tags } from "@lezer/highlight";
 import { searchKeymap } from "@codemirror/search";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { logger } from "../../lib/logger";
 import katex from "katex";
 import { refractor } from "refractor/all";
 import type { Element as HastElement, Nodes as HastNode, Root as HastRoot, Text as HastText } from "hast";
@@ -3972,7 +3973,7 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
         if (!link) return false;
         event.preventDefault();
         selectRangePreservingScroll(view, link.from, link.to);
-        openUrl(link.href).catch((err: unknown) => console.error("open link failed", err));
+        openUrl(link.href).catch((err: unknown) => logger.error("open link failed", err));
         return true;
       },
       dragover(event) {
@@ -4002,7 +4003,7 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
               const paths = names.map((name) => markdownImagePathForFile(`${workspacePath}/assets/${name}`));
               insertImageMarkdown(view, paths, dropPos);
             })
-            .catch((err: unknown) => console.error("image drop error", err));
+            .catch((err: unknown) => logger.error("image drop error", err));
           return true;
         }
 

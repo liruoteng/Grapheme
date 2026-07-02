@@ -572,22 +572,12 @@ fn merged_env_map(profile: &dyn Profile) -> EnvMap {
 
 // ── Body emission ─────────────────────────────────────────────────────────
 
+#[derive(Default)]
 struct EmitState {
     in_figure: bool,
     in_table: bool,
     in_list: bool,
     list_stack: Vec<String>,
-}
-
-impl Default for EmitState {
-    fn default() -> Self {
-        Self {
-            in_figure: false,
-            in_table: false,
-            in_list: false,
-            list_stack: Vec::new(),
-        }
-    }
 }
 
 fn emit_body(
@@ -766,6 +756,7 @@ fn emit_command(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_env(
     name: &str,
     opt: &[String],
@@ -810,9 +801,7 @@ fn emit_env(
             out.push_str("\n#figure(\n");
             if tabular.cols == 0 {
                 out.push_str("  /* TODO(latex): tabular content */\n");
-                notes.push(format!(
-                    "Table env with complex tabular — needs manual conversion."
-                ));
+                notes.push("Table env with complex tabular — needs manual conversion.".to_string());
             } else {
                 out.push_str(&format!(
                     "  table(\n    columns: {},\n    {}\n  ),\n",
@@ -843,7 +832,7 @@ fn emit_env(
             state.in_list = true;
 
             let body_tokens = tokenize(&inner);
-            out.push_str("\n");
+            out.push('\n');
             out.push_str(&begin_s);
             // Split on \item tokens.
             let items = split_items(&body_tokens);

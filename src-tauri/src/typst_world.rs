@@ -97,7 +97,7 @@ impl typst::World for TypstWorld {
     fn file(&self, id: FileId) -> FileResult<Bytes> {
         let path = id_to_path(&self.root, id)?;
         fs::read(&path)
-            .map(|v| Bytes::new(v))
+            .map(Bytes::new)
             .map_err(|e| io_err(e, &path))
     }
 

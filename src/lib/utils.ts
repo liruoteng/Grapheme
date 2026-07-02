@@ -1,6 +1,7 @@
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
 import { invoke } from "@tauri-apps/api/core";
+import { logger } from "./logger";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -96,7 +97,7 @@ export async function copyImageFilesToAssets(
       saved.push(f.name);
     }
   } catch (err) {
-    console.error("copyImageFilesToAssets error", err);
+    logger.error("copyImageFilesToAssets error", err);
   }
 
   return saved;

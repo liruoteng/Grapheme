@@ -3,6 +3,8 @@ import { useShallow } from "zustand/react/shallow";
 import { invoke } from "@tauri-apps/api/core";
 import type { LspStatus } from "../components/Editor/lsp-client";
 import { extractOutline, formatOutlineForContext, formatReferencesForContext, formatTabsForContext, type OutlineItem } from "../lib/utils";
+import { DEFAULT_OLLAMA_URL } from "../lib/constants";
+import { logger } from "../lib/logger";
 
 // Tracks paths that were just written by the app so the FS watcher
 // can skip re-reading them (avoids redundant content update after save).
@@ -260,7 +262,7 @@ function schedulePersist(getState: () => EditorState) {
     const s = getState();
     const payload: Record<string, unknown> = {};
     for (const k of PERSISTED_KEYS) payload[k] = (s as unknown as Record<string, unknown>)[k];
-    invoke("write_settings", { contents: JSON.stringify(payload, null, 2) }).catch(console.error);
+    invoke("write_settings", { contents: JSON.stringify(payload, null, 2) }).catch((e) => logger.error("write_settings failed", e));
   }, 150);
 }
 
@@ -357,7 +359,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
   aiProvider: "claude-cli",
   setAiProvider: (p) => { set({ aiProvider: p }); schedulePersist(get); },
-  ollamaUrl: "http://localhost:11434",
+  ollamaUrl: DEFAULT_OLLAMA_URL,
   setOllamaUrl: (url) => { set({ ollamaUrl: url }); schedulePersist(get); },
   ollamaModel: "llama3.2",
   setOllamaModel: (model) => { set({ ollamaModel: model }); schedulePersist(get); },
@@ -568,7 +570,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       if (typeof parsed.aiDockHeight === "number") patch.aiDockHeight = parsed.aiDockHeight;
       set(patch);
     } catch (e) {
-      console.error("hydrateSettings failed", e);
+      logger.error("hydrateSettings failed", e);
     }
   },
 

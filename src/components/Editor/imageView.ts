@@ -6,6 +6,7 @@ import { $view } from "@milkdown/utils";
 import type { Ctx } from "@milkdown/ctx";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useEditorStore } from "../../stores/editorStore";
+import { logger } from "../../lib/logger";
 
 function resolveImageSrc(src: string): string {
   if (src.startsWith("/")) return convertFileSrc(src);
@@ -140,7 +141,7 @@ export class ImageView implements NodeView {
     event.preventDefault();
     const src = (this.node.attrs.src as string) || "";
     navigator.clipboard?.writeText(src).catch((err: unknown) => {
-      console.error("Failed to copy image path:", err);
+      logger.error("Failed to copy image path:", err);
     });
   }
 

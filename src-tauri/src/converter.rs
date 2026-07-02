@@ -22,11 +22,7 @@ pub fn strip_front_matter(content: &str) -> (&str, Option<&str>) {
     if !content.starts_with("---\n") && !content.starts_with("---\r\n") {
         return (content, None);
     }
-    let after_open = if content.starts_with("---\r\n") {
-        &content[5..]
-    } else {
-        &content[4..]
-    };
+    let after_open = content.strip_prefix("---\r\n").unwrap_or(&content[4..]);
     // Find the closing `---` line
     for (off, _) in after_open.match_indices("\n---") {
         let rest = &after_open[off + 4..];
@@ -388,7 +384,6 @@ fn markdown_to_typst_with_options(
     let mut in_code_block = false;
     let mut code_lang = String::new();
     let mut code_buf: Vec<&str> = Vec::new();
-    let mut prev_blank = true;
     let mut typst_block_count: u32 = 0;
     let mut html_warned = false;
     let mut in_html_comment = false;
@@ -439,7 +434,6 @@ fn markdown_to_typst_with_options(
             } else {
                 out.push_str(&format!("$ {} $\n\n", expr.trim()));
             }
-            prev_blank = true;
             continue;
         }
         // Single-line $$expr$$
@@ -454,7 +448,6 @@ fn markdown_to_typst_with_options(
                 } else {
                     out.push_str(&format!("$ {} $\n\n", rest.trim()));
                 }
-                prev_blank = true;
                 i += 1;
                 continue;
             }
@@ -472,7 +465,6 @@ fn markdown_to_typst_with_options(
             }
             let expr = math_lines.join("\n");
             out.push_str(&preview_math(&expr, true));
-            prev_blank = true;
             continue;
         }
 
@@ -499,7 +491,6 @@ fn markdown_to_typst_with_options(
                 }
                 let expr = math_lines.join("\n");
                 out.push_str(&preview_math(&expr, true));
-                prev_blank = true;
                 continue;
             }
         }
@@ -548,7 +539,6 @@ fn markdown_to_typst_with_options(
         // ── Blank line ────────────────────────────────────────────────────────
         if line.trim().is_empty() {
             out.push('\n');
-            prev_blank = true;
             i += 1;
             continue;
         }
@@ -561,7 +551,6 @@ fn markdown_to_typst_with_options(
                 "{marks} {}\n",
                 inline_with_options(text, &options)
             ));
-            prev_blank = false;
             i += 1;
             continue;
         }
@@ -576,7 +565,6 @@ fn markdown_to_typst_with_options(
                     "{marks} {}\n",
                     inline_with_options(line, &options)
                 ));
-                prev_blank = false;
                 i += 2;
                 continue;
             }
@@ -589,7 +577,6 @@ fn markdown_to_typst_with_options(
             || (trimmed.chars().all(|c| c == '*') && trimmed.len() >= 3)
         {
             out.push_str("#line(length: 100%)\n\n");
-            prev_blank = true;
             i += 1;
             continue;
         }
@@ -602,7 +589,6 @@ fn markdown_to_typst_with_options(
             .or_else(|| list_line.strip_prefix("* "))
             .or_else(|| list_line.strip_prefix("+ "))
         {
-            if prev_blank {}
             if let Some(content) = rest.strip_prefix("[ ] ") {
                 out.push_str(&format!(
                     "{list_indent}- ☐ {}\n",
@@ -622,7 +608,6 @@ fn markdown_to_typst_with_options(
                     inline_with_options(rest, &options)
                 ));
             }
-            prev_blank = false;
             i += 1;
             continue;
         }
@@ -633,7 +618,6 @@ fn markdown_to_typst_with_options(
                 "{list_indent}+ {}\n",
                 inline_with_options(rest, &options)
             ));
-            prev_blank = false;
             i += 1;
             continue;
         }
@@ -647,7 +631,6 @@ fn markdown_to_typst_with_options(
             let bq_lines = &lines[start..i];
             out.push_str(&process_blockquote_lines(bq_lines, &options));
             out.push_str("\n\n");
-            prev_blank = true;
             continue;
         }
 
@@ -656,7 +639,6 @@ fn markdown_to_typst_with_options(
             let (rows, consumed) = collect_table(&lines, i);
             out.push_str(&render_table_with_options(&rows, &options));
             i += consumed;
-            prev_blank = false;
             continue;
         }
 
@@ -682,7 +664,6 @@ fn markdown_to_typst_with_options(
         // ── Regular paragraph line ────────────────────────────────────────────
         out.push_str(&inline_with_options(line, &options));
         out.push('\n');
-        prev_blank = false;
         i += 1;
     }
 
@@ -807,7 +788,7 @@ fn extract_footnotes(content: &str) -> (String, HashMap<String, String>) {
     (out, footnotes)
 }
 
-fn collect_table<'a>(lines: &[&'a str], start: usize) -> (Vec<Vec<String>>, usize) {
+fn collect_table(lines: &[&str], start: usize) -> (Vec<Vec<String>>, usize) {
     let mut rows: Vec<Vec<String>> = Vec::new();
     let mut i = start;
     while i < lines.len() && (lines[i].contains('|') || lines[i].contains('-')) {
@@ -839,7 +820,11 @@ fn split_table_row(line: &str) -> Vec<String> {
             continue;
         }
         if chars[i] == '|' {
-            let end_byte = line[..].char_indices().nth(i).map(|(b, _)| b).unwrap_or(line.len());
+            let end_byte = line[..]
+                .char_indices()
+                .nth(i)
+                .map(|(b, _)| b)
+                .unwrap_or(line.len());
             let cell = &line[current_start_byte..end_byte];
             cells.push(cell.trim().replace("\\|", "|"));
             current_start_byte = end_byte + 1;
@@ -912,10 +897,8 @@ fn has_only_typst_math_linebreaks(expr: &str) -> bool {
     let chars: Vec<char> = expr.chars().collect();
     let mut i = 0;
     while i < chars.len() {
-        if chars[i] == '\\' {
-            if !chars.get(i + 1).is_some_and(|ch| ch.is_whitespace()) {
-                return false;
-            }
+        if chars[i] == '\\' && !chars.get(i + 1).is_some_and(|ch| ch.is_whitespace()) {
+            return false;
         }
         i += 1;
     }
@@ -937,7 +920,7 @@ fn is_typst_math_identifier(word: &str) -> bool {
             | "kappa"
             | "lambda"
             | "mu"
-            |         "nu"
+            | "nu"
             | "xi"
             | "omicron"
             | "pi"
@@ -2244,11 +2227,11 @@ fn inline_with_options(text: &str, options: &MarkdownOptions) -> String {
 }
 
 fn find_closing_char(chars: &[char], start: usize, delim: char) -> Option<usize> {
-    for i in start..chars.len() {
-        if chars[i] == delim {
+    for (i, &ch) in chars.iter().enumerate().skip(start) {
+        if ch == delim {
             return Some(i);
         }
-        if chars[i] == '\n' {
+        if ch == '\n' {
             return None;
         }
     }
@@ -2665,7 +2648,9 @@ mod tests {
     #[test]
     fn blockquote_nested_deep() {
         let out = convert("> l1\n> > l2\n> > > l3\n");
-        assert!(out.contains("#quote(block: true)[l1\n\n#quote(block: true)[l2\n\n#quote(block: true)[l3]]]"));
+        assert!(out.contains(
+            "#quote(block: true)[l1\n\n#quote(block: true)[l2\n\n#quote(block: true)[l3]]]"
+        ));
     }
 
     #[test]

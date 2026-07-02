@@ -64,6 +64,7 @@ pub async fn check_claude_cli() -> String {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn stream_claude_cli(
     session_id: Option<String>,
     message: String,
@@ -165,7 +166,7 @@ pub async fn stream_claude_cli(
                     new_session_id = Some(sid.to_string());
                 }
                 if event["type"].as_str() == Some("result") {
-                    if event["subtype"].as_str().map_or(false, |s| s != "success") {
+                    if event["subtype"].as_str().is_some_and(|s| s != "success") {
                         let msg = event["error"]
                             .as_str()
                             .unwrap_or("Claude CLI returned an error");
@@ -224,6 +225,7 @@ pub struct ToolCall {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
 pub struct ToolResult {
     pub tool_call_id: String,
     pub content: String,
@@ -283,9 +285,20 @@ async fn stream_ollama(
     on_chunk: &Channel<String>,
     cancel: &Arc<AtomicBool>,
 ) -> Result<(), String> {
-    stream_ollama_with_tools(client, messages, base_url, model, system, &[], on_chunk, cancel).await
+    stream_ollama_with_tools(
+        client,
+        messages,
+        base_url,
+        model,
+        system,
+        &[],
+        on_chunk,
+        cancel,
+    )
+    .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn stream_ollama_with_tools(
     client: &Client,
     messages: &[ChatMessage],
@@ -312,14 +325,19 @@ async fn stream_ollama_with_tools(
     let ollama_tools: Option<Vec<OllamaTool>> = if tools.is_empty() {
         None
     } else {
-        Some(tools.iter().map(|t| OllamaTool {
-            tool_type: "function",
-            function: OllamaToolFunction {
-                name: &t.name,
-                description: &t.description,
-                parameters: &t.parameters,
-            },
-        }).collect())
+        Some(
+            tools
+                .iter()
+                .map(|t| OllamaTool {
+                    tool_type: "function",
+                    function: OllamaToolFunction {
+                        name: &t.name,
+                        description: &t.description,
+                        parameters: &t.parameters,
+                    },
+                })
+                .collect(),
+        )
     };
 
     // Ollama tool calling requires stream: false
@@ -351,15 +369,16 @@ async fn stream_ollama_with_tools(
     if !use_streaming {
         // Non-streaming response (for tool calls)
         let response_text = resp.text().await.map_err(|e| e.to_string())?;
-        let event: serde_json::Value = serde_json::from_str(&response_text).map_err(|e| e.to_string())?;
-        
+        let event: serde_json::Value =
+            serde_json::from_str(&response_text).map_err(|e| e.to_string())?;
+
         // Send text content
         if let Some(text) = event["message"]["content"].as_str() {
             if !text.is_empty() {
                 on_chunk.send(text.to_string()).map_err(|e| e.to_string())?;
             }
         }
-        
+
         // Send tool calls as JSON via on_chunk
         if let Some(tool_calls) = event["message"]["tool_calls"].as_array() {
             for (i, tc) in tool_calls.iter().enumerate() {
@@ -372,7 +391,9 @@ async fn stream_ollama_with_tools(
                         input: args.clone(),
                     };
                     let tc_json = serde_json::to_string(&tool_call).unwrap_or_default();
-                    on_chunk.send(format!("\n__TOOL_CALL__:{}\n", tc_json)).map_err(|e| e.to_string())?;
+                    on_chunk
+                        .send(format!("\n__TOOL_CALL__:{}\n", tc_json))
+                        .map_err(|e| e.to_string())?;
                 }
             }
         }
@@ -501,6 +522,7 @@ struct ClaudeToolUse {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn stream_claude_api(
     api_key: String,
     messages: Vec<ChatMessage>,
@@ -604,7 +626,9 @@ pub async fn stream_claude_api(
                             Some("text") => {
                                 if let Some(text) = block["text"].as_str() {
                                     if !text.is_empty() {
-                                        on_chunk.send(text.to_string()).map_err(|e| e.to_string())?;
+                                        on_chunk
+                                            .send(text.to_string())
+                                            .map_err(|e| e.to_string())?;
                                     }
                                 }
                             }
@@ -624,7 +648,9 @@ pub async fn stream_claude_api(
                             Some("text_delta") => {
                                 if let Some(text) = delta["text"].as_str() {
                                     if !text.is_empty() {
-                                        on_chunk.send(text.to_string()).map_err(|e| e.to_string())?;
+                                        on_chunk
+                                            .send(text.to_string())
+                                            .map_err(|e| e.to_string())?;
                                     }
                                 }
                             }
@@ -632,8 +658,13 @@ pub async fn stream_claude_api(
                                 if let Some(partial) = delta["partial_json"].as_str() {
                                     if let Some(ref mut tool_use) = current_tool_use {
                                         // Accumulate partial JSON
-                                        if let Ok(partial_value) = serde_json::from_str::<serde_json::Value>(partial) {
-                                            if let (Some(obj), Some(partial_obj)) = (tool_use.input.as_object_mut(), partial_value.as_object()) {
+                                        if let Ok(partial_value) =
+                                            serde_json::from_str::<serde_json::Value>(partial)
+                                        {
+                                            if let (Some(obj), Some(partial_obj)) = (
+                                                tool_use.input.as_object_mut(),
+                                                partial_value.as_object(),
+                                            ) {
                                                 for (k, v) in partial_obj {
                                                     obj.insert(k.clone(), v.clone());
                                                 }
@@ -653,7 +684,9 @@ pub async fn stream_claude_api(
                                 input: tool_use.input,
                             };
                             let tc_json = serde_json::to_string(&tc).unwrap_or_default();
-                            on_chunk.send(format!("\n__TOOL_CALL__:{}\n", tc_json)).map_err(|e| e.to_string())?;
+                            on_chunk
+                                .send(format!("\n__TOOL_CALL__:{}\n", tc_json))
+                                .map_err(|e| e.to_string())?;
                         }
                     }
                     Some("message_delta") => {

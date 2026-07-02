@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Minus, Plus, ChevronLeft, ChevronRight } from "lucide-react";
 import * as pdfjsLib from "pdfjs-dist";
+import { logger } from "../../lib/logger";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import "./PdfViewer.css";
 
@@ -67,7 +68,7 @@ export function PdfViewer({ pdfPath }: { pdfPath: string }) {
     }
 
     render().catch((e) => {
-      if (e?.name !== "RenderingCancelledException") console.error(e);
+      if (e?.name !== "RenderingCancelledException") logger.error(e);
     });
 
     return () => {

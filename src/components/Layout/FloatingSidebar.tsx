@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useEditorStore } from "../../stores/editorStore";
+import { logger } from "../../lib/logger";
 import { usePointerDrag } from "../../hooks/usePointerDrag";
 import { FileTree, type FileTreeHandle } from "../FileExplorer/FileTree";
 import "./FloatingSidebar.css";
@@ -113,7 +114,7 @@ export function FloatingSidebar({ onOpenFolder }: FloatingSidebarProps) {
         });
         setSearchResults(results);
       } catch (e) {
-        console.error("search error", e);
+        logger.error("search error", e);
         setSearchResults([]);
       } finally {
         setSearching(false);
@@ -133,7 +134,7 @@ export function FloatingSidebar({ onOpenFolder }: FloatingSidebarProps) {
           const content = await invoke<string>("read_file", { path });
           openTab(path, name, content);
         } catch (e) {
-          console.error("read_file error", e);
+          logger.error("read_file error", e);
           return;
         }
       } else {

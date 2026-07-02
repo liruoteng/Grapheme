@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { useEditorStore } from "../../stores/editorStore";
+import { DEFAULT_OLLAMA_URL } from "../../lib/constants";
 import "./SettingsDialog.css";
 
 type Section = "general" | "editor" | "preview" | "appearance" | "ai";
@@ -231,12 +232,12 @@ function AiSection() {
 
       {provider === "ollama" && (
         <>
-          <Row label="Ollama server URL" hint="Default: http://localhost:11434">
+          <Row label="Ollama server URL" hint={`Default: ${DEFAULT_OLLAMA_URL}`}>
             <input
               type="text"
               value={ollamaUrl}
               onChange={(e) => setOllamaUrl(e.target.value)}
-              placeholder="http://localhost:11434"
+              placeholder={DEFAULT_OLLAMA_URL}
             />
           </Row>
           <Row label="Model" hint="Select from installed models">

@@ -1,6 +1,6 @@
 [package]
 name = "grapheme"
-version = "0.0.1"
+version = "0.1.0"
 description = "Grapheme - A Typst IDE"
 authors = ["ruoteng"]
 edition = "2021"
@@ -36,3 +36,9 @@ comemo = "0.4"
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 # AI: HTTP client for Claude API and citation search
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+
+[lints.clippy]
+all = "warn"
+pedantic = "allow"
+nursery = "allow"
+cargo = "allow"

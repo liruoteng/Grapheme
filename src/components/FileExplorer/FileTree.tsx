@@ -1,31 +1,20 @@
 import { useState, useEffect, useCallback, useRef, forwardRef, useImperativeHandle } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { useEditorStore, FileEntry, isRecentlyWritten } from "../../stores/editorStore";
+import { toast } from "sonner";
+import { useEditorStore, type FileEntry, isRecentlyWritten } from "../../stores/editorStore";
+import { logger } from "../../lib/logger";
 import { ContextMenu, type ContextMenuItem } from "../Layout/ContextMenu";
 import { getFileIconMeta } from "./fileIcons";
 import { getActiveDragSource, getFileDragMime, setActiveDragSource } from "./fileDrag";
+import { useDragSource, useDropTarget } from "./useFileDragDrop";
+import { useFileContextMenu } from "./useFileContextMenu";
+import { useFileOperations } from "./useFileOperations";
 import "./FileTree.css";
 
 export interface FileTreeHandle {
   newFile: () => void;
   newFolder: () => void;
   refresh: () => void;
-}
-
-function setCustomDragImage(e: React.DragEvent, label: string, isDir: boolean) {
-  const ghost = document.createElement("div");
-  ghost.className = "drag-ghost";
-  const icon = document.createElement("span");
-  icon.className = "drag-ghost-icon";
-  icon.textContent = isDir ? "▶" : "·";
-  const text = document.createElement("span");
-  text.textContent = label;
-  ghost.append(icon, text);
-  document.body.appendChild(ghost);
-  if (typeof e.dataTransfer.setDragImage === "function") {
-    e.dataTransfer.setDragImage(ghost, 12, 12);
-  }
-  setTimeout(() => ghost.remove(), 0);
 }
 
 function FileIcon({ name, isDir }: { name: string; isDir: boolean }) {
@@ -58,19 +47,8 @@ function parentOf(p: string): string {
   return i <= 0 ? "/" : p.slice(0, i);
 }
 
-function basename(p: string): string {
-  const i = p.lastIndexOf("/");
-  return i < 0 ? p : p.slice(i + 1);
-}
-
 function joinPath(dir: string, name: string): string {
   return dir.endsWith("/") ? `${dir}${name}` : `${dir}/${name}`;
-}
-
-/** Prevent moving a folder into itself or any of its descendants. */
-function isSelfOrDescendant(source: string, target: string): boolean {
-  if (source === target) return true;
-  return target.startsWith(source + "/");
 }
 
 interface DirNodeProps {
@@ -94,10 +72,11 @@ function DirNode({ path, name, depth, onRefreshParent, onSelectDir, onClearDirSe
   const [children, setChildren] = useState<FileEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const [renamingTo, setRenamingTo] = useState<string | null>(null);
-  const [dropHover, setDropHover] = useState(false);
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const ctxMenu = useFileContextMenu();
+  const dragSource = useDragSource(path, name, true);
+  const dropTarget = useDropTarget(onRequestMove, onOsDrop, path);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -105,7 +84,7 @@ function DirNode({ path, name, depth, onRefreshParent, onSelectDir, onClearDirSe
       const entries = await invoke<FileEntry[]>("list_dir", { path });
       setChildren(entries);
     } catch (e) {
-      console.error("list_dir error", e);
+      logger.error("list_dir error", e);
     } finally {
       setLoading(false);
     }
@@ -144,7 +123,8 @@ function DirNode({ path, name, depth, onRefreshParent, onSelectDir, onClearDirSe
       await invoke("rename_path", { oldPath: path, newPath });
       onRefreshParent?.();
     } catch (e) {
-      console.error("rename error", e);
+      logger.error("rename error", e);
+      toast.error("Failed to rename");
     }
     setRenamingTo(null);
   }, [renamingTo, name, path, onRefreshParent]);
@@ -155,7 +135,8 @@ function DirNode({ path, name, depth, onRefreshParent, onSelectDir, onClearDirSe
       await invoke("delete_path", { path });
       onRefreshParent?.();
     } catch (e) {
-      console.error("delete error", e);
+      logger.error("delete error", e);
+      toast.error("Failed to delete folder");
     }
   }, [name, path, onRefreshParent]);
 
@@ -165,46 +146,9 @@ function DirNode({ path, name, depth, onRefreshParent, onSelectDir, onClearDirSe
     { separator: true },
     {
       label: "Reveal in Finder",
-      action: () => invoke("reveal_in_finder", { path }).catch(console.error),
+      action: () => invoke("reveal_in_finder", { path }).catch((e) => logger.error("reveal_in_finder error", e)),
     },
   ];
-
-  const onDragStart = (e: React.DragEvent) => {
-    e.stopPropagation();
-    e.dataTransfer.setData(getFileDragMime(), path);
-    e.dataTransfer.setData("text/plain", path);
-    e.dataTransfer.effectAllowed = "move";
-    setCustomDragImage(e, name, true);
-    setActiveDragSource(path);
-  };
-
-  const onDragEnd = () => { setActiveDragSource(null); };
-
-  const onDragOver = (e: React.DragEvent) => {
-    const hasFiles = e.dataTransfer.types.includes("Files");
-    const activeDragSource = getActiveDragSource();
-    if (!activeDragSource && !hasFiles) return;
-    e.preventDefault();
-    e.stopPropagation();
-    e.dataTransfer.dropEffect = activeDragSource ? "move" : "copy";
-    if (!dropHover) setDropHover(true);
-  };
-
-  const onDragLeave = () => setDropHover(false);
-
-  const onDrop = (e: React.DragEvent) => {
-    setDropHover(false);
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      onOsDrop(e.dataTransfer.files, path);
-      return;
-    }
-    const src = getActiveDragSource() ?? e.dataTransfer.getData(getFileDragMime());
-    if (!src) return;
-    setActiveDragSource(null);
-    onRequestMove(src, path);
-  };
 
   return (
     <div className="dir-node">
@@ -233,17 +177,17 @@ function DirNode({ path, name, depth, onRefreshParent, onSelectDir, onClearDirSe
         </div>
       ) : (
         <div
-          className={`tree-row dir-row${selectedDirPath === path ? " active" : ""}${dropHover ? " drop-target" : ""}`}
+          className={`tree-row dir-row${selectedDirPath === path ? " active" : ""}${dropTarget.dropHover ? " drop-target" : ""}`}
           style={{ paddingLeft: `${depth * 12 + 8}px` }}
           data-dir-path={path}
           draggable={depth > 0}
-          onDragStart={onDragStart}
-          onDragEnd={onDragEnd}
-          onDragOver={onDragOver}
-          onDragLeave={onDragLeave}
-          onDrop={onDrop}
+          onDragStart={dragSource.onDragStart}
+          onDragEnd={dragSource.onDragEnd}
+          onDragOver={dropTarget.onDragOver}
+          onDragLeave={dropTarget.onDragLeave}
+          onDrop={dropTarget.onDrop}
           onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); onSelectDir?.(path); }}
-          onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setCtxMenu({ x: e.clientX, y: e.clientY }); }}
+          onContextMenu={ctxMenu.open}
         >
           <span className={`dir-arrow ${open ? "open" : ""}`}>▶</span>
           <span className="tree-label">{name}</span>
@@ -253,9 +197,9 @@ function DirNode({ path, name, depth, onRefreshParent, onSelectDir, onClearDirSe
       {open && (
         <div
           className="dir-children"
-          onDragOver={onDragOver}
-          onDragLeave={onDragLeave}
-          onDrop={onDrop}
+          onDragOver={dropTarget.onDragOver}
+          onDragLeave={dropTarget.onDragLeave}
+          onDrop={dropTarget.onDrop}
         >
             {pendingCreate?.targetDir === path && (
             <InlineCreateInput pendingCreate={pendingCreate} depth={depth + 1} />
@@ -292,12 +236,12 @@ function DirNode({ path, name, depth, onRefreshParent, onSelectDir, onClearDirSe
           )}
         </div>
       )}
-      {ctxMenu && (
+      {ctxMenu.position && (
         <ContextMenu
-          x={ctxMenu.x}
-          y={ctxMenu.y}
+          x={ctxMenu.position.x}
+          y={ctxMenu.position.y}
           items={ctxItems}
-          onClose={() => setCtxMenu(null)}
+          onClose={ctxMenu.close}
         />
       )}
     </div>
@@ -317,9 +261,10 @@ function FileNode({ path, name, depth, onRefreshParent, highlighted, onClearDirS
   const openTab = useEditorStore((s) => s.openTab);
   const closeTab = useEditorStore((s) => s.closeTab);
   const activeTabPath = useEditorStore((s) => s.activeTabPath);
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const [renamingTo, setRenamingTo] = useState<string | null>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const ctxMenu = useFileContextMenu();
+  const dragSource = useDragSource(path, name, false);
 
   const openFile = useCallback(async () => {
     if (path.endsWith(".pdf")) {
@@ -338,7 +283,7 @@ function FileNode({ path, name, depth, onRefreshParent, highlighted, onClearDirS
         store.setActivePanels([...store.activePanels, "editor"]);
       }
     } catch (e) {
-      console.error("read_file error", e);
+      logger.error("read_file error", e);
     }
   }, [path, name, openTab]);
 
@@ -356,7 +301,8 @@ function FileNode({ path, name, depth, onRefreshParent, highlighted, onClearDirS
       closeTab(path);
       onRefreshParent?.();
     } catch (e) {
-      console.error("rename error", e);
+      logger.error("rename error", e);
+      toast.error("Failed to rename");
     }
     setRenamingTo(null);
   }, [renamingTo, name, path, closeTab, onRefreshParent]);
@@ -368,7 +314,8 @@ function FileNode({ path, name, depth, onRefreshParent, highlighted, onClearDirS
       closeTab(path);
       onRefreshParent?.();
     } catch (e) {
-      console.error("delete error", e);
+      logger.error("delete error", e);
+      toast.error("Failed to delete file");
     }
   }, [name, path, closeTab, onRefreshParent]);
 
@@ -380,24 +327,13 @@ function FileNode({ path, name, depth, onRefreshParent, highlighted, onClearDirS
     { separator: true },
     {
       label: "Reveal in Finder",
-      action: () => invoke("reveal_in_finder", { path }).catch(console.error),
+      action: () => invoke("reveal_in_finder", { path }).catch((e) => logger.error("reveal_in_finder error", e)),
     },
     {
       label: "Copy Path",
       action: () => navigator.clipboard.writeText(path),
     },
   ];
-
-  const onDragStart = (e: React.DragEvent) => {
-    e.stopPropagation();
-    e.dataTransfer.setData(getFileDragMime(), path);
-    e.dataTransfer.setData("text/plain", path);
-    e.dataTransfer.effectAllowed = "copyMove";
-    setCustomDragImage(e, name, false);
-    setActiveDragSource(path);
-  };
-
-  const onDragEnd = () => { setActiveDragSource(null); };
 
   if (renamingTo !== null) {
     return (
@@ -432,21 +368,21 @@ function FileNode({ path, name, depth, onRefreshParent, highlighted, onClearDirS
         className={`tree-row file-row${activeTabPath === path ? " active" : ""}${highlighted ? " drop-flash" : ""}`}
         style={{ paddingLeft: `${depth * 12 + 8}px` }}
         draggable
-        onDragStart={onDragStart}
-        onDragEnd={onDragEnd}
+        onDragStart={dragSource.onDragStart}
+        onDragEnd={dragSource.onDragEnd}
         onClick={(e) => { e.stopPropagation(); onClearDirSelection?.(); if (!path.endsWith(".pdf")) openFile(); }}
         onDoubleClick={(e) => { e.stopPropagation(); if (path.endsWith(".pdf")) openFile(); }}
-        onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setCtxMenu({ x: e.clientX, y: e.clientY }); }}
+        onContextMenu={ctxMenu.open}
       >
         <FileIcon name={name} isDir={false} />
         <span className="tree-label">{name}</span>
       </div>
-      {ctxMenu && (
+      {ctxMenu.position && (
         <ContextMenu
-          x={ctxMenu.x}
-          y={ctxMenu.y}
+          x={ctxMenu.position.x}
+          y={ctxMenu.position.y}
           items={ctxItems}
-          onClose={() => setCtxMenu(null)}
+          onClose={ctxMenu.close}
         />
       )}
     </>
@@ -479,46 +415,20 @@ function InlineCreateInput({ pendingCreate, depth }: { pendingCreate: PendingCre
   );
 }
 
-type ConflictChoice = "replace" | "stop" | "duplicate";
-
 export const FileTree = forwardRef<FileTreeHandle, { onOpenFolder: () => void }>(
 function FileTree({ onOpenFolder }, ref) {
-  const workspacePath = useEditorStore((s) => s.workspacePath);
-  const [refreshVersions, setRefreshVersions] = useState<Record<string, number>>({});
-  const [creating, setCreating] = useState<null | { type: "file" | "folder"; name: string }>(null);
   const [selectedDirPath, setSelectedDirPath] = useState<string | null>(null);
-  const [bodyCtxMenu, setBodyCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const [bodyDropHover, setBodyDropHover] = useState(false);
-  const [expandPath, setExpandPath] = useState<string | null>(null);
-  const [highlightPath, setHighlightPath] = useState<string | null>(null);
-  const highlightTimer = useRef<number | null>(null);
+  const bodyCtxMenu = useFileContextMenu();
   const bodyRef = useRef<HTMLDivElement>(null);
+  const ops = useFileOperations();
 
-  const askConflict = useCallback(async (srcName: string, destDirName: string): Promise<ConflictChoice> => {
-    const btn = await invoke<string>("show_move_conflict_dialog", { srcName, destDirName });
-    return btn === "Replace" ? "replace" : btn === "Keep Both" ? "duplicate" : "stop";
-  }, []);
+  const bumpRefreshRef = useRef(ops.bumpRefresh);
+  bumpRefreshRef.current = ops.bumpRefresh;
 
-  const flashTarget = useCallback((dir: string, filePath: string) => {
-    setExpandPath(dir);
-    setHighlightPath(filePath);
-    if (highlightTimer.current) window.clearTimeout(highlightTimer.current);
-    highlightTimer.current = window.setTimeout(() => {
-      setHighlightPath(null);
-      highlightTimer.current = null;
-    }, 1600);
-  }, []);
-
-  const bumpRefresh = useCallback((dir: string) => {
-    setRefreshVersions((r) => ({ ...r, [dir]: (r[dir] ?? 0) + 1 }));
-  }, []);
-
-  const bumpRefreshRef = useRef(bumpRefresh);
-  bumpRefreshRef.current = bumpRefresh;
-
-  // Auto-sync: watch workspace for external file system changes
   useEffect(() => {
-    if (!workspacePath) return;
+    const wsPath = ops.workspacePath;
+    if (!wsPath) return;
     let stopFn: (() => void) | null = null;
     let mounted = true;
     const bump = bumpRefreshRef.current;
@@ -526,7 +436,7 @@ function FileTree({ onOpenFolder }, ref) {
     import("@tauri-apps/plugin-fs").then(({ watchImmediate }) => {
       if (!mounted) return;
       watchImmediate(
-        workspacePath,
+        wsPath,
         (event) => {
           const paths = event.paths;
           const rawType = event.type;
@@ -536,14 +446,12 @@ function FileTree({ onOpenFolder }, ref) {
           const isAny = rawType === "any";
 
           for (const p of paths) {
-            if (!p.startsWith(workspacePath)) continue;
+            if (!p.startsWith(wsPath)) continue;
 
             if (isRemove) {
               const store = useEditorStore.getState();
               const tab = store.tabs.find((t) => t.path === p);
               if (tab && !tab.isDirty && !tab.isTemp) {
-                // Check if file still exists — atomic save (rename) can produce
-                // a remove event even though the file was recreated at same path.
                 invoke<string>("read_file", { path: p })
                   .then((content) => {
                     useEditorStore.setState((s) => ({
@@ -640,80 +548,9 @@ function FileTree({ onOpenFolder }, ref) {
       mounted = false;
       stopFn?.();
     };
-  }, [workspacePath]);
+  }, [ops.workspacePath]);
 
-  const moveNode = useCallback(async (src: string, destDir: string) => {
-    if (!workspacePath) return;
-    if (isSelfOrDescendant(src, destDir)) return;
-    const srcParent = parentOf(src);
-    if (srcParent === destDir) return;
-
-    const name = basename(src);
-    let destPath = joinPath(destDir, name);
-
-    const exists = await invoke<boolean>("path_exists", { path: destPath });
-    if (exists) {
-      const choice = await askConflict(name, basename(destDir) || destDir);
-
-      if (choice === "stop") return;
-
-      if (choice === "replace") {
-        try {
-          await invoke("delete_path", { path: destPath });
-        } catch (e) {
-          console.error("delete before replace error", e);
-          alert(`Failed to replace: ${e}`);
-          return;
-        }
-      } else {
-        // "duplicate" — find a free name
-        const dot = name.lastIndexOf(".");
-        const stem = dot > 0 ? name.slice(0, dot) : name;
-        const ext  = dot > 0 ? name.slice(dot) : "";
-        let i = 2;
-        while (true) {
-          const candidate = joinPath(destDir, `${stem} (${i})${ext}`);
-          const taken = await invoke<boolean>("path_exists", { path: candidate });
-          if (!taken) { destPath = candidate; break; }
-          i++;
-        }
-      }
-    }
-
-    try {
-      await invoke("rename_path", { oldPath: src, newPath: destPath });
-      bumpRefresh(srcParent);
-      bumpRefresh(destDir);
-      flashTarget(destDir, destPath);
-    } catch (e) {
-      console.error("move error", e);
-      alert(`Failed to move: ${e}`);
-    }
-  }, [workspacePath, bumpRefresh, flashTarget, askConflict]);
-
-  const copyOsFilesInto = useCallback(async (files: FileList, targetDir: string) => {
-    let lastDest: string | null = null;
-    for (const f of Array.from(files)) {
-      const dest = joinPath(targetDir, f.name);
-      try {
-        const buf = new Uint8Array(await f.arrayBuffer());
-        await invoke("write_file_bytes", { path: dest, bytes: Array.from(buf) });
-        lastDest = dest;
-      } catch (e) {
-        console.error("write_file_bytes error", f.name, e);
-        alert(`Failed to copy ${f.name}: ${e}`);
-      }
-    }
-    bumpRefresh(targetDir);
-    if (lastDest) flashTarget(targetDir, lastDest);
-  }, [bumpRefresh, flashTarget]);
-
-  const startCreating = useCallback((type: "file" | "folder") => {
-    setCreating({ type, name: "" });
-  }, []);
-
-  const handleRefresh = useCallback(() => { if (workspacePath) bumpRefresh(workspacePath); }, [workspacePath, bumpRefresh]);
-
+  const { startCreating, handleRefresh } = ops;
   useImperativeHandle(ref, () => ({
     newFile: () => startCreating("file"),
     newFolder: () => startCreating("folder"),
@@ -721,26 +558,27 @@ function FileTree({ onOpenFolder }, ref) {
   }), [startCreating, handleRefresh]);
 
   const handleCreateConfirm = async () => {
-    const name = creating?.name.trim();
-    if (!name || !workspacePath) { setCreating(null); return; }
-    const targetDir = selectedDirPath ?? workspacePath;
+    const name = ops.creating?.name.trim();
+    const wsPath = ops.workspacePath;
+    if (!name || !wsPath) { ops.setCreating(null); return; }
+    const targetDir = selectedDirPath ?? wsPath;
     const fullPath = joinPath(targetDir, name);
     try {
-      if (creating!.type === "file") {
+      if (ops.creating!.type === "file") {
         await invoke("create_file", { path: fullPath });
       } else {
         await invoke("create_dir", { path: fullPath });
       }
     } catch (e) {
-      console.error("create error", e);
+      logger.error("create error", e);
+      toast.error("Failed to create");
     }
-    setCreating(null);
-    bumpRefresh(targetDir);
+    ops.setCreating(null);
+    ops.bumpRefresh(targetDir);
   };
 
-  const handleCreateCancel = () => setCreating(null);
+  const handleCreateCancel = () => ops.setCreating(null);
 
-  // Empty-body interactions ──────────────────────────────
   const onBodyClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) {
       setSelectedDirPath(null);
@@ -751,7 +589,7 @@ function FileTree({ onOpenFolder }, ref) {
     if (e.target !== e.currentTarget) return;
     e.preventDefault();
     setSelectedDirPath(null);
-    setBodyCtxMenu({ x: e.clientX, y: e.clientY });
+    bodyCtxMenu.open(e);
   };
 
   const onBodyDragOver = (e: React.DragEvent) => {
@@ -769,29 +607,29 @@ function FileTree({ onOpenFolder }, ref) {
 
   const onBodyDrop = (e: React.DragEvent) => {
     setBodyDropHover(false);
-    if (!workspacePath) return;
-    // Only handle drops that landed on the body itself — child rows handle their own.
+    const wsPath = ops.workspacePath;
+    if (!wsPath) return;
     if (e.target !== e.currentTarget) return;
     e.preventDefault();
-    const dest = selectedDirPath ?? workspacePath;
+    const dest = selectedDirPath ?? wsPath;
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      copyOsFilesInto(e.dataTransfer.files, dest);
+      ops.copyOsFilesInto(e.dataTransfer.files, dest);
       return;
     }
     const src = getActiveDragSource() ?? e.dataTransfer.getData(getFileDragMime());
     if (!src) return;
     setActiveDragSource(null);
-    moveNode(src, workspacePath);
+    ops.moveNode(src, wsPath);
   };
 
   const bodyCtxItems: ContextMenuItem[] = [
-    { label: "New File", action: () => startCreating("file") },
-    { label: "New Folder", action: () => startCreating("folder") },
+    { label: "New File", action: () => ops.startCreating("file") },
+    { label: "New Folder", action: () => ops.startCreating("folder") },
     { separator: true },
     {
       label: "Reveal in Finder",
-      action: () => workspacePath && invoke("reveal_in_finder", { path: workspacePath }).catch(console.error),
-      disabled: !workspacePath,
+      action: () => ops.workspacePath && invoke("reveal_in_finder", { path: ops.workspacePath }).catch((e) => logger.error("reveal_in_finder error", e)),
+      disabled: !ops.workspacePath,
     },
   ];
 
@@ -806,25 +644,25 @@ function FileTree({ onOpenFolder }, ref) {
         onDragLeave={onBodyDragLeave}
         onDrop={onBodyDrop}
       >
-        {workspacePath ? (
+        {ops.workspacePath ? (
           <DirNode
-            key={workspacePath}
-            path={workspacePath}
-            name={workspacePath.split("/").pop() ?? workspacePath}
+            key={ops.workspacePath}
+            path={ops.workspacePath}
+            name={ops.workspacePath.split("/").pop() ?? ops.workspacePath}
             depth={0}
             onSelectDir={setSelectedDirPath}
             onClearDirSelection={() => setSelectedDirPath(null)}
             selectedDirPath={selectedDirPath}
-            refreshVersions={refreshVersions}
-            onRequestMove={moveNode}
-            onOsDrop={copyOsFilesInto}
-            expandPath={expandPath}
-            highlightPath={highlightPath}
-            pendingCreate={creating ? {
-              type: creating.type,
-              targetDir: selectedDirPath ?? workspacePath,
-              name: creating.name,
-              onChangeName: (n) => setCreating((c) => c ? { ...c, name: n } : null),
+            refreshVersions={ops.refreshVersions}
+            onRequestMove={ops.moveNode}
+            onOsDrop={ops.copyOsFilesInto}
+            expandPath={ops.expandPath}
+            highlightPath={ops.highlightPath}
+            pendingCreate={ops.creating ? {
+              type: ops.creating.type,
+              targetDir: selectedDirPath ?? ops.workspacePath,
+              name: ops.creating.name,
+              onChangeName: (n) => ops.setCreating((c) => c ? { ...c, name: n } : null),
               onConfirm: handleCreateConfirm,
               onCancel: handleCreateCancel,
             } : null}
@@ -838,12 +676,12 @@ function FileTree({ onOpenFolder }, ref) {
           </div>
         )}
       </div>
-      {bodyCtxMenu && (
+      {bodyCtxMenu.position && (
         <ContextMenu
-          x={bodyCtxMenu.x}
-          y={bodyCtxMenu.y}
+          x={bodyCtxMenu.position.x}
+          y={bodyCtxMenu.position.y}
           items={bodyCtxItems}
-          onClose={() => setBodyCtxMenu(null)}
+          onClose={bodyCtxMenu.close}
         />
       )}
     </div>

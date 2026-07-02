@@ -2,6 +2,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { X, ArrowDownToLine, Copy, Search } from "lucide-react";
 import { useEditorStore, useActiveTab, type Reference } from "../../stores/editorStore";
+import { logger } from "../../lib/logger";
 import { getActiveDragSource, getFileDragMime, setActiveDragSource } from "../FileExplorer/fileDrag";
 import "./ReferencesPanel.css";
 
@@ -383,7 +384,7 @@ export function ReferencesPanel() {
       const { openPath } = await import("@tauri-apps/plugin-opener");
       await openPath(ref.path);
     } catch (e) {
-      console.error("openPath failed", e);
+      logger.error("openPath failed", e);
     }
   }, []);
 
