@@ -91,9 +91,32 @@ export function FloatingSidebar({ onOpenFolder }: FloatingSidebarProps) {
   const toggle = useCallback(() => setSidebarOpen(!sidebarOpen), [sidebarOpen, setSidebarOpen]);
 
   useEffect(() => {
-    const offset = sidebarOpen ? sidebarWidth + 16 : 56;
-    document.documentElement.style.setProperty("--fsb-content-offset", `${offset}px`);
+    const mobileQuery = window.matchMedia("(max-width: 640px)");
+    const collapseOnMobile = () => {
+      if (mobileQuery.matches) setSidebarOpen(false);
+    };
+
+    collapseOnMobile();
+    mobileQuery.addEventListener("change", collapseOnMobile);
+
     return () => {
+      mobileQuery.removeEventListener("change", collapseOnMobile);
+    };
+  }, [setSidebarOpen]);
+
+  useEffect(() => {
+    const mobileQuery = window.matchMedia("(max-width: 640px)");
+
+    const updateOffset = () => {
+      const offset = sidebarOpen && !mobileQuery.matches ? sidebarWidth + 16 : 56;
+      document.documentElement.style.setProperty("--fsb-content-offset", `${offset}px`);
+    };
+
+    updateOffset();
+    mobileQuery.addEventListener("change", updateOffset);
+
+    return () => {
+      mobileQuery.removeEventListener("change", updateOffset);
       document.documentElement.style.removeProperty("--fsb-content-offset");
     };
   }, [sidebarOpen, sidebarWidth]);

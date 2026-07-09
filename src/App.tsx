@@ -35,6 +35,7 @@ import { useTauriEvents } from "./hooks/useTauriEvents";
 import { useFilePolling } from "./hooks/useFilePolling";
 import { useMenuListeners } from "./hooks/useMenuListeners";
 import { markProfilerDuration } from "./lib/performanceProfiler";
+import { isTauriRuntime } from "./lib/tauriRuntime";
 import { Toaster } from "./components/ui/sonner";
 import { toast } from "sonner";
 import "./App.css";
@@ -105,6 +106,11 @@ export default function App() {
 
   // ── Open Folder ──────────────────────────────────────────────────────────
   const handleOpenFolder = useCallback(async () => {
+    if (!isTauriRuntime()) {
+      toast.info("Folder access is available in the desktop app");
+      return;
+    }
+
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
       const selected = await open({ directory: true, multiple: false });
@@ -167,6 +173,11 @@ export default function App() {
 
   // ── Export PDF — pick destination, save, compile, then open ─────────────
   const handleExportPdf = useCallback(async () => {
+    if (!isTauriRuntime()) {
+      toast.info("PDF export is available in the desktop app");
+      return;
+    }
+
     const tab = useEditorStore.getState().activeTab();
     if (!tab) return;
     const isTyp = tab.path.endsWith(".typ");
@@ -195,6 +206,8 @@ export default function App() {
 
   // ── Snapshot: called on Cmd+S after the file is written ──────────────────
   const handleSnapshot = useCallback(async (path: string) => {
+    if (!isTauriRuntime()) return;
+
     const tab = useEditorStore.getState().tabs.find((t) => t.path === path);
     if (tab?.isTemp) return;
     try {
@@ -213,6 +226,12 @@ export default function App() {
   // ── Save: write file → mark clean → trigger preview compile ──────────────
   const handleSave = useCallback(async (path: string, content: string, isExplicit: boolean = false) => {
     const saveStartedAt = performance.now();
+    if (!isTauriRuntime()) {
+      markTabClean(path);
+      markProfilerDuration("file.save", saveStartedAt, path);
+      return;
+    }
+
     const tab = useEditorStore.getState().tabs.find((t) => t.path === path);
     if (isExplicit && tab?.isTemp) {
       try {
@@ -268,6 +287,13 @@ export default function App() {
   // ── Live preview: fire-and-forget to compile actor, results via events ──────
   const handlePreviewTrigger = useCallback((path: string, content: string) => {
     const previewStartedAt = performance.now();
+    if (!isTauriRuntime()) {
+      useEditorStore.getState().setPreviewLoading(false);
+      useEditorStore.getState().setPreviewError("Preview is available in the desktop app.");
+      markProfilerDuration("preview.browser-unavailable", previewStartedAt, path);
+      return;
+    }
+
     // Markdown uses the tinymist sidecar: convert in-memory content to Typst
     // and write to the temp .preview.typ file. tinymist's file watcher detects
     // the change and recompiles automatically.
@@ -688,6 +714,12 @@ const PreviewPanelControls = memo(function PreviewPanelControls({
     if (!tab) return;
     const tabIsMd = tab.path.endsWith(".md") || tab.path.endsWith(".markdown");
     if (!tab.path.endsWith(".typ") && !tabIsMd) return;
+    if (!isTauriRuntime()) {
+      useEditorStore.getState().setPreviewLoading(false);
+      useEditorStore.getState().setPreviewError("Preview is available in the desktop app.");
+      return;
+    }
+
     try {
       await invoke("write_file", { path: tab.path, contents: tab.content });
       useEditorStore.getState().markTabClean(tab.path);

@@ -8,6 +8,7 @@ import { useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useEditorStore } from "../stores/editorStore";
 import { logger } from "../lib/logger";
+import { isTauriRuntime } from "../lib/tauriRuntime";
 
 export interface SaveEvent {
   path: string;
@@ -17,6 +18,8 @@ export interface SaveEvent {
 export function usePreview(saveEvent: SaveEvent | null) {
   useEffect(() => {
     if (!saveEvent) return;
+    if (!isTauriRuntime()) return;
+
     const p = saveEvent.path;
     const isMd = p.endsWith(".md") || p.endsWith(".markdown");
     if (!p.endsWith(".typ") && !isMd) return;

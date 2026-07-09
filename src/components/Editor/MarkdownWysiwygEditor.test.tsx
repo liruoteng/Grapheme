@@ -349,6 +349,10 @@ describe("MarkdownWysiwygEditor", () => {
       expect(container.querySelector(".cm-md-table-render")).toBeInTheDocument();
     });
 
+    const cells = container.querySelectorAll(".cm-md-table-render td");
+    fireEvent.mouseDown(cells[2], { button: 0 });
+    fireEvent.mouseUp(cells[2], { button: 0 });
+
     const deleteRow = [...container.querySelectorAll("button")].find((button) => button.textContent === "- Row");
     fireEvent.click(deleteRow!);
 
@@ -370,6 +374,10 @@ describe("MarkdownWysiwygEditor", () => {
     await waitFor(() => {
       expect(container.querySelector(".cm-md-table-render")).toBeInTheDocument();
     });
+
+    const cells = container.querySelectorAll(".cm-md-table-render td");
+    fireEvent.mouseDown(cells[2], { button: 0 });
+    fireEvent.mouseUp(cells[2], { button: 0 });
 
     const deleteColumn = [...container.querySelectorAll("button")].find((button) => button.textContent === "- Column");
     fireEvent.click(deleteColumn!);

@@ -5,6 +5,7 @@ import type { LspStatus } from "../components/Editor/lsp-client";
 import { extractOutline, formatOutlineForContext, formatReferencesForContext, formatTabsForContext, type OutlineItem } from "../lib/utils";
 import { DEFAULT_OLLAMA_URL } from "../lib/constants";
 import { logger } from "../lib/logger";
+import { isTauriRuntime } from "../lib/tauriRuntime";
 
 // Tracks paths that were just written by the app so the FS watcher
 // can skip re-reading them (avoids redundant content update after save).
@@ -257,6 +258,8 @@ const PERSISTED_KEYS = [
 
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 function schedulePersist(getState: () => EditorState) {
+  if (!isTauriRuntime()) return;
+
   if (persistTimer) clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
     const s = getState();
@@ -533,6 +536,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   hydrateSettings: async () => {
+    if (!isTauriRuntime()) return;
+
     try {
       const raw = await invoke<string>("read_settings");
       if (!raw) return;

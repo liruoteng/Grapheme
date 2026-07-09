@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { FileText, AlertTriangle } from "lucide-react";
 import { useEditorStore } from "../../stores/editorStore";
+import { isTauriRuntime } from "../../lib/tauriRuntime";
 import "./PreviewPanel.css";
 
 function isPreviewablePath(path: string | null): boolean {
@@ -29,6 +30,12 @@ export const SidecarPreviewPanel = memo(function SidecarPreviewPanel() {
   const reqIdRef = useRef(0);
 
   useEffect(() => {
+    if (!isTauriRuntime()) {
+      setUrl(null);
+      setError(null);
+      return;
+    }
+
     if (!activeTabPath || !isPreviewablePath(activeTabPath) || activeTabPath.startsWith("__temp__")) {
       setUrl(null);
       setError(null);
@@ -41,21 +48,30 @@ export const SidecarPreviewPanel = memo(function SidecarPreviewPanel() {
     setUrl(null);
 
     const invertColors = theme === "dark" ? "always" : "never";
+    const startupTimer = window.setTimeout(() => {
+      if (reqIdRef.current !== id) return;
+      setError("Preview server did not start within 10 seconds. Try recompiling or reopening the preview panel.");
+    }, 10000);
 
     invoke<string>("start_sidecar_preview", { path: activeTabPath, invertColors })
       .then((serverUrl) => {
+        clearTimeout(startupTimer);
         if (reqIdRef.current !== id) return;
         setUrl(serverUrl);
       })
       .catch((e) => {
+        clearTimeout(startupTimer);
         if (reqIdRef.current !== id) return;
         setError(typeof e === "string" ? e : String(e));
       });
+
+    return () => clearTimeout(startupTimer);
   }, [activeTabPath, theme]);
 
   // On unmount, shut down the child. Re-activations will restart it.
   useEffect(() => {
     return () => {
+      if (!isTauriRuntime()) return;
       invoke("stop_sidecar_preview").catch(() => {});
     };
   }, []);
@@ -75,6 +91,15 @@ export const SidecarPreviewPanel = memo(function SidecarPreviewPanel() {
       <div className="preview-panel preview-error">
         <div className="preview-error-icon"><AlertTriangle size={44} /></div>
         <pre className="preview-error-text">{error}</pre>
+      </div>
+    );
+  }
+
+  if (!isTauriRuntime()) {
+    return (
+      <div className="preview-panel preview-error">
+        <div className="preview-error-icon"><AlertTriangle size={44} /></div>
+        <pre className="preview-error-text">Preview is available in the desktop app.</pre>
       </div>
     );
   }

@@ -206,7 +206,7 @@
   position: absolute;
   top: calc(100% + var(--space-2));
   right: 0;
-  width: 220px;
+  width: min(220px, calc(100vw - 16px));
   background: var(--bg-elevated);
   border: var(--border-hairline-medium);
   border-radius: var(--radius-panel);
@@ -214,6 +214,16 @@
   z-index: 200;
   box-shadow: var(--shadow-menu);
   backdrop-filter: blur(12px);
+}
+
+@media (max-width: 640px) {
+  .main-content {
+    padding-left: 56px;
+  }
+
+  .panel-selector-anchor {
+    right: var(--space-2);
+  }
 }
 
 .layout-dd-header {
@@ -793,6 +803,7 @@
   flex-direction: column;
   align-items: center;
   gap: 1rem;
+  width: min(320px, calc(100% - 32px));
   pointer-events: auto;
 }
 
@@ -807,13 +818,14 @@
   font-size: 0.95rem;
   color: var(--text-muted);
   margin-bottom: 0.5rem;
+  text-align: center;
 }
 
 .welcome-actions {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
-  width: 300px;
+  width: min(300px, 100%);
 }
 
 .welcome-action {
@@ -849,6 +861,7 @@
 .welcome-action-text {
   display: flex;
   flex: 1;
+  min-width: 0;
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
@@ -857,6 +870,10 @@
 .welcome-action-label {
   font-size: 0.9rem;
   font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .welcome-action-hint {
@@ -870,6 +887,7 @@
   color: var(--text-dim);
   text-align: center;
   margin-top: 0.5rem;
+  max-width: 100%;
 }
 
 .welcome-hint-key {

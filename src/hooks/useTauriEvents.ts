@@ -2,9 +2,12 @@ import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { useEditorStore } from "../stores/editorStore";
+import { isTauriRuntime } from "../lib/tauriRuntime";
 
 export function useTauriEvents() {
   useEffect(() => {
+    if (!isTauriRuntime()) return;
+
     const unlisten1 = listen<{ total_pages: number; updates: { index: number; svg: string }[] }>("preview-result", (e) => {
       const { applyPreviewUpdate, setLastCompileMs, setPreviewLoading, compileStartedAt } = useEditorStore.getState();
       if (compileStartedAt !== null) setLastCompileMs(performance.now() - compileStartedAt);

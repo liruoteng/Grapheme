@@ -1,9 +1,12 @@
 import { useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useEditorStore } from "../stores/editorStore";
+import { isTauriRuntime } from "../lib/tauriRuntime";
 
 export function useFilePolling() {
   useEffect(() => {
+    if (!isTauriRuntime()) return;
+
     const POLL_MS = 2000;
     let timer: ReturnType<typeof setInterval> | null = null;
     let pending = false;

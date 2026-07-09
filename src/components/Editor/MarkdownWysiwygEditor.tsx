@@ -1157,7 +1157,7 @@ class MarkdownTableWidget extends WidgetType {
         for (let col = selectedRange.startCol; col <= selectedRange.endCol; col += 1) indexes.push(col);
         return indexes;
       }
-      return draftHeader.length > 0 ? [draftHeader.length - 1] : [];
+      return activeColIndex !== null ? [activeColIndex] : [];
     };
 
     const selectedDataRowIndexes = () => {
@@ -1166,7 +1166,7 @@ class MarkdownTableWidget extends WidgetType {
         for (let row = Math.max(1, selectedRange.startRow); row <= selectedRange.endRow; row += 1) indexes.push(row - 1);
         if (indexes.length > 0) return indexes;
       }
-      return draftRows.length > 0 ? [draftRows.length - 1] : [];
+      return activeRowIndex !== null && activeRowIndex > 0 ? [activeRowIndex - 1] : [];
     };
 
     const nextTableSource = (header: string[], alignments: MarkdownTable["alignments"], rows: string[][]) => (
@@ -1668,6 +1668,7 @@ class MarkdownTableWidget extends WidgetType {
     const deleteRowBtn = document.createElement("button");
     deleteRowBtn.type = "button";
     deleteRowBtn.textContent = "- Row";
+    deleteRowBtn.title = "Delete the selected row or active data row";
     deleteRowBtn.addEventListener("mousedown", (event) => event.preventDefault());
     deleteRowBtn.addEventListener("click", (event) => {
       event.preventDefault();
@@ -1684,6 +1685,7 @@ class MarkdownTableWidget extends WidgetType {
     const deleteColBtn = document.createElement("button");
     deleteColBtn.type = "button";
     deleteColBtn.textContent = "- Column";
+    deleteColBtn.title = "Delete the selected column or active column";
     deleteColBtn.addEventListener("mousedown", (event) => event.preventDefault());
     deleteColBtn.addEventListener("click", (event) => {
       event.preventDefault();
@@ -1741,6 +1743,7 @@ class MarkdownTableWidget extends WidgetType {
       handle.dataset.index = `${index}`;
       handle.textContent = "...";
       handle.title = "Drag to move column";
+      handle.setAttribute("aria-label", `Move column ${index + 1}`);
       handle.addEventListener("mouseenter", () => setActiveColumnHandle(index));
       handle.addEventListener("focus", () => setActiveColumnHandle(index));
       handle.addEventListener("mousedown", (event) => startAxisDrag(event, "column", index));
@@ -1786,6 +1789,7 @@ class MarkdownTableWidget extends WidgetType {
       handle.dataset.index = `${index}`;
       handle.textContent = "...";
       handle.title = "Drag to move row";
+      handle.setAttribute("aria-label", `Move row ${index + 1}`);
       handle.addEventListener("mouseenter", () => setActiveRowHandle(index));
       handle.addEventListener("focus", () => setActiveRowHandle(index));
       handle.addEventListener("mousedown", (event) => startAxisDrag(event, "row", index));
@@ -1826,6 +1830,7 @@ class MarkdownTableWidget extends WidgetType {
     addColumnControl.className = "cm-md-table-margin-add cm-md-table-add-column";
     addColumnControl.textContent = "+";
     addColumnControl.title = "Add column";
+    addColumnControl.setAttribute("aria-label", "Add column");
     addColumnControl.addEventListener("mousedown", (event) => event.preventDefault());
     addColumnControl.addEventListener("click", (event) => {
       event.preventDefault();
@@ -1853,6 +1858,7 @@ class MarkdownTableWidget extends WidgetType {
     addRowControl.className = "cm-md-table-margin-add cm-md-table-add-row";
     addRowControl.textContent = "+";
     addRowControl.title = "Add row";
+    addRowControl.setAttribute("aria-label", "Add row");
     addRowControl.addEventListener("mousedown", (event) => event.preventDefault());
     addRowControl.addEventListener("click", (event) => {
       event.preventDefault();
@@ -3689,6 +3695,8 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
   const viewRef = useRef<EditorView | null>(null);
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previewUpdateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingAutoSaveRef = useRef<{ path: string; value: string } | null>(null);
+  const pendingPreviewRef = useRef<{ path: string; value: string } | null>(null);
   const pointerScrollSnapshotRef = useRef<ScrollSnapshot | null>(null);
   const pointerScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollbarTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -3728,6 +3736,29 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
     useEditorStore.getState().setSelectedText(null);
   }, [activeTabPath]);
 
+  const flushPendingPersistence = useCallback(() => {
+    if (previewUpdateTimer.current) {
+      clearTimeout(previewUpdateTimer.current);
+      previewUpdateTimer.current = null;
+    }
+    if (autoSaveTimer.current) {
+      clearTimeout(autoSaveTimer.current);
+      autoSaveTimer.current = null;
+    }
+
+    const pendingPreview = pendingPreviewRef.current;
+    pendingPreviewRef.current = null;
+    if (pendingPreview) {
+      onPreviewRef.current?.(pendingPreview.path, pendingPreview.value);
+    }
+
+    const pendingSave = pendingAutoSaveRef.current;
+    pendingAutoSaveRef.current = null;
+    if (pendingSave) {
+      onSaveRef.current?.(pendingSave.path, pendingSave.value, false);
+    }
+  }, []);
+
   const handleChange = useCallback((view: EditorView) => {
     const path = pathRef.current;
     if (!path) return;
@@ -3737,13 +3768,21 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
     setLastEditTime(Date.now());
 
     if (previewUpdateTimer.current) clearTimeout(previewUpdateTimer.current);
+    pendingPreviewRef.current = { path, value };
     previewUpdateTimer.current = setTimeout(() => {
-      onPreviewRef.current?.(path, value);
+      const pending = pendingPreviewRef.current;
+      pendingPreviewRef.current = null;
+      previewUpdateTimer.current = null;
+      if (pending) onPreviewRef.current?.(pending.path, pending.value);
     }, previewUpdateDebounceMs);
 
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    pendingAutoSaveRef.current = { path, value };
     autoSaveTimer.current = setTimeout(() => {
-      onSaveRef.current?.(path, value, false);
+      const pending = pendingAutoSaveRef.current;
+      pendingAutoSaveRef.current = null;
+      autoSaveTimer.current = null;
+      if (pending) onSaveRef.current?.(pending.path, pending.value, false);
     }, 1500);
   }, [setLastEditTime, updateTabContent]);
 
@@ -4177,12 +4216,11 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
 
   useEffect(() => {
     return () => {
-      if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
-      if (previewUpdateTimer.current) clearTimeout(previewUpdateTimer.current);
+      flushPendingPersistence();
       if (pointerScrollTimerRef.current) clearTimeout(pointerScrollTimerRef.current);
       if (scrollbarTimerRef.current) clearTimeout(scrollbarTimerRef.current);
     };
-  }, []);
+  }, [flushPendingPersistence]);
 
   const handleSlashSelect = useCallback((command: SlashCommand) => {
     const view = viewRef.current;

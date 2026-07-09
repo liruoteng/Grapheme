@@ -461,3 +461,21 @@ body.pm-resizing-row * { cursor: row-resize !important; user-select: none !impor
   flex-direction: column;
   overflow: hidden;
 }
+
+@media (max-width: 640px) {
+  .pm-flex-row {
+    flex-direction: column;
+  }
+
+  .pm-col-handle {
+    display: none;
+  }
+
+  .pm-panel {
+    min-height: 220px;
+  }
+
+  .pm-panel-title {
+    max-width: min(160px, 48vw);
+  }
+}

@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useEditorStore } from "../stores/editorStore";
 import { logger } from "../lib/logger";
+import { isTauriRuntime } from "../lib/tauriRuntime";
 
 interface MenuListenerDeps {
   handleNewFile: (kind?: "typ" | "md") => void;
@@ -33,6 +34,8 @@ export function useMenuListeners({
   setImportResult,
 }: MenuListenerDeps) {
   useEffect(() => {
+    if (!isTauriRuntime()) return;
+
     const unlisteners: Promise<() => void>[] = [];
 
     const isMac = navigator.platform.startsWith("Mac");
