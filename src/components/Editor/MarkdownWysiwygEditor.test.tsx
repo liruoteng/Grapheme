@@ -157,6 +157,7 @@ describe("MarkdownWysiwygEditor", () => {
     expect(view).toBeTruthy();
 
     fireEvent.mouseDown(content, { button: 0, clientX: 20, clientY: 20 });
+    fireEvent.mouseMove(content, { buttons: 1, clientX: 30, clientY: 20 });
     view!.dispatch({ selection: EditorSelection.cursor(3) });
 
     expect(container.querySelector(".cm-md-marker--active")).not.toBeInTheDocument();
@@ -165,6 +166,27 @@ describe("MarkdownWysiwygEditor", () => {
 
     await waitFor(() => {
       expect(container.querySelector(".cm-md-marker--active")).toBeInTheDocument();
+    });
+  });
+
+  it("keeps heading markdown visible after clicking a heading at the start of the document", async () => {
+    const path = "/workspace/examples/markdown/click-heading.md";
+    useEditorStore.getState().openTab(path, "click-heading.md", "# Heading\n\nBody\n");
+
+    const { container } = render(<MarkdownWysiwygEditor />);
+    await waitFor(() => {
+      const element = container.querySelector(".cm-md-heading") as HTMLElement | null;
+      expect(element).toBeInTheDocument();
+    });
+    const content = container.querySelector(".cm-content") as HTMLElement;
+    const view = EditorView.findFromDOM(content);
+
+    fireEvent.mouseDown(content, { button: 0, clientX: 20, clientY: 20 });
+    view!.dispatch({ selection: EditorSelection.cursor(0) });
+    fireEvent.mouseUp(content, { button: 0, clientX: 20, clientY: 20 });
+
+    await waitFor(() => {
+      expect(container.querySelector(".cm-heading-marker-1.cm-md-marker--active")).toBeInTheDocument();
     });
   });
 

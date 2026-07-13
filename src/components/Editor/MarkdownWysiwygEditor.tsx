@@ -69,6 +69,8 @@ type MarkdownDecorationBuildOptions = {
   includeInline?: boolean;
   ranges?: readonly DecorationBuildRange[];
   suppressActiveInline?: boolean;
+  allowDefaultCursor?: boolean;
+  selectionOverride?: { from: number; to: number };
 };
 
 type InlineRange = {
@@ -3179,10 +3181,10 @@ function buildMarkdownDecorations(state: EditorState, options: MarkdownDecoratio
   const addLatexSyntax = (lineText: string, lineFrom: number) => {
     if (includeInline) addLatexSyntaxTokenDecorations(ranges, lineText, lineFrom);
   };
-  const selection = state.selection.main;
+  const selection = options.selectionOverride ?? state.selection.main;
   const cursorFrom = selection.from;
   const cursorTo = selection.to;
-  const selectionEmpty = selection.empty;
+  const selectionEmpty = selection.from === selection.to;
   const doc = state.doc;
   const enableCodeSyntaxHighlighting = doc.length <= codeSyntaxHighlightMaxDocLength;
   const frontmatter = frontmatterAtTop(state);
@@ -3397,8 +3399,9 @@ function buildMarkdownDecorations(state: EditorState, options: MarkdownDecoratio
       continue;
     }
 
-    const isDefaultCursor = cursorFrom === 0 && cursorTo === 0 && selection.empty;
-    const activeLine = showActiveInline && selectionEmpty && !isDefaultCursor && cursorTo >= line.from && cursorFrom <= line.to;
+    const isDefaultCursor = cursorFrom === 0 && cursorTo === 0 && selectionEmpty;
+    const activeLine = showActiveInline && selectionEmpty && (!isDefaultCursor || options.allowDefaultCursor === true)
+      && cursorTo >= line.from && cursorFrom <= line.to;
     const heading = text.match(/^(#{1,6})\s+/);
     const blockquote = text.match(/^((?:>\s*)+)/);
     const task = text.match(/^(\s*)([-*+])\s+\[([ xX])\]\s+/);
@@ -3564,7 +3567,11 @@ const markdownImageAtomicRangeField = StateField.define<DecorationSet>({
   provide: (field) => EditorView.atomicRanges.of((view) => view.state.field(field)),
 });
 
-function markdownWysiwygDecorations(isPointerSelectionActive?: () => boolean): Extension {
+function markdownWysiwygDecorations(
+  isPointerSelectionActive?: () => boolean,
+  pointerSelectionOverride?: () => { from: number; to: number } | null,
+  isMarkdownSyntaxRevealed?: () => boolean,
+): Extension {
   const decorationField = StateField.define<DecorationSet>({
     create: (state) => buildMarkdownDecorations(state, { includeInline: false }),
     update(value, transaction) {
@@ -3594,7 +3601,11 @@ function markdownWysiwygDecorations(isPointerSelectionActive?: () => boolean): E
         transaction.effects.some((effect) => effect.is(revealMarkdownSyntaxEffect)) ||
         (transaction.selection && !isPointerSelectionActive?.())
       ) {
-        return buildMarkdownDecorations(transaction.state, { includeInline: false });
+        return buildMarkdownDecorations(transaction.state, {
+          includeInline: false,
+          suppressActiveInline: isPointerSelectionActive?.(),
+          allowDefaultCursor: isMarkdownSyntaxRevealed?.(),
+        });
       }
       return value;
     },
@@ -3605,7 +3616,8 @@ function markdownWysiwygDecorations(isPointerSelectionActive?: () => boolean): E
     buildMarkdownDecorations(view.state, {
       includeLayout: false,
       ranges: view.visibleRanges,
-      suppressActiveInline: isPointerSelectionActive?.(),
+      selectionOverride: pointerSelectionOverride?.() ?? undefined,
+      allowDefaultCursor: isMarkdownSyntaxRevealed?.(),
     })
   );
 
@@ -3701,6 +3713,8 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
   const pointerScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollbarTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pointerSelectionActiveRef = useRef(false);
+  const pointerSelectionStartRef = useRef<{ from: number; to: number } | null>(null);
+  const markdownSyntaxRevealedRef = useRef(false);
   const themeCompartment = useRef(new Compartment());
   const lastExternalSeq = useRef<number | undefined>(undefined);
   const onSaveRef = useRef(onSave);
@@ -3919,7 +3933,11 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
     tableSourceEditRangeField,
     imageSourceEditRangeField,
     htmlBlockEditRangeField,
-    markdownWysiwygDecorations(() => pointerSelectionActiveRef.current),
+    markdownWysiwygDecorations(
+      () => pointerSelectionActiveRef.current,
+      () => pointerSelectionStartRef.current,
+      () => markdownSyntaxRevealedRef.current,
+    ),
     EditorView.lineWrapping,
     keymap.of([
       {
@@ -3981,6 +3999,8 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
       mousedown(event, view) {
         if (event.button !== 0) return false;
         pointerSelectionActiveRef.current = true;
+        const selection = view.state.selection.main;
+        pointerSelectionStartRef.current = { from: selection.from, to: selection.to };
         let pointerPos: number | null = null;
         try {
           pointerPos = view.posAtCoords({ x: event.clientX, y: event.clientY });
@@ -4001,6 +4021,10 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
       },
       mouseup(_event, view) {
         releasePointerScrollSnapshot();
+        if (view.state.selection.main.empty) {
+          pointerSelectionStartRef.current = null;
+        }
+        markdownSyntaxRevealedRef.current = true;
         revealMarkdownSyntax(view);
         return false;
       },
