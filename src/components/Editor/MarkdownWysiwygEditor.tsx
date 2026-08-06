@@ -1234,6 +1234,11 @@ class MarkdownTableWidget extends WidgetType {
         const sourceRect = sourceElement.getBoundingClientRect();
         axisDragPreview = document.createElement("div");
         axisDragPreview.className = `cm-md-table-axis-drag-preview cm-md-table-axis-drag-preview--${kind}`;
+        axisDragPreview.setAttribute("aria-hidden", "true");
+        const previewHandle = document.createElement("span");
+        previewHandle.className = `cm-md-table-axis-drag-preview-handle cm-md-table-axis-drag-preview-handle--${kind}`;
+        previewHandle.textContent = "...";
+        axisDragPreview.appendChild(previewHandle);
         frame.appendChild(axisDragPreview);
         axisDragPreviewGeometry = {
           kind,

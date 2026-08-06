@@ -469,6 +469,7 @@ describe("MarkdownWysiwygEditor", () => {
     fireEvent.dragStart(rowHandles![2], { dataTransfer: rowTransfer, clientX: 10, clientY: 10 });
     expect(rowHandles![2]).toHaveClass("is-dragging-source");
     expect(container.querySelector(".cm-md-table-axis-drag-preview--row")).toBeInTheDocument();
+    expect(container.querySelector(".cm-md-table-axis-drag-preview-handle--row")).toBeInTheDocument();
     fireEvent.dragOver(rowHandles![0], { dataTransfer: rowTransfer, clientX: 10, clientY: 30 });
     expect(rowHandles![0]).toHaveClass("is-drop-target");
     expect(rowHandles![0]).toHaveAttribute("data-drop-position", "before");
@@ -494,6 +495,7 @@ describe("MarkdownWysiwygEditor", () => {
     fireEvent.dragStart(latestColumnHandles[2], { dataTransfer: colTransfer });
     expect(latestColumnHandles[2]).toHaveClass("is-dragging-source");
     expect(container.querySelector(".cm-md-table-axis-drag-preview--column")).toBeInTheDocument();
+    expect(container.querySelector(".cm-md-table-axis-drag-preview-handle--column")).toBeInTheDocument();
     fireEvent.dragOver(latestColumnHandles[0], { dataTransfer: colTransfer });
     expect(latestColumnHandles[0]).toHaveAttribute("data-drop-position", "before");
     expect(container.querySelector(".cm-md-table-axis-drop-guide--column")).toHaveClass("is-visible");
