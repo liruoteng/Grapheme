@@ -2,6 +2,7 @@ import { memo, useRef, useEffect, useState, useCallback, useMemo } from "react";
 import { FileText, AlertTriangle, ArrowLeftRight, Maximize } from "lucide-react";
 import { useEditorStore } from "../../stores/editorStore";
 import { ContextMenu } from "../Layout/ContextMenu";
+import { sanitizeSvg } from "./sanitizeSvg";
 import "./PreviewPanel.css";
 
 const ZOOM_SENSITIVITY = 0.008;
@@ -73,7 +74,7 @@ const PageThumbnail = memo(function PageThumbnail({
     if (svg === renderedSvgRef.current) return;
     const inner = innerRef.current;
     if (!inner) return;
-    inner.innerHTML = svg;
+    inner.innerHTML = sanitizeSvg(svg);
     renderedSvgRef.current = svg;
   }, [svg]);
 
@@ -146,7 +147,7 @@ const VirtualPageView = memo(function VirtualPageView({
     const inner = innerRef.current;
     if (!inner) return;
     return scheduleIdle(() => {
-      inner.innerHTML = svg;
+      inner.innerHTML = sanitizeSvg(svg);
       renderedSvgRef.current = svg;
     });
   }, [svg, visible]);

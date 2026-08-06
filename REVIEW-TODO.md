@@ -33,11 +33,12 @@ Scope: repository inspection plus available frontend/Rust checks. Completed item
 
 ## Priority 2 — important reliability, security, and UX debt
 
-### [P2] Sanitize SVG before injecting preview markup
+### [P2] ✅ Sanitize SVG before injecting preview markup
 
 - **Evidence:** `src/components/Preview/PreviewPanel.tsx:72-78, 143-151` assigns generated SVG strings to `innerHTML`. The strings ultimately come from the preview/conversion pipeline and may include content derived from user-authored documents or assets.
 - **User impact/security:** malformed or unexpectedly rich SVG can introduce active markup or expensive DOM content in the application renderer; it also makes the preview a trust boundary that is currently implicit.
 - **Suggested fix:** sanitize/allowlist SVG elements and attributes before insertion, or render through a safer SVG/document boundary. Add tests for scripts, event attributes, external references, and oversized SVG.
+- **Completion note (2026-08-06):** Added `sanitizeSvg` allowlisting for preview elements/attributes, local fragment/data-image URLs, and inert style content. Both page and thumbnail injection sites now sanitize first; focused tests cover safe markup, active elements, handlers, external URLs, and embedded images.
 
 ### [P2] Make conflict dialogs cross-platform and normalize their result
 
