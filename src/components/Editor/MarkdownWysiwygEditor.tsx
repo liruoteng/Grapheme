@@ -1015,7 +1015,17 @@ class MarkdownTableWidget extends WidgetType {
     let activeAxisDrag: { kind: "row" | "column"; index: number } | null = null;
     let axisDragStatus: HTMLDivElement | null = null;
     let axisDragPreview: HTMLDivElement | null = null;
-    let axisDragPreviewOrigin: { kind: "row" | "column"; x: number | null; y: number | null } | null = null;
+    let axisDragPreviewGeometry: {
+      kind: "row" | "column";
+      left: number;
+      top: number;
+      width: number;
+      height: number;
+      originX: number | null;
+      originY: number | null;
+    } | null = null;
+    let axisDragPreviewFrame: number | null = null;
+    let axisDragPreviewDelta = { x: 0, y: 0 };
     let syncTableHandles = () => {};
     let activeRowIndex: number | null = null;
     let activeColIndex: number | null = null;
@@ -1199,37 +1209,58 @@ class MarkdownTableWidget extends WidgetType {
     };
 
     const clearAxisDragPreview = () => {
+      if (axisDragPreviewFrame !== null) {
+        if (typeof window.cancelAnimationFrame === "function") window.cancelAnimationFrame(axisDragPreviewFrame);
+        else window.clearTimeout(axisDragPreviewFrame);
+      }
+      axisDragPreviewFrame = null;
       axisDragPreview?.remove();
       axisDragPreview = null;
-      axisDragPreviewOrigin = null;
+      axisDragPreviewGeometry = null;
+      axisDragPreviewDelta = { x: 0, y: 0 };
     };
 
     const updateAxisDragPreview = (kind: "row" | "column", index: number, clientX?: number, clientY?: number) => {
-      const tableElement = frame.querySelector("table");
-      const sourceElement = kind === "row"
-        ? visualRowElements()[index]
-        : [...frame.querySelectorAll<HTMLTableCellElement>("thead th")][index];
-      if (!tableElement || !sourceElement) return;
-
-      const frameRect = frame.getBoundingClientRect();
-      const tableRect = tableElement.getBoundingClientRect();
-      const sourceRect = sourceElement.getBoundingClientRect();
       if (!axisDragPreview) {
+        const tableElement = frame.querySelector("table");
+        const sourceElement = kind === "row"
+          ? visualRowElements()[index]
+          : [...frame.querySelectorAll<HTMLTableCellElement>("thead th")][index];
+        if (!tableElement || !sourceElement) return;
+
+        const frameRect = frame.getBoundingClientRect();
+        const tableRect = tableElement.getBoundingClientRect();
+        const sourceRect = sourceElement.getBoundingClientRect();
         axisDragPreview = document.createElement("div");
         axisDragPreview.className = `cm-md-table-axis-drag-preview cm-md-table-axis-drag-preview--${kind}`;
         frame.appendChild(axisDragPreview);
+        axisDragPreviewGeometry = {
+          kind,
+          left: (kind === "row" ? tableRect.left : sourceRect.left) - frameRect.left,
+          top: (kind === "row" ? sourceRect.top : tableRect.top) - frameRect.top,
+          width: kind === "row" ? tableRect.width : sourceRect.width,
+          height: kind === "row" ? sourceRect.height : tableRect.height,
+          originX: clientX ?? null,
+          originY: clientY ?? null,
+        };
+        axisDragPreview.style.left = `${axisDragPreviewGeometry.left}px`;
+        axisDragPreview.style.top = `${axisDragPreviewGeometry.top}px`;
+        axisDragPreview.style.width = `${axisDragPreviewGeometry.width}px`;
+        axisDragPreview.style.height = `${axisDragPreviewGeometry.height}px`;
       }
-      axisDragPreview.style.left = `${(kind === "row" ? tableRect.left : sourceRect.left) - frameRect.left}px`;
-      axisDragPreview.style.top = `${(kind === "row" ? sourceRect.top : tableRect.top) - frameRect.top}px`;
-      axisDragPreview.style.width = `${kind === "row" ? tableRect.width : sourceRect.width}px`;
-      axisDragPreview.style.height = `${kind === "row" ? sourceRect.height : tableRect.height}px`;
-
-      if (axisDragPreviewOrigin?.kind !== kind) {
-        axisDragPreviewOrigin = { kind, x: clientX ?? null, y: clientY ?? null };
-      }
-      const deltaX = clientX == null || axisDragPreviewOrigin.x == null ? 0 : clientX - axisDragPreviewOrigin.x;
-      const deltaY = clientY == null || axisDragPreviewOrigin.y == null ? 0 : clientY - axisDragPreviewOrigin.y;
-      axisDragPreview.style.transform = `translate(${kind === "column" ? deltaX : 0}px, ${kind === "row" ? deltaY : 0}px)`;
+      if (!axisDragPreviewGeometry || axisDragPreviewGeometry.kind !== kind) return;
+      axisDragPreviewDelta = {
+        x: clientX == null || axisDragPreviewGeometry.originX == null ? 0 : clientX - axisDragPreviewGeometry.originX,
+        y: clientY == null || axisDragPreviewGeometry.originY == null ? 0 : clientY - axisDragPreviewGeometry.originY,
+      };
+      if (axisDragPreviewFrame !== null) return;
+      const render = () => {
+        axisDragPreviewFrame = null;
+        if (!axisDragPreview) return;
+        axisDragPreview.style.transform = `translate(${kind === "column" ? axisDragPreviewDelta.x : 0}px, ${kind === "row" ? axisDragPreviewDelta.y : 0}px)`;
+      };
+      if (typeof window.requestAnimationFrame === "function") axisDragPreviewFrame = window.requestAnimationFrame(render);
+      else axisDragPreviewFrame = window.setTimeout(render, 0);
     };
 
     const clearAxisDropTarget = () => {
