@@ -1116,7 +1116,7 @@
   box-sizing: border-box;
   pointer-events: none;
   border: 2px solid var(--accent);
-  border-radius: 8px;
+  border-radius: 0;
   background: color-mix(in srgb, var(--accent) 18%, var(--bg-surface));
   box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 24%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent);
   opacity: 0.92;
