@@ -21,7 +21,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: asset:; connect-src 'self' https://api.semanticscholar.org http://localhost:* ws://127.0.0.1:8765; worker-src 'self' blob:; media-src 'self' asset:; frame-src 'none'",
+      "csp": "default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: asset:; connect-src 'self' https://api.semanticscholar.org http://localhost:* ws://127.0.0.1:8765; worker-src 'self' blob:; media-src 'self' asset:; frame-src 'self' http://127.0.0.1:*",
       "assetProtocol": {
         "enable": true,
         "scope": ["$DOCUMENT/*", "$APPDATA/*", "$DESKTOP/*", "$DOWNLOAD/*", "$RESOURCE/**/*"]

@@ -156,6 +156,7 @@ export function TemplatePickerDialog({ onClose }: { onClose: () => void }) {
         setCreating(false);
         return;
       }
+      await invoke("approve_path", { path: parentFolder });
       const selectedTemplate = templates.find((template) => template.id === selected);
       if (source === "universe" && !selectedTemplate?.version) {
         throw new Error("Select a Typst Universe template to import.");
@@ -175,6 +176,7 @@ export function TemplatePickerDialog({ onClose }: { onClose: () => void }) {
       const projectPath = mainPath.slice(0, mainPath.lastIndexOf("/"));
       const content = await invoke<string>("read_file", { path: mainPath });
       const fileName = mainPath.split("/").pop() ?? "main";
+      await invoke("set_workspace_root", { path: projectPath });
       useEditorStore.getState().setWorkspacePath(projectPath);
       useEditorStore.getState().openTab(mainPath, fileName, content);
       onClose();

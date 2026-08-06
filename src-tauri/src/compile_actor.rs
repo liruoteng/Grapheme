@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tauri::Emitter;
 
+use crate::commands::approved_path;
 use crate::converter;
 use crate::is_markdown_path;
 use crate::preview_sidecar;
@@ -1006,6 +1007,7 @@ pub fn update_preview_source(
     content: String,
     state: tauri::State<AppState>,
 ) -> Result<(), String> {
+    let path = approved_path(&state, &path)?.to_string_lossy().to_string();
     let (compile_path, compile_content, sidecar) = if is_markdown_path(Path::new(&path)) {
         if let Some((tp, tc, sp, sc)) = resolve_md_hybrid(Path::new(&path), &content) {
             (tp, tc, Some((sp, sc)))
@@ -1027,6 +1029,7 @@ pub fn update_preview_source(
 
 #[tauri::command]
 pub fn trigger_preview_compile(path: String, state: tauri::State<AppState>) -> Result<(), String> {
+    let path = approved_path(&state, &path)?.to_string_lossy().to_string();
     let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let (compile_path, compile_content, sidecar) = if is_markdown_path(Path::new(&path)) {
         if let Some((tp, tc, sp, sc)) = resolve_md_hybrid(Path::new(&path), &content) {
@@ -1054,6 +1057,7 @@ pub async fn start_sidecar_preview(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
+    let path = approved_path(&state, &path)?.to_string_lossy().to_string();
     let started_at = Instant::now();
     let tinymist = state.tinymist_path.lock().unwrap().clone();
     let sidecar = state.preview_sidecar.clone();
@@ -1105,7 +1109,9 @@ pub async fn write_preview_sidecar_content(
     path: String,
     content: String,
     app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
+    let path = approved_path(&state, &path)?.to_string_lossy().to_string();
     let started_at = Instant::now();
     let detail = path.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
@@ -1139,7 +1145,9 @@ pub async fn validate_preview_sidecar_content(
     path: String,
     content: String,
     app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
 ) -> Result<Option<String>, String> {
+    let path = approved_path(&state, &path)?.to_string_lossy().to_string();
     let started_at = Instant::now();
     let detail = path.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
@@ -1163,6 +1171,10 @@ pub fn export_pdf(
     app_handle: tauri::AppHandle,
     state: tauri::State<AppState>,
 ) -> Result<String, String> {
+    let path = approved_path(&state, &path)?.to_string_lossy().to_string();
+    let dest_path = approved_path(&state, &dest_path)?
+        .to_string_lossy()
+        .to_string();
     let started_at = Instant::now();
     let tinymist = resolve_tinymist(&state);
 

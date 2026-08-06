@@ -115,6 +115,7 @@ export default function App() {
       const { open } = await import("@tauri-apps/plugin-dialog");
       const selected = await open({ directory: true, multiple: false });
       if (typeof selected === "string") {
+        await invoke("set_workspace_root", { path: selected });
         useEditorStore.getState().setWorkspacePath(selected);
       }
     } catch (e) {
@@ -192,6 +193,7 @@ export default function App() {
       });
       if (!destPath) return;
 
+      await invoke("approve_path", { path: destPath });
       await invoke("write_file", { path: tab.path, contents: tab.content });
       markTabClean(tab.path);
       const outputPath = await invoke<string>("export_pdf", { path: tab.path, destPath });
@@ -244,6 +246,7 @@ export default function App() {
             : [{ name: "Typst", extensions: ["typ"] }, { name: "All Files", extensions: ["*"] }],
         });
         if (!destPath) return;
+        await invoke("approve_path", { path: destPath });
         await invoke("write_file", { path: destPath, contents: content });
         markPathJustWritten(destPath);
         const name = destPath.split("/").pop() ?? destPath;

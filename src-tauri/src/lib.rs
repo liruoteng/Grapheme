@@ -5,6 +5,7 @@ mod converter;
 mod latex_import;
 mod lsp_bridge;
 mod menu;
+mod path_policy;
 mod preview_sidecar;
 mod project;
 mod snapshots;
@@ -27,6 +28,7 @@ pub struct AppState {
     pub compile_tx: tokio::sync::watch::Sender<Option<CompileRequest>>,
     pub typst_world: Arc<Mutex<Option<typst_world::TypstWorld>>>,
     pub preview_sidecar: preview_sidecar::SharedSidecar,
+    pub path_policy: Mutex<path_policy::PathPolicy>,
 }
 
 pub(crate) fn is_markdown_path(path: &Path) -> bool {
@@ -97,8 +99,11 @@ pub fn run() {
             preview_sidecar: Arc::new(tokio::sync::Mutex::new(
                 preview_sidecar::PreviewSidecar::default(),
             )),
+            path_policy: Mutex::new(path_policy::PathPolicy::default()),
         })
         .invoke_handler(tauri::generate_handler![
+            commands::set_workspace_root,
+            commands::approve_path,
             commands::file_stat,
             commands::read_file,
             commands::read_file_bytes,

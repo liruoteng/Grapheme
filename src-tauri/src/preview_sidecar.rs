@@ -188,4 +188,28 @@ mod tests {
         assert!(parse_data_plane_addr("hello world").is_none());
         assert!(parse_data_plane_addr("Control panel server listening on: 127.0.0.1:1").is_none());
     }
+
+    #[test]
+    fn app_csp_allows_only_loopback_sidecar_frames() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("valid Tauri config");
+        let csp = config["app"]["security"]["csp"]
+            .as_str()
+            .expect("CSP is configured as a string");
+        let frame_src = csp
+            .split(';')
+            .map(str::trim)
+            .find(|directive| directive.starts_with("frame-src "))
+            .expect("CSP has a frame-src directive");
+
+        assert!(frame_src
+            .split_whitespace()
+            .any(|source| source == "'self'"));
+        assert!(frame_src
+            .split_whitespace()
+            .any(|source| source == "http://127.0.0.1:*"));
+        assert!(!frame_src
+            .split_whitespace()
+            .any(|source| source == "'none'"));
+    }
 }

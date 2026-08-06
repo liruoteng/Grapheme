@@ -1,6 +1,10 @@
 use serde::Serialize;
 use std::fs;
 use std::path::Path;
+use tauri::State;
+
+use crate::commands::approved_path;
+use crate::AppState;
 
 #[derive(Serialize)]
 pub struct SnapshotEntry {
@@ -9,8 +13,12 @@ pub struct SnapshotEntry {
 }
 
 #[tauri::command]
-pub fn save_snapshot(path: String) -> Result<(), String> {
-    let src = Path::new(&path);
+pub fn save_snapshot(path: String, state: State<'_, AppState>) -> Result<(), String> {
+    let path = approved_path(&state, &path)?;
+    save_snapshot_impl(Path::new(&path))
+}
+
+fn save_snapshot_impl(src: &Path) -> Result<(), String> {
     if !src.exists() {
         return Ok(());
     }
@@ -54,8 +62,15 @@ pub fn save_snapshot(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn list_snapshots(path: String) -> Result<Vec<SnapshotEntry>, String> {
-    let src = Path::new(&path);
+pub fn list_snapshots(
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<SnapshotEntry>, String> {
+    let path = approved_path(&state, &path)?;
+    list_snapshots_impl(Path::new(&path))
+}
+
+fn list_snapshots_impl(src: &Path) -> Result<Vec<SnapshotEntry>, String> {
     let parent = src.parent().unwrap_or(Path::new("."));
     let stem = src
         .file_stem()
@@ -98,9 +113,9 @@ mod tests {
         let file = dir.join("doc.typ");
         fs::write(&file, "content").unwrap();
 
-        save_snapshot(file.to_string_lossy().to_string()).unwrap();
+        save_snapshot_impl(&file).unwrap();
 
-        let snaps = list_snapshots(file.to_string_lossy().to_string()).unwrap();
+        let snaps = list_snapshots_impl(&file).unwrap();
         assert_eq!(snaps.len(), 1);
         assert!(snaps[0].timestamp > 0);
 
@@ -115,7 +130,7 @@ mod tests {
         let file = dir.join("nosnap.typ");
         fs::write(&file, "").unwrap();
 
-        let snaps = list_snapshots(file.to_string_lossy().to_string()).unwrap();
+        let snaps = list_snapshots_impl(&file).unwrap();
         assert!(snaps.is_empty());
 
         let _ = fs::remove_dir_all(&dir);
@@ -134,7 +149,7 @@ mod tests {
         fs::write(hist.join("100.typ"), "older").unwrap();
         fs::write(hist.join("200.typ"), "newer").unwrap();
 
-        let snaps = list_snapshots(file.to_string_lossy().to_string()).unwrap();
+        let snaps = list_snapshots_impl(&file).unwrap();
         assert_eq!(snaps.len(), 2);
         assert!(
             snaps[0].timestamp > snaps[1].timestamp,
@@ -160,9 +175,9 @@ mod tests {
             fs::write(hist.join(format!("{i}.typ")), format!("v{i}")).unwrap();
         }
 
-        save_snapshot(file.to_string_lossy().to_string()).unwrap();
+        save_snapshot_impl(&file).unwrap();
 
-        let snaps = list_snapshots(file.to_string_lossy().to_string()).unwrap();
+        let snaps = list_snapshots_impl(&file).unwrap();
         assert_eq!(snaps.len(), 200);
 
         let _ = fs::remove_dir_all(&dir);
@@ -170,7 +185,7 @@ mod tests {
 
     #[test]
     fn save_snapshot_no_op_for_nonexistent_file() {
-        let result = save_snapshot("/nonexistent/path/file.typ".to_string());
+        let result = save_snapshot_impl(Path::new("/nonexistent/path/file.typ"));
         assert!(result.is_ok(), "should silently succeed for missing files");
     }
 }

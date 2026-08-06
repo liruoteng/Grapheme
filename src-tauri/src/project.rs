@@ -6,8 +6,10 @@ use std::path::{Component, Path, PathBuf};
 use tar::Archive;
 use tauri::Manager;
 
+use crate::commands::approved_path;
 use crate::converter;
 use crate::is_markdown_path;
+use crate::AppState;
 
 #[derive(Serialize, Clone)]
 pub struct TemplateInfo {
@@ -213,7 +215,9 @@ pub async fn create_project_from_universe_template(
     version: String,
     parent_path: String,
     project_name: String,
+    state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
+    let parent_path = approved_path(&state, &parent_path)?;
     let packages = reqwest::get("https://packages.typst.org/preview/index.json")
         .await
         .map_err(|e| format!("Failed to fetch Typst Universe: {e}"))?
@@ -240,7 +244,7 @@ pub async fn create_project_from_universe_template(
         .await
         .map_err(|e| format!("Failed to read @{package_name}:{version}: {e}"))?;
 
-    let dest = project_dest(&parent_path, &project_name)?;
+    let dest = project_dest(&parent_path.to_string_lossy(), &project_name)?;
     if dest.exists() {
         return Err(format!("Folder '{}' already exists", dest.display()));
     }
@@ -262,12 +266,14 @@ pub fn create_project_from_template(
     template_id: String,
     parent_path: String,
     project_name: String,
+    state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
     let src = templates_dir(&app).join(&template_id);
     if !src.exists() {
         return Err(format!("template '{template_id}' not found"));
     }
-    let dest = project_dest(&parent_path, &project_name)?;
+    let parent_path = approved_path(&state, &parent_path)?;
+    let dest = project_dest(&parent_path.to_string_lossy(), &project_name)?;
     if dest.exists() {
         return Err(format!("Folder '{}' already exists", dest.display()));
     }

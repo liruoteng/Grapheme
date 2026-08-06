@@ -10,8 +10,9 @@ pub mod report;
 pub mod tokenizer;
 pub mod unzip;
 
+use crate::commands::approved_path;
+use crate::AppState;
 use serde::Serialize;
-use std::path::PathBuf;
 
 #[derive(Serialize, Clone)]
 pub struct ImportReport {
@@ -33,9 +34,13 @@ pub struct ImportReport {
 /// v1: CVPR profile only. Unknown bundles fall through with a diagnostic
 /// message and no output.
 #[tauri::command]
-pub fn import_latex_template(zip_path: String, dest_dir: String) -> Result<ImportReport, String> {
-    let zip = PathBuf::from(&zip_path);
-    let dest = PathBuf::from(&dest_dir);
+pub fn import_latex_template(
+    zip_path: String,
+    dest_dir: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<ImportReport, String> {
+    let zip = approved_path(&state, &zip_path)?;
+    let dest = approved_path(&state, &dest_dir)?;
 
     let extracted = unzip::extract_to_temp(&zip)?;
     let profile = detect::detect_profile(&extracted)

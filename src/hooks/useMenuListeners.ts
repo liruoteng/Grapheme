@@ -60,6 +60,7 @@ export function useMenuListeners({
         const { open } = await import("@tauri-apps/plugin-dialog");
         const selected = await open({ multiple: false });
         if (typeof selected !== "string") return;
+        await invoke("approve_path", { path: selected });
         const content = await invoke<string>("read_file", { path: selected });
         const name = selected.split("/").pop() ?? selected;
         useEditorStore.getState().openTab(selected, name, content);
@@ -155,6 +156,10 @@ export function useMenuListeners({
           destDir = `${dir}/${stem}-typst`;
         }
 
+        await invoke("approve_path", { path: zipPath });
+        await invoke("approve_path", {
+          path: destDir.slice(0, destDir.lastIndexOf("/")) || destDir,
+        });
         const result = await invoke<{
           profile: string | null;
           dest_dir: string;

@@ -1,10 +1,39 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
 use tauri::Manager;
+use tauri::State;
 
 use crate::converter;
+use crate::AppState;
+
+pub(crate) fn approved_path(state: &State<'_, AppState>, path: &str) -> Result<PathBuf, String> {
+    state
+        .path_policy
+        .lock()
+        .map_err(|_| "filesystem policy lock poisoned".to_string())?
+        .check(Path::new(path))
+}
+
+#[tauri::command]
+pub fn set_workspace_root(path: String, state: State<'_, AppState>) -> Result<(), String> {
+    state
+        .path_policy
+        .lock()
+        .map_err(|_| "filesystem policy lock poisoned".to_string())?
+        .set_workspace_root(Path::new(&path))
+}
+
+#[tauri::command]
+pub fn approve_path(path: String, state: State<'_, AppState>) -> Result<(), String> {
+    state
+        .path_policy
+        .lock()
+        .map_err(|_| "filesystem policy lock poisoned".to_string())?
+        .approve(Path::new(&path))
+}
 
 #[derive(Serialize)]
 pub struct FileStat {
@@ -26,7 +55,8 @@ pub struct SearchMatch {
 }
 
 #[tauri::command]
-pub fn file_stat(path: String) -> Result<FileStat, String> {
+pub fn file_stat(path: String, state: State<'_, AppState>) -> Result<FileStat, String> {
+    let path = approved_path(&state, &path)?;
     let meta = fs::metadata(&path).map_err(|e| e.to_string());
     meta.and_then(|m| {
         m.modified()
@@ -41,35 +71,48 @@ pub fn file_stat(path: String) -> Result<FileStat, String> {
 }
 
 #[tauri::command]
-pub fn read_file(path: String) -> Result<String, String> {
-    fs::read_to_string(&path).map_err(|e| e.to_string())
+pub fn read_file(path: String, state: State<'_, AppState>) -> Result<String, String> {
+    let path = approved_path(&state, &path)?;
+    fs::read_to_string(path).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn read_file_bytes(path: String) -> Result<Vec<u8>, String> {
-    fs::read(&path).map_err(|e| e.to_string())
+pub fn read_file_bytes(path: String, state: State<'_, AppState>) -> Result<Vec<u8>, String> {
+    let path = approved_path(&state, &path)?;
+    fs::read(path).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn write_file(path: String, contents: String) -> Result<(), String> {
+pub async fn write_file(
+    path: String,
+    contents: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let path = approved_path(&state, &path)?;
     tauri::async_runtime::spawn_blocking(move || {
-        fs::write(&path, contents).map_err(|e| e.to_string())
+        fs::write(path, contents).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub fn write_file_bytes(path: String, bytes: Vec<u8>) -> Result<(), String> {
-    if Path::new(&path).exists() {
-        return Err(format!("Destination already exists: {path}"));
+pub fn write_file_bytes(
+    path: String,
+    bytes: Vec<u8>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let path = approved_path(&state, &path)?;
+    if path.exists() {
+        return Err(format!("Destination already exists: {}", path.display()));
     }
-    fs::write(&path, bytes).map_err(|e| e.to_string())
+    fs::write(path, bytes).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn create_file(path: String) -> Result<(), String> {
-    fs::write(&path, "").map_err(|e| e.to_string())
+pub fn create_file(path: String, state: State<'_, AppState>) -> Result<(), String> {
+    let path = approved_path(&state, &path)?;
+    fs::write(path, "").map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -96,13 +139,19 @@ pub fn create_temp_file(extension: Option<String>) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn create_dir(path: String) -> Result<(), String> {
-    fs::create_dir(&path).map_err(|e| e.to_string())
+pub fn create_dir(path: String, state: State<'_, AppState>) -> Result<(), String> {
+    let path = approved_path(&state, &path)?;
+    fs::create_dir(path).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn list_dir(path: String) -> Result<Vec<FileEntry>, String> {
-    let read = fs::read_dir(&path).map_err(|e| e.to_string())?;
+pub fn list_dir(path: String, state: State<'_, AppState>) -> Result<Vec<FileEntry>, String> {
+    let path = approved_path(&state, &path)?;
+    list_dir_impl(&path)
+}
+
+fn list_dir_impl(path: &Path) -> Result<Vec<FileEntry>, String> {
+    let read = fs::read_dir(path).map_err(|e| e.to_string())?;
     let mut entries: Vec<FileEntry> = read
         .filter_map(|e| e.ok())
         .filter_map(|e| {
@@ -128,14 +177,18 @@ pub fn list_dir(path: String) -> Result<Vec<FileEntry>, String> {
 }
 
 #[tauri::command]
-pub fn search_in_files(root_dir: String, query: String) -> Result<Vec<SearchMatch>, String> {
+pub fn search_in_files(
+    root_dir: String,
+    query: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<SearchMatch>, String> {
     let mut results = Vec::new();
-    let root = Path::new(&root_dir);
+    let root = approved_path(&state, &root_dir)?;
     if !root.is_dir() {
         return Err("Not a directory".to_string());
     }
     let query_lower = query.to_lowercase();
-    search_dir(root, root, &query_lower, &mut results)?;
+    search_dir(&root, &root, &query_lower, &mut results)?;
     Ok(results)
 }
 
@@ -197,8 +250,8 @@ fn search_dir(
 }
 
 #[tauri::command]
-pub fn path_exists(path: String) -> bool {
-    Path::new(&path).exists()
+pub fn path_exists(path: String, state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(approved_path(&state, &path).is_ok())
 }
 
 #[tauri::command]
@@ -232,13 +285,19 @@ pub fn show_move_conflict_dialog(src_name: String, dest_dir_name: String) -> Str
 }
 
 #[tauri::command]
-pub fn rename_path(old_path: String, new_path: String) -> Result<(), String> {
-    fs::rename(&old_path, &new_path).map_err(|e| e.to_string())
+pub fn rename_path(
+    old_path: String,
+    new_path: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let old_path = approved_path(&state, &old_path)?;
+    let new_path = approved_path(&state, &new_path)?;
+    fs::rename(old_path, new_path).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn delete_path(path: String) -> Result<(), String> {
-    let p = Path::new(&path);
+pub fn delete_path(path: String, state: State<'_, AppState>) -> Result<(), String> {
+    let p = approved_path(&state, &path)?;
     if p.is_dir() {
         fs::remove_dir_all(p).map_err(|e| e.to_string())
     } else {
@@ -263,24 +322,25 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
 }
 
 #[tauri::command]
-pub fn copy_path(src: String, dest: String) -> Result<(), String> {
-    let s = Path::new(&src);
-    let d = Path::new(&dest);
+pub fn copy_path(src: String, dest: String, state: State<'_, AppState>) -> Result<(), String> {
+    let s = approved_path(&state, &src)?;
+    let d = approved_path(&state, &dest)?;
     if d.exists() {
         return Err(format!("Destination already exists: {dest}"));
     }
     if s.is_dir() {
-        copy_dir_recursive(s, d).map_err(|e| e.to_string())
+        copy_dir_recursive(&s, &d).map_err(|e| e.to_string())
     } else {
         fs::copy(s, d).map(|_| ()).map_err(|e| e.to_string())
     }
 }
 
 #[tauri::command]
-pub fn reveal_in_finder(path: String) -> Result<(), String> {
+pub fn reveal_in_finder(path: String, state: State<'_, AppState>) -> Result<(), String> {
+    let path = approved_path(&state, &path)?;
     Command::new("open")
         .arg("-R")
-        .arg(&path)
+        .arg(path)
         .spawn()
         .map(|_| ())
         .map_err(|e| e.to_string())
@@ -308,7 +368,8 @@ pub fn write_settings(app: tauri::AppHandle, contents: String) -> Result<(), Str
 }
 
 #[tauri::command]
-pub fn convert_to_typst(path: String) -> Result<String, String> {
+pub fn convert_to_typst(path: String, state: State<'_, AppState>) -> Result<String, String> {
+    let path = approved_path(&state, &path)?.to_string_lossy().to_string();
     let ext = Path::new(&path)
         .extension()
         .and_then(|e| e.to_str())
@@ -404,7 +465,7 @@ mod tests {
         fs::create_dir_all(dir.join("zdir")).unwrap();
         fs::create_dir_all(dir.join("adir")).unwrap();
 
-        let entries = list_dir(dir.to_string_lossy().to_string()).unwrap();
+        let entries = list_dir_impl(&dir).unwrap();
 
         assert_eq!(entries.len(), 4);
         assert!(entries[0].is_dir);
@@ -429,7 +490,7 @@ mod tests {
         fs::write(dir.join(".hidden"), "").unwrap();
         fs::create_dir_all(dir.join(".hiddendir")).unwrap();
 
-        let entries = list_dir(dir.to_string_lossy().to_string()).unwrap();
+        let entries = list_dir_impl(&dir).unwrap();
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "visible.typ");
