@@ -1009,8 +1009,7 @@ class MarkdownTableWidget extends WidgetType {
     let colElements: HTMLTableColElement[] = [];
     let columnHandleElements: HTMLButtonElement[] = [];
     let rowHandleElements: HTMLButtonElement[] = [];
-    let columnRemoveElements: Array<HTMLButtonElement | null> = [];
-    let rowRemoveElements: Array<HTMLButtonElement | null> = [];
+    let contextAxisTarget: { kind: "row" | "column"; index: number } | null = null;
     let stopColumnResize: (() => void) | null = null;
     let stopAxisDrag: ((event?: MouseEvent) => void) | null = null;
     let activeAxisDropTarget: HTMLElement | null = null;
@@ -1324,17 +1323,16 @@ class MarkdownTableWidget extends WidgetType {
       wrap.classList.add("is-controls-active");
       activeRowIndex = rowIndex;
       activeColIndex = colIndex;
+      contextAxisTarget = colIndex !== null
+        ? { kind: "column", index: colIndex }
+        : rowIndex !== null && rowIndex > 0
+          ? { kind: "row", index: rowIndex }
+          : null;
       for (const [index, handle] of rowHandleElements.entries()) {
         handle.classList.toggle("is-active-axis", index === rowIndex);
       }
-      for (const [index, button] of rowRemoveElements.entries()) {
-        button?.classList.toggle("is-contextual-visible", index === rowIndex);
-      }
       for (const [index, handle] of columnHandleElements.entries()) {
         handle.classList.toggle("is-active-axis", index === colIndex);
-      }
-      for (const [index, button] of columnRemoveElements.entries()) {
-        button?.classList.toggle("is-contextual-visible", index === colIndex);
       }
     };
 
@@ -1343,11 +1341,11 @@ class MarkdownTableWidget extends WidgetType {
     };
 
     const setActiveRowHandle = (rowIndex: number) => {
-      setActiveHandles(rowIndex, activeColIndex);
+      setActiveHandles(rowIndex, null);
     };
 
     const setActiveColumnHandle = (colIndex: number) => {
-      setActiveHandles(activeRowIndex, colIndex);
+      setActiveHandles(null, colIndex);
     };
 
     const handleAtPoint = <T extends HTMLElement>(handles: T[], clientX: number, clientY: number) => {
@@ -1811,10 +1809,45 @@ class MarkdownTableWidget extends WidgetType {
     contextPanel.className = "cm-md-table-context-panel";
     contextPanel.hidden = true;
     contextPanel.setAttribute("role", "menu");
+    const axisDeleteItem = document.createElement("button");
+    axisDeleteItem.type = "button";
+    axisDeleteItem.className = "cm-md-table-context-item";
+    axisDeleteItem.setAttribute("role", "menuitem");
+    const syncAxisDeleteItem = () => {
+      const target = contextAxisTarget;
+      const isRow = target?.kind === "row";
+      const canDelete = target !== null && (isRow
+        ? target.index > 0 && draftRows.length > 1
+        : target.index >= 0 && target.index < draftHeader.length && draftHeader.length > 1);
+      axisDeleteItem.textContent = isRow ? "Delete row" : "Delete column";
+      axisDeleteItem.setAttribute("aria-label", isRow ? "Delete row" : "Delete column");
+      axisDeleteItem.disabled = !canDelete;
+      axisDeleteItem.title = canDelete
+        ? ""
+        : isRow
+          ? "Cannot delete the last remaining row"
+          : "Cannot delete the last remaining column";
+      axisDeleteItem.hidden = target === null;
+    };
+    axisDeleteItem.addEventListener("click", (event) => {
+      event.preventDefault();
+      const target = contextAxisTarget;
+      if (!target || axisDeleteItem.disabled) return;
+      closeContextMenu();
+      if (target.kind === "row") removeRowAt(target.index);
+      else removeColumnAt(target.index);
+    });
     const closeContextMenu = () => {
       contextMenu.classList.remove("is-open");
       contextTrigger.setAttribute("aria-expanded", "false");
       contextPanel.hidden = true;
+    };
+    const openContextMenu = () => {
+      syncAxisDeleteItem();
+      contextMenu.classList.add("is-open");
+      contextTrigger.setAttribute("aria-expanded", "true");
+      contextPanel.hidden = false;
+      contextPanel.querySelector<HTMLButtonElement>("button:not([hidden]):not(:disabled)")?.focus();
     };
     contextTrigger.addEventListener("mousedown", (event) => event.preventDefault());
     contextTrigger.addEventListener("click", (event) => {
@@ -1824,10 +1857,7 @@ class MarkdownTableWidget extends WidgetType {
         closeContextMenu();
         return;
       }
-      contextMenu.classList.add("is-open");
-      contextTrigger.setAttribute("aria-expanded", "true");
-      contextPanel.hidden = false;
-      contextPanel.querySelector<HTMLButtonElement>("button")?.focus();
+      openContextMenu();
     });
     const editSourceItem = document.createElement("button");
     editSourceItem.type = "button";
@@ -1860,7 +1890,7 @@ class MarkdownTableWidget extends WidgetType {
       replaceWithTableSource("");
       showTableUndo("Table deleted", previousSource);
     });
-    contextPanel.append(editSourceItem, deleteTableItem);
+    contextPanel.append(editSourceItem, axisDeleteItem, deleteTableItem);
     contextMenu.append(contextTrigger, contextPanel);
     contextMenu.addEventListener("keydown", (event) => {
       if (event.key !== "Escape") return;
@@ -1893,7 +1923,6 @@ class MarkdownTableWidget extends WidgetType {
     const columnControls = document.createElement("div");
     columnControls.className = "cm-md-table-column-controls";
     columnHandleElements = [];
-    columnRemoveElements = [];
     for (let index = 0; index < draftHeader.length; index += 1) {
       const handle = document.createElement("button");
       handle.type = "button";
@@ -1905,6 +1934,11 @@ class MarkdownTableWidget extends WidgetType {
       handle.setAttribute("aria-label", `Move column ${index + 1}`);
       handle.addEventListener("mouseenter", () => setActiveColumnHandle(index));
       handle.addEventListener("focus", () => setActiveColumnHandle(index));
+      handle.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        setActiveColumnHandle(index);
+        openContextMenu();
+      });
       handle.addEventListener("mousedown", (event) => startAxisDrag(event, "column", index));
       handle.addEventListener("dragstart", (event) => {
         if (!event.dataTransfer) return;
@@ -1951,31 +1985,12 @@ class MarkdownTableWidget extends WidgetType {
       });
       columnHandleElements.push(handle);
       columnControls.appendChild(handle);
-      let removeButton: HTMLButtonElement | null = null;
-      if (draftHeader.length > 1) {
-        removeButton = document.createElement("button");
-        removeButton.type = "button";
-        removeButton.className = "cm-md-table-axis-remove cm-md-table-column-remove";
-        removeButton.textContent = "−";
-        removeButton.title = `Remove column ${index + 1}`;
-        removeButton.setAttribute("aria-label", `Remove column ${index + 1}`);
-        removeButton.addEventListener("mouseenter", () => setActiveColumnHandle(index));
-        removeButton.addEventListener("focus", () => setActiveColumnHandle(index));
-        removeButton.addEventListener("mousedown", (event) => event.preventDefault());
-        removeButton.addEventListener("click", (event) => {
-          event.preventDefault();
-          removeColumnAt(index);
-        });
-        columnControls.appendChild(removeButton);
-      }
-      columnRemoveElements.push(removeButton);
     }
     frame.appendChild(columnControls);
 
     const rowControls = document.createElement("div");
     rowControls.className = "cm-md-table-row-controls";
     rowHandleElements = [];
-    rowRemoveElements = [];
     for (let index = 0; index < draftRows.length + 1; index += 1) {
       const handle = document.createElement("button");
       handle.type = "button";
@@ -1987,6 +2002,11 @@ class MarkdownTableWidget extends WidgetType {
       handle.setAttribute("aria-label", `Move row ${index + 1}`);
       handle.addEventListener("mouseenter", () => setActiveRowHandle(index));
       handle.addEventListener("focus", () => setActiveRowHandle(index));
+      handle.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        setActiveRowHandle(index);
+        openContextMenu();
+      });
       handle.addEventListener("mousedown", (event) => startAxisDrag(event, "row", index));
       handle.addEventListener("dragstart", (event) => {
         if (!event.dataTransfer) return;
@@ -2034,24 +2054,6 @@ class MarkdownTableWidget extends WidgetType {
       });
       rowHandleElements.push(handle);
       rowControls.appendChild(handle);
-      let removeButton: HTMLButtonElement | null = null;
-      if (index > 0) {
-        removeButton = document.createElement("button");
-        removeButton.type = "button";
-        removeButton.className = "cm-md-table-axis-remove cm-md-table-row-remove";
-        removeButton.textContent = "−";
-        removeButton.title = `Remove row ${index + 1}`;
-        removeButton.setAttribute("aria-label", `Remove row ${index + 1}`);
-        removeButton.addEventListener("mouseenter", () => setActiveRowHandle(index));
-        removeButton.addEventListener("focus", () => setActiveRowHandle(index));
-        removeButton.addEventListener("mousedown", (event) => event.preventDefault());
-        removeButton.addEventListener("click", (event) => {
-          event.preventDefault();
-          removeRowAt(index);
-        });
-        rowControls.appendChild(removeButton);
-      }
-      rowRemoveElements.push(removeButton);
     }
     frame.appendChild(rowControls);
 
@@ -2166,10 +2168,6 @@ class MarkdownTableWidget extends WidgetType {
         handle.style.display = "";
         handle.style.left = `${cellRect.left - frameRect.left}px`;
         handle.style.width = `${cellRect.width}px`;
-        const removeButton = columnRemoveElements[index];
-        if (removeButton) {
-          removeButton.style.left = `${cellRect.left - frameRect.left + cellRect.width - 20}px`;
-        }
       }
 
       const rows = [headRow, ...tbody.rows];
@@ -2183,10 +2181,6 @@ class MarkdownTableWidget extends WidgetType {
         handle.style.display = "";
         handle.style.top = `${rowRect.top - frameRect.top}px`;
         handle.style.height = `${rowRect.height}px`;
-        const removeButton = rowRemoveElements[index];
-        if (removeButton) {
-          removeButton.style.top = `${rowRect.top - frameRect.top + Math.max(0, rowRect.height - 20) / 2}px`;
-        }
       }
     };
     requestAnimationFrame(() => {

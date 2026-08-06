@@ -357,7 +357,7 @@ describe("MarkdownWysiwygEditor", () => {
     expect([...selected].map((cell) => cell.textContent)).toEqual(["1", "2", "4", "5"]);
   });
 
-  it("removes a table row from its contextual handle control", async () => {
+  it("removes a table row from its axis context menu", async () => {
     const path = "/workspace/examples/markdown/table.md";
     useEditorStore.getState().openTab(
       path,
@@ -375,8 +375,11 @@ describe("MarkdownWysiwygEditor", () => {
     fireEvent.mouseDown(cells[2], { button: 0 });
     fireEvent.mouseUp(cells[2], { button: 0 });
 
-    const deleteRow = container.querySelector('button[aria-label="Remove row 3"]');
-    expect(deleteRow).toHaveClass("is-contextual-visible");
+    const rowHandles = container.querySelectorAll(".cm-md-table-row-handle");
+    expect(rowHandles).toHaveLength(3);
+    fireEvent.contextMenu(rowHandles[2]);
+    const deleteRow = container.querySelector('button[aria-label="Delete row"]');
+    expect(deleteRow).toBeEnabled();
     fireEvent.click(deleteRow!);
 
     await waitFor(() => {
@@ -384,7 +387,7 @@ describe("MarkdownWysiwygEditor", () => {
     });
   });
 
-  it("removes a table column from its contextual handle control", async () => {
+  it("removes a table column from its axis context menu", async () => {
     const path = "/workspace/examples/markdown/table.md";
     useEditorStore.getState().openTab(
       path,
@@ -402,13 +405,38 @@ describe("MarkdownWysiwygEditor", () => {
     fireEvent.mouseDown(cells[2], { button: 0 });
     fireEvent.mouseUp(cells[2], { button: 0 });
 
-    const deleteColumn = container.querySelector('button[aria-label="Remove column 3"]');
-    expect(deleteColumn).toHaveClass("is-contextual-visible");
+    const columnHandles = container.querySelectorAll(".cm-md-table-column-handle");
+    expect(columnHandles).toHaveLength(3);
+    fireEvent.contextMenu(columnHandles[2]);
+    const deleteColumn = container.querySelector('button[aria-label="Delete column"]');
+    expect(deleteColumn).toBeEnabled();
     fireEvent.click(deleteColumn!);
 
     await waitFor(() => {
       expect(useEditorStore.getState().activeTab()?.content).toBe("| A | B |\n| --- | --- |\n| 1 | 2 |\n");
     });
+  });
+
+  it("protects the last row and column and supports keyboard menu access", async () => {
+    const path = "/workspace/examples/markdown/table.md";
+    useEditorStore.getState().openTab(path, "table.md", "| A | B |\n| --- | --- |\n| 1 | 2 |\n");
+
+    const { container } = render(<MarkdownWysiwygEditor />);
+
+    await waitFor(() => {
+      expect(container.querySelector(".cm-md-table-render")).toBeInTheDocument();
+    });
+
+    const columnHandles = container.querySelectorAll(".cm-md-table-column-handle");
+    fireEvent.focus(columnHandles[0]);
+    fireEvent.click(container.querySelector('button[aria-label="Table actions"]')!);
+    const deleteColumn = container.querySelector('button[aria-label="Delete column"]');
+    expect(deleteColumn).toBeEnabled();
+    fireEvent.keyDown(container.querySelector(".cm-md-table-context-menu")!, { key: "Escape" });
+    fireEvent.focus(container.querySelectorAll(".cm-md-table-row-handle")[1]);
+    fireEvent.click(container.querySelector('button[aria-label="Table actions"]')!);
+    expect(container.querySelector('button[aria-label="Delete row"]')).toBeDisabled();
+    expect(container.querySelectorAll(".cm-md-table-axis-remove")).toHaveLength(0);
   });
 
   it("adds rows and columns from rendered table margins", async () => {
