@@ -1109,9 +1109,18 @@
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
-.markdown-wysiwyg .cm-md-table-render .is-axis-drag-source {
-  background: color-mix(in srgb, var(--accent) 12%, var(--bg-surface));
-  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 48%, transparent);
+
+.markdown-wysiwyg .cm-md-table-axis-drag-preview {
+  position: absolute;
+  z-index: 4;
+  box-sizing: border-box;
+  pointer-events: none;
+  border: 2px solid var(--accent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg-surface));
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 24%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent);
+  opacity: 0.92;
+  transition: transform 0.05s linear;
 }
 
 .markdown-wysiwyg .cm-md-table-axis-handle.is-drop-target {

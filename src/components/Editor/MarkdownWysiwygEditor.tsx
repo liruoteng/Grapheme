@@ -1014,6 +1014,8 @@ class MarkdownTableWidget extends WidgetType {
     let activeAxisDropPosition: "before" | "after" = "before";
     let activeAxisDrag: { kind: "row" | "column"; index: number } | null = null;
     let axisDragStatus: HTMLDivElement | null = null;
+    let axisDragPreview: HTMLDivElement | null = null;
+    let axisDragPreviewOrigin: { kind: "row" | "column"; x: number | null; y: number | null } | null = null;
     let syncTableHandles = () => {};
     let activeRowIndex: number | null = null;
     let activeColIndex: number | null = null;
@@ -1193,11 +1195,41 @@ class MarkdownTableWidget extends WidgetType {
         if (dragging && handleIndex === index) handle.setAttribute("aria-grabbed", "true");
         else handle.removeAttribute("aria-grabbed");
       });
-      for (const cell of renderedCells.values()) {
-        const cellIndex = kind === "row" ? Number(cell.dataset.row) : Number(cell.dataset.col);
-        cell.classList.toggle("is-axis-drag-source", dragging && cellIndex === index);
-      }
       activeAxisDrag = dragging ? { kind, index } : null;
+    };
+
+    const clearAxisDragPreview = () => {
+      axisDragPreview?.remove();
+      axisDragPreview = null;
+      axisDragPreviewOrigin = null;
+    };
+
+    const updateAxisDragPreview = (kind: "row" | "column", index: number, clientX?: number, clientY?: number) => {
+      const tableElement = frame.querySelector("table");
+      const sourceElement = kind === "row"
+        ? visualRowElements()[index]
+        : [...frame.querySelectorAll<HTMLTableCellElement>("thead th")][index];
+      if (!tableElement || !sourceElement) return;
+
+      const frameRect = frame.getBoundingClientRect();
+      const tableRect = tableElement.getBoundingClientRect();
+      const sourceRect = sourceElement.getBoundingClientRect();
+      if (!axisDragPreview) {
+        axisDragPreview = document.createElement("div");
+        axisDragPreview.className = `cm-md-table-axis-drag-preview cm-md-table-axis-drag-preview--${kind}`;
+        frame.appendChild(axisDragPreview);
+      }
+      axisDragPreview.style.left = `${(kind === "row" ? tableRect.left : sourceRect.left) - frameRect.left}px`;
+      axisDragPreview.style.top = `${(kind === "row" ? sourceRect.top : tableRect.top) - frameRect.top}px`;
+      axisDragPreview.style.width = `${kind === "row" ? tableRect.width : sourceRect.width}px`;
+      axisDragPreview.style.height = `${kind === "row" ? sourceRect.height : tableRect.height}px`;
+
+      if (axisDragPreviewOrigin?.kind !== kind) {
+        axisDragPreviewOrigin = { kind, x: clientX ?? null, y: clientY ?? null };
+      }
+      const deltaX = clientX == null || axisDragPreviewOrigin.x == null ? 0 : clientX - axisDragPreviewOrigin.x;
+      const deltaY = clientY == null || axisDragPreviewOrigin.y == null ? 0 : clientY - axisDragPreviewOrigin.y;
+      axisDragPreview.style.transform = `translate(${kind === "column" ? deltaX : 0}px, ${kind === "row" ? deltaY : 0}px)`;
     };
 
     const clearAxisDropTarget = () => {
@@ -1305,12 +1337,14 @@ class MarkdownTableWidget extends WidgetType {
       clearBrowserSelection();
       wrap.classList.add("is-dragging-axis");
       setAxisDragSource(kind, fromIndex, true);
+      updateAxisDragPreview(kind, fromIndex, event.clientX, event.clientY);
 
       const selector = kind === "row" ? ".cm-md-table-row-handle" : ".cm-md-table-column-handle";
       const onMouseMove = (moveEvent: MouseEvent) => {
         const target = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY) as HTMLElement | null;
         const handle = target?.closest<HTMLElement>(selector);
         const validTarget = handle && wrap.contains(handle) ? handle : null;
+        updateAxisDragPreview(kind, fromIndex, moveEvent.clientX, moveEvent.clientY);
         if (activeAxisDropTarget === validTarget && validTarget) {
           setAxisDropTarget(validTarget, axisDropPositionAt(validTarget, moveEvent.clientX, moveEvent.clientY));
           return;
@@ -1325,6 +1359,7 @@ class MarkdownTableWidget extends WidgetType {
           ? destinationIndex(fromIndex, targetIndex, activeAxisDropPosition, kind === "row" ? draftRows.length + 1 : draftHeader.length)
           : Number.NaN;
         clearAxisDropTarget();
+        clearAxisDragPreview();
         setAxisDragSource(kind, fromIndex, false);
         wrap.classList.remove("is-dragging-axis");
         document.removeEventListener("mousemove", onMouseMove);
@@ -1637,6 +1672,7 @@ class MarkdownTableWidget extends WidgetType {
       stopColumnResize?.();
       stopAxisDrag?.();
       clearAxisDropTarget();
+      clearAxisDragPreview();
       if (activeAxisDrag) setAxisDragSource(activeAxisDrag.kind, activeAxisDrag.index, false);
       wrap.classList.remove("is-dragging-axis");
       window.removeEventListener("resize", syncTableHandles);
@@ -1821,10 +1857,12 @@ class MarkdownTableWidget extends WidgetType {
         event.dataTransfer.effectAllowed = "move";
         wrap.classList.add("is-dragging-axis");
         setAxisDragSource("column", index, true);
+        updateAxisDragPreview("column", index, event.clientX, event.clientY);
       });
       handle.addEventListener("dragover", (event) => {
         event.preventDefault();
         if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+        updateAxisDragPreview("column", index, event.clientX, event.clientY);
         setAxisDropTarget(handle, axisDropPositionAt(handle, event.clientX, event.clientY));
       });
       handle.addEventListener("dragleave", () => {
@@ -1836,6 +1874,7 @@ class MarkdownTableWidget extends WidgetType {
         const fromIndex = Number(value);
         const toIndex = destinationIndex(fromIndex, index, activeAxisDropPosition, draftHeader.length);
         clearAxisDropTarget();
+        clearAxisDragPreview();
         setAxisDragSource("column", fromIndex, false);
         wrap.classList.remove("is-dragging-axis");
         if (kind !== "column" || !Number.isFinite(fromIndex) || fromIndex === toIndex) return;
@@ -1851,6 +1890,7 @@ class MarkdownTableWidget extends WidgetType {
       });
       handle.addEventListener("dragend", () => {
         clearAxisDropTarget();
+        clearAxisDragPreview();
         setAxisDragSource("column", index, false);
         wrap.classList.remove("is-dragging-axis");
       });
@@ -1880,10 +1920,12 @@ class MarkdownTableWidget extends WidgetType {
         event.dataTransfer.effectAllowed = "move";
         wrap.classList.add("is-dragging-axis");
         setAxisDragSource("row", index, true);
+        updateAxisDragPreview("row", index, event.clientX, event.clientY);
       });
       handle.addEventListener("dragover", (event) => {
         event.preventDefault();
         if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+        updateAxisDragPreview("row", index, event.clientX, event.clientY);
         setAxisDropTarget(handle, axisDropPositionAt(handle, event.clientX, event.clientY));
       });
       handle.addEventListener("dragleave", () => {
@@ -1895,6 +1937,7 @@ class MarkdownTableWidget extends WidgetType {
         const fromIndex = Number(value);
         const toIndex = destinationIndex(fromIndex, index, activeAxisDropPosition, draftRows.length + 1);
         clearAxisDropTarget();
+        clearAxisDragPreview();
         setAxisDragSource("row", fromIndex, false);
         wrap.classList.remove("is-dragging-axis");
         if (kind !== "row" || !Number.isFinite(fromIndex) || fromIndex === toIndex) return;
@@ -1911,6 +1954,7 @@ class MarkdownTableWidget extends WidgetType {
       });
       handle.addEventListener("dragend", () => {
         clearAxisDropTarget();
+        clearAxisDragPreview();
         setAxisDragSource("row", index, false);
         wrap.classList.remove("is-dragging-axis");
       });
