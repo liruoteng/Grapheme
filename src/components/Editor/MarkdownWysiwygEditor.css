@@ -1128,42 +1128,18 @@
   overflow: visible;
 }
 
-.markdown-wysiwyg .cm-md-table-axis-handle.is-drop-target::before {
-  content: "";
+.markdown-wysiwyg .cm-md-table-axis-drop-guide {
   position: absolute;
-  z-index: 3;
-  display: block;
+  z-index: 5;
+  display: none;
+  pointer-events: none;
   background: var(--accent);
   border-radius: 999px;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
-.markdown-wysiwyg .cm-md-table-column-handle.is-drop-target::before {
-  top: -4px;
-  bottom: -4px;
-  width: 3px;
-}
-
-.markdown-wysiwyg .cm-md-table-column-handle.is-drop-target[data-drop-position="before"]::before {
-  left: -3px;
-}
-
-.markdown-wysiwyg .cm-md-table-column-handle.is-drop-target[data-drop-position="after"]::before {
-  right: -3px;
-}
-
-.markdown-wysiwyg .cm-md-table-row-handle.is-drop-target::before {
-  left: -4px;
-  right: -4px;
-  height: 3px;
-}
-
-.markdown-wysiwyg .cm-md-table-row-handle.is-drop-target[data-drop-position="before"]::before {
-  top: -3px;
-}
-
-.markdown-wysiwyg .cm-md-table-row-handle.is-drop-target[data-drop-position="after"]::before {
-  bottom: -3px;
+.markdown-wysiwyg .cm-md-table-axis-drop-guide.is-visible {
+  display: block;
 }
 
 .markdown-wysiwyg .cm-md-table-axis-drag-status {

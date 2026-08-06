@@ -1014,6 +1014,7 @@ class MarkdownTableWidget extends WidgetType {
     let activeAxisDropPosition: "before" | "after" = "before";
     let activeAxisDrag: { kind: "row" | "column"; index: number } | null = null;
     let axisDragStatus: HTMLDivElement | null = null;
+    let axisDropGuide: HTMLDivElement | null = null;
     let axisDragPreview: HTMLDivElement | null = null;
     let axisDragPreviewGeometry: {
       kind: "row" | "column";
@@ -1269,7 +1270,24 @@ class MarkdownTableWidget extends WidgetType {
       activeAxisDropTarget?.removeAttribute("aria-describedby");
       activeAxisDropTarget = null;
       activeAxisDropPosition = "before";
+      axisDropGuide?.classList.remove("is-visible", "cm-md-table-axis-drop-guide--row", "cm-md-table-axis-drop-guide--column");
       if (axisDragStatus) axisDragStatus.textContent = "";
+    };
+
+    const updateAxisDropGuide = (handle: HTMLElement, position: "before" | "after") => {
+      if (!axisDropGuide) return;
+      const tableElement = frame.querySelector("table");
+      if (!tableElement) return;
+      const frameRect = frame.getBoundingClientRect();
+      const tableRect = tableElement.getBoundingClientRect();
+      const handleRect = handle.getBoundingClientRect();
+      const isRow = handle.classList.contains("cm-md-table-row-handle");
+      axisDropGuide.classList.remove("cm-md-table-axis-drop-guide--row", "cm-md-table-axis-drop-guide--column");
+      axisDropGuide.classList.add(isRow ? "cm-md-table-axis-drop-guide--row" : "cm-md-table-axis-drop-guide--column", "is-visible");
+      axisDropGuide.style.left = `${(isRow ? tableRect.left : position === "before" ? handleRect.left : handleRect.right) - frameRect.left}px`;
+      axisDropGuide.style.top = `${(isRow ? position === "before" ? handleRect.top : handleRect.bottom : tableRect.top) - frameRect.top}px`;
+      axisDropGuide.style.width = `${isRow ? tableRect.width : 3}px`;
+      axisDropGuide.style.height = `${isRow ? 3 : tableRect.height}px`;
     };
 
     const axisDropPositionAt = (handle: HTMLElement, clientX: number, clientY: number) => {
@@ -1294,6 +1312,7 @@ class MarkdownTableWidget extends WidgetType {
       activeAxisDropPosition = position;
       handle.classList.add("is-drop-target");
       handle.dataset.dropPosition = position;
+      updateAxisDropGuide(handle, position);
       handle.setAttribute("aria-describedby", axisDragStatus?.id ?? "");
       if (axisDragStatus && activeAxisDrag) {
         const targetIndex = Number(handle.dataset.index) + 1;
@@ -1858,6 +1877,11 @@ class MarkdownTableWidget extends WidgetType {
     axisDragStatus.setAttribute("role", "status");
     axisDragStatus.setAttribute("aria-live", "polite");
     frame.appendChild(axisDragStatus);
+
+    axisDropGuide = document.createElement("div");
+    axisDropGuide.className = "cm-md-table-axis-drop-guide";
+    axisDropGuide.setAttribute("aria-hidden", "true");
+    frame.appendChild(axisDropGuide);
 
     verticalResizeGuide = document.createElement("div");
     verticalResizeGuide.className = "cm-md-table-resize-guide cm-md-table-resize-guide--vertical";
