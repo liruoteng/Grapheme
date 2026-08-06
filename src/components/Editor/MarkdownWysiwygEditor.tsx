@@ -6,6 +6,7 @@ import { tags } from "@lezer/highlight";
 import { searchKeymap } from "@codemirror/search";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { toast } from "sonner";
 import { logger } from "../../lib/logger";
 import katex from "katex";
 import { refractor } from "refractor/all";
@@ -1008,6 +1009,8 @@ class MarkdownTableWidget extends WidgetType {
     let colElements: HTMLTableColElement[] = [];
     let columnHandleElements: HTMLButtonElement[] = [];
     let rowHandleElements: HTMLButtonElement[] = [];
+    let columnRemoveElements: Array<HTMLButtonElement | null> = [];
+    let rowRemoveElements: Array<HTMLButtonElement | null> = [];
     let stopColumnResize: (() => void) | null = null;
     let stopAxisDrag: ((event?: MouseEvent) => void) | null = null;
     let activeAxisDropTarget: HTMLElement | null = null;
@@ -1169,31 +1172,6 @@ class MarkdownTableWidget extends WidgetType {
       view.focus();
     };
 
-    const selectedColumnIndexes = () => {
-      if (selectedRange) {
-        const indexes: number[] = [];
-        for (let col = selectedRange.startCol; col <= selectedRange.endCol; col += 1) indexes.push(col);
-        return indexes;
-      }
-      return activeColIndex !== null ? [activeColIndex] : [];
-    };
-
-    const selectedDataRowIndexes = () => {
-      if (selectedRange) {
-        const indexes: number[] = [];
-        for (let row = Math.max(1, selectedRange.startRow); row <= selectedRange.endRow; row += 1) indexes.push(row - 1);
-        if (indexes.length > 0) return indexes;
-      }
-      return activeRowIndex !== null && activeRowIndex > 0 ? [activeRowIndex - 1] : [];
-    };
-
-    const nextTableSource = (header: string[], alignments: MarkdownTable["alignments"], rows: string[][]) => (
-      tableSource(header, alignments, rows, layoutIsPersisted ? {
-        colWidths: colWidths.slice(0, header.length),
-        rowHeights: measuredRowHeights().slice(0, rows.length + 1),
-      } : undefined)
-    );
-
     const replaceWithTableSource = (nextSource: string) => {
       commitTableEdit();
       replaceTableSource(nextSource);
@@ -1349,8 +1327,14 @@ class MarkdownTableWidget extends WidgetType {
       for (const [index, handle] of rowHandleElements.entries()) {
         handle.classList.toggle("is-active-axis", index === rowIndex);
       }
+      for (const [index, button] of rowRemoveElements.entries()) {
+        button?.classList.toggle("is-contextual-visible", index === rowIndex);
+      }
       for (const [index, handle] of columnHandleElements.entries()) {
         handle.classList.toggle("is-active-axis", index === colIndex);
+      }
+      for (const [index, button] of columnRemoveElements.entries()) {
+        button?.classList.toggle("is-contextual-visible", index === colIndex);
       }
     };
 
@@ -1764,112 +1748,6 @@ class MarkdownTableWidget extends WidgetType {
       });
     });
 
-    const actions = document.createElement("div");
-    actions.className = "cm-md-table-actions";
-
-    const editBtn = document.createElement("button");
-    editBtn.type = "button";
-    editBtn.textContent = "Edit source";
-    editBtn.addEventListener("mousedown", (event) => event.preventDefault());
-    editBtn.addEventListener("click", (event) => {
-      event.preventDefault();
-      dispatchPreservingScroll(view, {
-        effects: editTableSourceEffect.of({ from: this.table.from, to: this.table.to }),
-        selection: EditorSelection.cursor(this.table.from),
-      });
-      view.focus();
-    });
-    actions.appendChild(editBtn);
-
-    const rowBtn = document.createElement("button");
-    rowBtn.type = "button";
-    rowBtn.textContent = "+ Row";
-    rowBtn.addEventListener("mousedown", (event) => event.preventDefault());
-    rowBtn.addEventListener("click", (event) => {
-      event.preventDefault();
-      const heights = measuredRowHeights();
-      replaceWithTableSource(tableSource(
-        draftHeader,
-        draftAlignments,
-        [...draftRows, draftHeader.map(() => "")],
-        persistedLayout({
-          colWidths: colWidths.slice(0, draftHeader.length),
-          rowHeights: [...heights, heights[heights.length - 1] ?? 43],
-        }),
-      ));
-    });
-    actions.appendChild(rowBtn);
-
-    const colBtn = document.createElement("button");
-    colBtn.type = "button";
-    colBtn.textContent = "+ Column";
-    colBtn.addEventListener("mousedown", (event) => event.preventDefault());
-    colBtn.addEventListener("click", (event) => {
-      event.preventDefault();
-      const nextColWidth = 100 / (draftHeader.length + 1);
-      const scaledColWidths = colWidths.map((width) => width * (100 - nextColWidth) / 100);
-      replaceWithTableSource(tableSource(
-        [...draftHeader, `Column ${draftHeader.length + 1}`],
-        [...draftAlignments, null],
-        draftRows.map((row) => [...row, ""]),
-        persistedLayout({
-          colWidths: [...scaledColWidths, nextColWidth],
-          rowHeights: measuredRowHeights(),
-        }),
-      ));
-    });
-    actions.appendChild(colBtn);
-
-    const deleteRowBtn = document.createElement("button");
-    deleteRowBtn.type = "button";
-    deleteRowBtn.textContent = "- Row";
-    deleteRowBtn.title = "Delete the selected row or active data row";
-    deleteRowBtn.addEventListener("mousedown", (event) => event.preventDefault());
-    deleteRowBtn.addEventListener("click", (event) => {
-      event.preventDefault();
-      const rowsToDelete = new Set(selectedDataRowIndexes());
-      if (rowsToDelete.size === 0) return;
-      replaceWithTableSource(nextTableSource(
-        draftHeader,
-        draftAlignments,
-        draftRows.filter((_, index) => !rowsToDelete.has(index)),
-      ));
-    });
-    actions.appendChild(deleteRowBtn);
-
-    const deleteColBtn = document.createElement("button");
-    deleteColBtn.type = "button";
-    deleteColBtn.textContent = "- Column";
-    deleteColBtn.title = "Delete the selected column or active column";
-    deleteColBtn.addEventListener("mousedown", (event) => event.preventDefault());
-    deleteColBtn.addEventListener("click", (event) => {
-      event.preventDefault();
-      const columnsToDelete = new Set(selectedColumnIndexes());
-      if (columnsToDelete.size === 0) return;
-      if (columnsToDelete.size >= draftHeader.length) {
-        replaceWithTableSource("");
-        return;
-      }
-      replaceWithTableSource(nextTableSource(
-        draftHeader.filter((_, index) => !columnsToDelete.has(index)),
-        draftAlignments.filter((_, index) => !columnsToDelete.has(index)),
-        draftRows.map((row) => row.filter((_, index) => !columnsToDelete.has(index))),
-      ));
-    });
-    actions.appendChild(deleteColBtn);
-
-    const deleteTableBtn = document.createElement("button");
-    deleteTableBtn.type = "button";
-    deleteTableBtn.textContent = "Delete table";
-    deleteTableBtn.addEventListener("mousedown", (event) => event.preventDefault());
-    deleteTableBtn.addEventListener("click", (event) => {
-      event.preventDefault();
-      replaceWithTableSource("");
-    });
-    actions.appendChild(deleteTableBtn);
-
-    wrap.appendChild(actions);
-
     wrap.addEventListener("mousedown", (event) => {
       if (event.target instanceof Element && event.target.closest("button, [contenteditable='true']")) return;
       event.preventDefault();
@@ -1878,6 +1756,119 @@ class MarkdownTableWidget extends WidgetType {
 
     const frame = document.createElement("div");
     frame.className = "cm-md-table-frame";
+
+    const showTableUndo = (message: string, previousSource: string) => {
+      toast.success(message, {
+        duration: 4500,
+        action: {
+          label: "Undo",
+          onClick: () => replaceTableSource(previousSource),
+        },
+      });
+    };
+
+    const removeRowAt = (rowIndex: number) => {
+      if (rowIndex <= 0 || rowIndex > draftRows.length) return;
+      const previousSource = committedSource;
+      const heights = measuredRowHeights();
+      replaceWithTableSource(tableSource(
+        draftHeader,
+        draftAlignments,
+        draftRows.filter((_, index) => index !== rowIndex - 1),
+        persistedLayout({
+          colWidths: colWidths.slice(0, draftHeader.length),
+          rowHeights: heights.filter((_, index) => index !== rowIndex),
+        }),
+      ));
+      showTableUndo("Row removed", previousSource);
+    };
+
+    const removeColumnAt = (columnIndex: number) => {
+      if (columnIndex < 0 || columnIndex >= draftHeader.length || draftHeader.length <= 1) return;
+      const previousSource = committedSource;
+      replaceWithTableSource(tableSource(
+        draftHeader.filter((_, index) => index !== columnIndex),
+        draftAlignments.filter((_, index) => index !== columnIndex),
+        draftRows.map((row) => row.filter((_, index) => index !== columnIndex)),
+        persistedLayout({
+          colWidths: colWidths.filter((_, index) => index !== columnIndex),
+          rowHeights: measuredRowHeights(),
+        }),
+      ));
+      showTableUndo("Column removed", previousSource);
+    };
+
+    const contextMenu = document.createElement("div");
+    contextMenu.className = "cm-md-table-context-menu";
+    const contextTrigger = document.createElement("button");
+    contextTrigger.type = "button";
+    contextTrigger.className = "cm-md-table-context-trigger";
+    contextTrigger.textContent = "⋯";
+    contextTrigger.title = "Table actions";
+    contextTrigger.setAttribute("aria-label", "Table actions");
+    contextTrigger.setAttribute("aria-expanded", "false");
+    const contextPanel = document.createElement("div");
+    contextPanel.className = "cm-md-table-context-panel";
+    contextPanel.hidden = true;
+    contextPanel.setAttribute("role", "menu");
+    const closeContextMenu = () => {
+      contextMenu.classList.remove("is-open");
+      contextTrigger.setAttribute("aria-expanded", "false");
+      contextPanel.hidden = true;
+    };
+    contextTrigger.addEventListener("mousedown", (event) => event.preventDefault());
+    contextTrigger.addEventListener("click", (event) => {
+      event.preventDefault();
+      const open = contextPanel.hidden;
+      if (!open) {
+        closeContextMenu();
+        return;
+      }
+      contextMenu.classList.add("is-open");
+      contextTrigger.setAttribute("aria-expanded", "true");
+      contextPanel.hidden = false;
+      contextPanel.querySelector<HTMLButtonElement>("button")?.focus();
+    });
+    const editSourceItem = document.createElement("button");
+    editSourceItem.type = "button";
+    editSourceItem.className = "cm-md-table-context-item";
+    editSourceItem.textContent = "Edit source";
+    editSourceItem.setAttribute("role", "menuitem");
+    editSourceItem.addEventListener("click", (event) => {
+      event.preventDefault();
+      closeContextMenu();
+      dispatchPreservingScroll(view, {
+        effects: editTableSourceEffect.of({ from: this.table.from, to: this.table.to }),
+        selection: EditorSelection.cursor(this.table.from),
+      });
+      view.focus();
+    });
+    const deleteTableItem = document.createElement("button");
+    deleteTableItem.type = "button";
+    deleteTableItem.className = "cm-md-table-context-item cm-md-table-context-item--danger";
+    deleteTableItem.setAttribute("role", "menuitem");
+    deleteTableItem.setAttribute("aria-label", "Delete table");
+    const deleteIcon = document.createElement("span");
+    deleteIcon.className = "cm-md-table-context-icon";
+    deleteIcon.textContent = "🗑";
+    deleteIcon.setAttribute("aria-hidden", "true");
+    deleteTableItem.append(deleteIcon, document.createTextNode("Delete table"));
+    deleteTableItem.addEventListener("click", (event) => {
+      event.preventDefault();
+      const previousSource = committedSource;
+      closeContextMenu();
+      replaceWithTableSource("");
+      showTableUndo("Table deleted", previousSource);
+    });
+    contextPanel.append(editSourceItem, deleteTableItem);
+    contextMenu.append(contextTrigger, contextPanel);
+    contextMenu.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      closeContextMenu();
+      contextTrigger.focus();
+    });
+    frame.appendChild(contextMenu);
 
     axisDragStatus = document.createElement("div");
     axisDragStatus.id = `cm-md-table-drag-status-${tableFrom}`;
@@ -1902,6 +1893,7 @@ class MarkdownTableWidget extends WidgetType {
     const columnControls = document.createElement("div");
     columnControls.className = "cm-md-table-column-controls";
     columnHandleElements = [];
+    columnRemoveElements = [];
     for (let index = 0; index < draftHeader.length; index += 1) {
       const handle = document.createElement("button");
       handle.type = "button";
@@ -1959,12 +1951,31 @@ class MarkdownTableWidget extends WidgetType {
       });
       columnHandleElements.push(handle);
       columnControls.appendChild(handle);
+      let removeButton: HTMLButtonElement | null = null;
+      if (draftHeader.length > 1) {
+        removeButton = document.createElement("button");
+        removeButton.type = "button";
+        removeButton.className = "cm-md-table-axis-remove cm-md-table-column-remove";
+        removeButton.textContent = "−";
+        removeButton.title = `Remove column ${index + 1}`;
+        removeButton.setAttribute("aria-label", `Remove column ${index + 1}`);
+        removeButton.addEventListener("mouseenter", () => setActiveColumnHandle(index));
+        removeButton.addEventListener("focus", () => setActiveColumnHandle(index));
+        removeButton.addEventListener("mousedown", (event) => event.preventDefault());
+        removeButton.addEventListener("click", (event) => {
+          event.preventDefault();
+          removeColumnAt(index);
+        });
+        columnControls.appendChild(removeButton);
+      }
+      columnRemoveElements.push(removeButton);
     }
     frame.appendChild(columnControls);
 
     const rowControls = document.createElement("div");
     rowControls.className = "cm-md-table-row-controls";
     rowHandleElements = [];
+    rowRemoveElements = [];
     for (let index = 0; index < draftRows.length + 1; index += 1) {
       const handle = document.createElement("button");
       handle.type = "button";
@@ -2023,6 +2034,24 @@ class MarkdownTableWidget extends WidgetType {
       });
       rowHandleElements.push(handle);
       rowControls.appendChild(handle);
+      let removeButton: HTMLButtonElement | null = null;
+      if (index > 0) {
+        removeButton = document.createElement("button");
+        removeButton.type = "button";
+        removeButton.className = "cm-md-table-axis-remove cm-md-table-row-remove";
+        removeButton.textContent = "−";
+        removeButton.title = `Remove row ${index + 1}`;
+        removeButton.setAttribute("aria-label", `Remove row ${index + 1}`);
+        removeButton.addEventListener("mouseenter", () => setActiveRowHandle(index));
+        removeButton.addEventListener("focus", () => setActiveRowHandle(index));
+        removeButton.addEventListener("mousedown", (event) => event.preventDefault());
+        removeButton.addEventListener("click", (event) => {
+          event.preventDefault();
+          removeRowAt(index);
+        });
+        rowControls.appendChild(removeButton);
+      }
+      rowRemoveElements.push(removeButton);
     }
     frame.appendChild(rowControls);
 
@@ -2137,6 +2166,10 @@ class MarkdownTableWidget extends WidgetType {
         handle.style.display = "";
         handle.style.left = `${cellRect.left - frameRect.left}px`;
         handle.style.width = `${cellRect.width}px`;
+        const removeButton = columnRemoveElements[index];
+        if (removeButton) {
+          removeButton.style.left = `${cellRect.left - frameRect.left + cellRect.width - 20}px`;
+        }
       }
 
       const rows = [headRow, ...tbody.rows];
@@ -2150,6 +2183,10 @@ class MarkdownTableWidget extends WidgetType {
         handle.style.display = "";
         handle.style.top = `${rowRect.top - frameRect.top}px`;
         handle.style.height = `${rowRect.height}px`;
+        const removeButton = rowRemoveElements[index];
+        if (removeButton) {
+          removeButton.style.top = `${rowRect.top - frameRect.top + Math.max(0, rowRect.height - 20) / 2}px`;
+        }
       }
     };
     requestAnimationFrame(() => {

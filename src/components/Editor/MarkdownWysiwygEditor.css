@@ -1100,6 +1100,46 @@
   cursor: grabbing;
 }
 
+.markdown-wysiwyg .cm-md-table-axis-remove {
+  position: absolute;
+  z-index: 6;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 1.05em;
+  line-height: 1;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease, color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+
+.markdown-wysiwyg .cm-md-table-render.is-controls-active .cm-md-table-axis-remove.is-contextual-visible {
+  opacity: 0.9;
+  pointer-events: auto;
+}
+
+.markdown-wysiwyg .cm-md-table-axis-remove:hover,
+.markdown-wysiwyg .cm-md-table-axis-remove:focus-visible {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-surface));
+  color: var(--text);
+  outline: none;
+}
+
+.markdown-wysiwyg .cm-md-table-row-remove {
+  left: -24px;
+}
+
+.markdown-wysiwyg .cm-md-table-column-remove {
+  top: -23px;
+}
+
 .markdown-wysiwyg .cm-md-table-axis-handle.is-dragging-source {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 30%, var(--bg-hover));
@@ -1152,6 +1192,87 @@
   height: 100%;
   border-radius: 6px 0 0 6px;
   writing-mode: vertical-rl;
+}
+
+.markdown-wysiwyg .cm-md-table-context-menu {
+  position: absolute;
+  z-index: 7;
+  top: -32px;
+  right: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.markdown-wysiwyg .cm-md-table-render.is-controls-active .cm-md-table-context-menu,
+.markdown-wysiwyg .cm-md-table-context-menu.is-open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.markdown-wysiwyg .cm-md-table-context-trigger {
+  width: 28px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 1.15em;
+  line-height: 1;
+}
+
+.markdown-wysiwyg .cm-md-table-context-trigger:hover,
+.markdown-wysiwyg .cm-md-table-context-trigger:focus-visible {
+  border-color: var(--accent);
+  color: var(--text);
+  outline: none;
+}
+
+.markdown-wysiwyg .cm-md-table-context-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  display: grid;
+  min-width: 150px;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  box-shadow: 0 8px 22px color-mix(in srgb, #000 20%, transparent);
+}
+
+.markdown-wysiwyg .cm-md-table-context-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.markdown-wysiwyg .cm-md-table-context-item:hover,
+.markdown-wysiwyg .cm-md-table-context-item:focus-visible {
+  background: var(--bg-hover);
+  outline: none;
+}
+
+.markdown-wysiwyg .cm-md-table-context-item--danger {
+  color: var(--danger, #d14);
+}
+
+.markdown-wysiwyg .cm-md-table-context-icon {
+  width: 1.1em;
+  text-align: center;
 }
 
 .markdown-wysiwyg .cm-md-table-axis-handle.is-drop-target {

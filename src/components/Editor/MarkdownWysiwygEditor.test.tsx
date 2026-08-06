@@ -357,7 +357,7 @@ describe("MarkdownWysiwygEditor", () => {
     expect([...selected].map((cell) => cell.textContent)).toEqual(["1", "2", "4", "5"]);
   });
 
-  it("deletes a table row from the rendered table toolbar", async () => {
+  it("removes a table row from its contextual handle control", async () => {
     const path = "/workspace/examples/markdown/table.md";
     useEditorStore.getState().openTab(
       path,
@@ -375,7 +375,8 @@ describe("MarkdownWysiwygEditor", () => {
     fireEvent.mouseDown(cells[2], { button: 0 });
     fireEvent.mouseUp(cells[2], { button: 0 });
 
-    const deleteRow = [...container.querySelectorAll("button")].find((button) => button.textContent === "- Row");
+    const deleteRow = container.querySelector('button[aria-label="Remove row 3"]');
+    expect(deleteRow).toHaveClass("is-contextual-visible");
     fireEvent.click(deleteRow!);
 
     await waitFor(() => {
@@ -383,7 +384,7 @@ describe("MarkdownWysiwygEditor", () => {
     });
   });
 
-  it("deletes a table column from the rendered table toolbar", async () => {
+  it("removes a table column from its contextual handle control", async () => {
     const path = "/workspace/examples/markdown/table.md";
     useEditorStore.getState().openTab(
       path,
@@ -401,7 +402,8 @@ describe("MarkdownWysiwygEditor", () => {
     fireEvent.mouseDown(cells[2], { button: 0 });
     fireEvent.mouseUp(cells[2], { button: 0 });
 
-    const deleteColumn = [...container.querySelectorAll("button")].find((button) => button.textContent === "- Column");
+    const deleteColumn = container.querySelector('button[aria-label="Remove column 3"]');
+    expect(deleteColumn).toHaveClass("is-contextual-visible");
     fireEvent.click(deleteColumn!);
 
     await waitFor(() => {
@@ -423,6 +425,11 @@ describe("MarkdownWysiwygEditor", () => {
       expect(addRow).toBeInTheDocument();
       expect(addColumn).toBeInTheDocument();
     });
+    expect(container.querySelector(".cm-md-table-actions")).not.toBeInTheDocument();
+    const tableActions = container.querySelector('button[aria-label="Table actions"]')!;
+    fireEvent.click(tableActions);
+    expect(container.querySelector('button[aria-label="Delete table"]')).toBeVisible();
+    expect(container.querySelector(".cm-md-table-context-item")?.textContent).toBe("Edit source");
 
     fireEvent.click(addRow!);
 
@@ -516,7 +523,7 @@ describe("MarkdownWysiwygEditor", () => {
       expect(container.querySelector(".cm-md-table-render")).toBeInTheDocument();
     });
 
-    const deleteTable = [...container.querySelectorAll("button")].find((button) => button.textContent === "Delete table");
+    const deleteTable = container.querySelector('button[aria-label="Delete table"]');
     fireEvent.click(deleteTable!);
 
     await waitFor(() => {
