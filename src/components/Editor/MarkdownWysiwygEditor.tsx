@@ -1232,6 +1232,9 @@ class MarkdownTableWidget extends WidgetType {
         const frameRect = frame.getBoundingClientRect();
         const tableRect = tableElement.getBoundingClientRect();
         const sourceRect = sourceElement.getBoundingClientRect();
+        const axisHandle = (kind === "row" ? rowHandleElements : columnHandleElements)[index];
+        const handleRect = axisHandle?.getBoundingClientRect();
+        if (!handleRect) return;
         axisDragPreview = document.createElement("div");
         axisDragPreview.className = `cm-md-table-axis-drag-preview cm-md-table-axis-drag-preview--${kind}`;
         axisDragPreview.setAttribute("aria-hidden", "true");
@@ -1242,10 +1245,10 @@ class MarkdownTableWidget extends WidgetType {
         frame.appendChild(axisDragPreview);
         axisDragPreviewGeometry = {
           kind,
-          left: (kind === "row" ? tableRect.left : sourceRect.left) - frameRect.left,
-          top: (kind === "row" ? sourceRect.top : tableRect.top) - frameRect.top,
-          width: kind === "row" ? tableRect.width : sourceRect.width,
-          height: kind === "row" ? sourceRect.height : tableRect.height,
+          left: (kind === "row" ? handleRect.left : sourceRect.left) - frameRect.left,
+          top: (kind === "row" ? sourceRect.top : handleRect.top) - frameRect.top,
+          width: kind === "row" ? tableRect.right - handleRect.left : sourceRect.width,
+          height: kind === "row" ? sourceRect.height : tableRect.bottom - handleRect.top,
           originX: clientX ?? null,
           originY: clientY ?? null,
         };
