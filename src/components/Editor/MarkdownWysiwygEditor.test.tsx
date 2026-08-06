@@ -467,6 +467,12 @@ describe("MarkdownWysiwygEditor", () => {
       },
     };
     fireEvent.dragStart(rowHandles![2], { dataTransfer: rowTransfer });
+    expect(rowHandles![2]).toHaveClass("is-dragging-source");
+    expect(container.querySelectorAll("[data-row='2'].is-axis-drag-source")).toHaveLength(3);
+    fireEvent.dragOver(rowHandles![0], { dataTransfer: rowTransfer });
+    expect(rowHandles![0]).toHaveClass("is-drop-target");
+    expect(rowHandles![0]).toHaveAttribute("data-drop-position", "before");
+    expect(container.querySelector('[role="status"]')).toBeInTheDocument();
     fireEvent.drop(rowHandles![0], { dataTransfer: rowTransfer });
 
     await waitFor(() => {
@@ -485,6 +491,9 @@ describe("MarkdownWysiwygEditor", () => {
     };
     const latestColumnHandles = container.querySelectorAll(".cm-md-table-column-handle") as NodeListOf<HTMLElement>;
     fireEvent.dragStart(latestColumnHandles[2], { dataTransfer: colTransfer });
+    expect(latestColumnHandles[2]).toHaveClass("is-dragging-source");
+    fireEvent.dragOver(latestColumnHandles[0], { dataTransfer: colTransfer });
+    expect(latestColumnHandles[0]).toHaveAttribute("data-drop-position", "before");
     fireEvent.drop(latestColumnHandles[0], { dataTransfer: colTransfer });
 
     await waitFor(() => {

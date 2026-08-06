@@ -1011,6 +1011,9 @@ class MarkdownTableWidget extends WidgetType {
     let stopColumnResize: (() => void) | null = null;
     let stopAxisDrag: ((event?: MouseEvent) => void) | null = null;
     let activeAxisDropTarget: HTMLElement | null = null;
+    let activeAxisDropPosition: "before" | "after" = "before";
+    let activeAxisDrag: { kind: "row" | "column"; index: number } | null = null;
+    let axisDragStatus: HTMLDivElement | null = null;
     let syncTableHandles = () => {};
     let activeRowIndex: number | null = null;
     let activeColIndex: number | null = null;
@@ -1183,9 +1186,56 @@ class MarkdownTableWidget extends WidgetType {
       replaceTableSource(nextSource);
     };
 
+    const setAxisDragSource = (kind: "row" | "column", index: number, dragging: boolean) => {
+      const handles = kind === "row" ? rowHandleElements : columnHandleElements;
+      handles.forEach((handle, handleIndex) => {
+        handle.classList.toggle("is-dragging-source", dragging && handleIndex === index);
+        if (dragging && handleIndex === index) handle.setAttribute("aria-grabbed", "true");
+        else handle.removeAttribute("aria-grabbed");
+      });
+      for (const cell of renderedCells.values()) {
+        const cellIndex = kind === "row" ? Number(cell.dataset.row) : Number(cell.dataset.col);
+        cell.classList.toggle("is-axis-drag-source", dragging && cellIndex === index);
+      }
+      activeAxisDrag = dragging ? { kind, index } : null;
+    };
+
     const clearAxisDropTarget = () => {
       activeAxisDropTarget?.classList.remove("is-drop-target");
+      activeAxisDropTarget?.removeAttribute("data-drop-position");
+      activeAxisDropTarget?.removeAttribute("aria-describedby");
       activeAxisDropTarget = null;
+      activeAxisDropPosition = "before";
+      if (axisDragStatus) axisDragStatus.textContent = "";
+    };
+
+    const axisDropPositionAt = (handle: HTMLElement, clientX: number, clientY: number) => {
+      const rect = handle.getBoundingClientRect();
+      const isRow = handle.classList.contains("cm-md-table-row-handle");
+      const coordinate = isRow ? clientY : clientX;
+      const start = isRow ? rect.top : rect.left;
+      const size = isRow ? rect.height : rect.width;
+      return size > 0 && coordinate - start > size / 2 ? "after" as const : "before" as const;
+    };
+
+    const destinationIndex = (fromIndex: number, targetIndex: number, position: "before" | "after", length: number) => {
+      const insertionIndex = position === "after" ? targetIndex + 1 : targetIndex;
+      const destination = fromIndex < insertionIndex ? insertionIndex - 1 : insertionIndex;
+      return Math.max(0, Math.min(length - 1, destination));
+    };
+
+    const setAxisDropTarget = (handle: HTMLElement | null, position: "before" | "after") => {
+      clearAxisDropTarget();
+      if (!handle) return;
+      activeAxisDropTarget = handle;
+      activeAxisDropPosition = position;
+      handle.classList.add("is-drop-target");
+      handle.dataset.dropPosition = position;
+      handle.setAttribute("aria-describedby", axisDragStatus?.id ?? "");
+      if (axisDragStatus && activeAxisDrag) {
+        const targetIndex = Number(handle.dataset.index) + 1;
+        axisDragStatus.textContent = `Move ${activeAxisDrag.kind} ${activeAxisDrag.index + 1} ${position} ${activeAxisDrag.kind} ${targetIndex}`;
+      }
     };
 
     const clearHoveredAxisHandles = () => {
@@ -1254,22 +1304,28 @@ class MarkdownTableWidget extends WidgetType {
       event.stopPropagation();
       clearBrowserSelection();
       wrap.classList.add("is-dragging-axis");
+      setAxisDragSource(kind, fromIndex, true);
 
       const selector = kind === "row" ? ".cm-md-table-row-handle" : ".cm-md-table-column-handle";
       const onMouseMove = (moveEvent: MouseEvent) => {
         const target = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY) as HTMLElement | null;
         const handle = target?.closest<HTMLElement>(selector);
         const validTarget = handle && wrap.contains(handle) ? handle : null;
-        if (activeAxisDropTarget === validTarget) return;
-        clearAxisDropTarget();
-        activeAxisDropTarget = validTarget;
-        activeAxisDropTarget?.classList.add("is-drop-target");
+        if (activeAxisDropTarget === validTarget && validTarget) {
+          setAxisDropTarget(validTarget, axisDropPositionAt(validTarget, moveEvent.clientX, moveEvent.clientY));
+          return;
+        }
+        setAxisDropTarget(validTarget, validTarget ? axisDropPositionAt(validTarget, moveEvent.clientX, moveEvent.clientY) : "before");
       };
       const onMouseUp = (upEvent?: MouseEvent) => {
         const target = upEvent ? document.elementFromPoint(upEvent.clientX, upEvent.clientY) as HTMLElement | null : null;
         const handle = target?.closest<HTMLElement>(selector);
-        const toIndex = Number(handle?.dataset.index);
+        const targetIndex = Number(handle?.dataset.index);
+        const toIndex = handle && Number.isFinite(targetIndex)
+          ? destinationIndex(fromIndex, targetIndex, activeAxisDropPosition, kind === "row" ? draftRows.length + 1 : draftHeader.length)
+          : Number.NaN;
         clearAxisDropTarget();
+        setAxisDragSource(kind, fromIndex, false);
         wrap.classList.remove("is-dragging-axis");
         document.removeEventListener("mousemove", onMouseMove);
         document.removeEventListener("mouseup", onMouseUp);
@@ -1580,6 +1636,9 @@ class MarkdownTableWidget extends WidgetType {
     this.cleanup = () => {
       stopColumnResize?.();
       stopAxisDrag?.();
+      clearAxisDropTarget();
+      if (activeAxisDrag) setAxisDragSource(activeAxisDrag.kind, activeAxisDrag.index, false);
+      wrap.classList.remove("is-dragging-axis");
       window.removeEventListener("resize", syncTableHandles);
       document.removeEventListener("mousemove", trackTableSelection);
       document.removeEventListener("mousemove", trackAxisHover);
@@ -1726,6 +1785,13 @@ class MarkdownTableWidget extends WidgetType {
     const frame = document.createElement("div");
     frame.className = "cm-md-table-frame";
 
+    axisDragStatus = document.createElement("div");
+    axisDragStatus.id = `cm-md-table-drag-status-${tableFrom}`;
+    axisDragStatus.className = "cm-md-table-axis-drag-status";
+    axisDragStatus.setAttribute("role", "status");
+    axisDragStatus.setAttribute("aria-live", "polite");
+    frame.appendChild(axisDragStatus);
+
     verticalResizeGuide = document.createElement("div");
     verticalResizeGuide.className = "cm-md-table-resize-guide cm-md-table-resize-guide--vertical";
     frame.appendChild(verticalResizeGuide);
@@ -1753,27 +1819,40 @@ class MarkdownTableWidget extends WidgetType {
         if (!event.dataTransfer) return;
         event.dataTransfer.setData("text/plain", `column:${index}`);
         event.dataTransfer.effectAllowed = "move";
+        wrap.classList.add("is-dragging-axis");
+        setAxisDragSource("column", index, true);
       });
       handle.addEventListener("dragover", (event) => {
         event.preventDefault();
-        handle.classList.add("is-drop-target");
+        if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+        setAxisDropTarget(handle, axisDropPositionAt(handle, event.clientX, event.clientY));
       });
-      handle.addEventListener("dragleave", () => handle.classList.remove("is-drop-target"));
+      handle.addEventListener("dragleave", () => {
+        if (activeAxisDropTarget === handle) clearAxisDropTarget();
+      });
       handle.addEventListener("drop", (event) => {
         event.preventDefault();
-        handle.classList.remove("is-drop-target");
         const [kind, value] = (event.dataTransfer?.getData("text/plain") ?? "").split(":");
         const fromIndex = Number(value);
-        if (kind !== "column" || !Number.isFinite(fromIndex) || fromIndex === index) return;
+        const toIndex = destinationIndex(fromIndex, index, activeAxisDropPosition, draftHeader.length);
+        clearAxisDropTarget();
+        setAxisDragSource("column", fromIndex, false);
+        wrap.classList.remove("is-dragging-axis");
+        if (kind !== "column" || !Number.isFinite(fromIndex) || fromIndex === toIndex) return;
         replaceWithTableSource(tableSource(
-          moveArray(draftHeader, fromIndex, index),
-          moveArray(draftAlignments, fromIndex, index),
-          draftRows.map((row) => moveArray(row, fromIndex, index)),
+          moveArray(draftHeader, fromIndex, toIndex),
+          moveArray(draftAlignments, fromIndex, toIndex),
+          draftRows.map((row) => moveArray(row, fromIndex, toIndex)),
           persistedLayout({
-            colWidths: moveArray(colWidths, fromIndex, index),
+            colWidths: moveArray(colWidths, fromIndex, toIndex),
             rowHeights: measuredRowHeights(),
           }),
         ));
+      });
+      handle.addEventListener("dragend", () => {
+        clearAxisDropTarget();
+        setAxisDragSource("column", index, false);
+        wrap.classList.remove("is-dragging-axis");
       });
       columnHandleElements.push(handle);
       columnControls.appendChild(handle);
@@ -1799,28 +1878,41 @@ class MarkdownTableWidget extends WidgetType {
         if (!event.dataTransfer) return;
         event.dataTransfer.setData("text/plain", `row:${index}`);
         event.dataTransfer.effectAllowed = "move";
+        wrap.classList.add("is-dragging-axis");
+        setAxisDragSource("row", index, true);
       });
       handle.addEventListener("dragover", (event) => {
         event.preventDefault();
-        handle.classList.add("is-drop-target");
+        if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+        setAxisDropTarget(handle, axisDropPositionAt(handle, event.clientX, event.clientY));
       });
-      handle.addEventListener("dragleave", () => handle.classList.remove("is-drop-target"));
+      handle.addEventListener("dragleave", () => {
+        if (activeAxisDropTarget === handle) clearAxisDropTarget();
+      });
       handle.addEventListener("drop", (event) => {
         event.preventDefault();
-        handle.classList.remove("is-drop-target");
         const [kind, value] = (event.dataTransfer?.getData("text/plain") ?? "").split(":");
         const fromIndex = Number(value);
-        if (kind !== "row" || !Number.isFinite(fromIndex) || fromIndex === index) return;
-        const visualRows = moveArray([draftHeader, ...draftRows], fromIndex, index);
+        const toIndex = destinationIndex(fromIndex, index, activeAxisDropPosition, draftRows.length + 1);
+        clearAxisDropTarget();
+        setAxisDragSource("row", fromIndex, false);
+        wrap.classList.remove("is-dragging-axis");
+        if (kind !== "row" || !Number.isFinite(fromIndex) || fromIndex === toIndex) return;
+        const visualRows = moveArray([draftHeader, ...draftRows], fromIndex, toIndex);
         replaceWithTableSource(tableSource(
           visualRows[0] ?? draftHeader,
           draftAlignments,
           visualRows.slice(1),
           persistedLayout({
             colWidths: colWidths.slice(0, draftHeader.length),
-            rowHeights: moveArray(measuredRowHeights(), fromIndex, index),
+            rowHeights: moveArray(measuredRowHeights(), fromIndex, toIndex),
           }),
         ));
+      });
+      handle.addEventListener("dragend", () => {
+        clearAxisDropTarget();
+        setAxisDragSource("row", index, false);
+        wrap.classList.remove("is-dragging-axis");
       });
       rowHandleElements.push(handle);
       rowControls.appendChild(handle);
