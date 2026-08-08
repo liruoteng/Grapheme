@@ -986,11 +986,11 @@ fn is_typst_math_identifier(word: &str) -> bool {
             | "integral.cont"
             | "integral.double"
             | "dots.h"
-            | "dots.c"
+            | "dots.h.c"
             | "dots.v"
             | "dots.down"
-            | "angle.l"
-            | "angle.r"
+            | "chevron.l"
+            | "chevron.r"
             | "AA"
             | "BB"
             | "CC"
@@ -1622,7 +1622,7 @@ const LATEX_MATH_COMMANDS: &[LatexMathCommand] = &[
     },
     LatexMathCommand {
         latex: "\\cap",
-        typst: "sect",
+        typst: "inter",
         standalone: true,
     },
     LatexMathCommand {
@@ -1652,7 +1652,7 @@ const LATEX_MATH_COMMANDS: &[LatexMathCommand] = &[
     },
     LatexMathCommand {
         latex: "\\cdots",
-        typst: "dots.c",
+        typst: "dots.h.c",
         standalone: true,
     },
     LatexMathCommand {
@@ -1682,12 +1682,12 @@ const LATEX_MATH_COMMANDS: &[LatexMathCommand] = &[
     },
     LatexMathCommand {
         latex: "\\langle",
-        typst: "angle.l",
+        typst: "chevron.l",
         standalone: true,
     },
     LatexMathCommand {
         latex: "\\rangle",
-        typst: "angle.r",
+        typst: "chevron.r",
         standalone: true,
     },
     LatexMathCommand {
@@ -1769,6 +1769,10 @@ fn translate_latex_math_for_preview(expr: &str) -> String {
     for command in commands {
         out = out.replace(command.latex, command.typst);
     }
+    // Typst 0.15 treats a dotted symbol followed immediately by an
+    // underscore as one symbol modifier (e.g. `epsilon.alt_0`). Separate
+    // the subscript so it remains an attachment to the symbol.
+    out = out.replace("epsilon.alt_", "epsilon.alt _");
     out = out.replace("\\\\", "\\\n");
     out
 }

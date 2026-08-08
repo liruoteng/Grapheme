@@ -201,7 +201,7 @@ fn compose_markdown_preview_source(md_path: &Path, md_content: &str) -> (String,
 fn validate_typst_source(path: &Path, content: &str) -> Result<(), String> {
     let mut world = typst_world::TypstWorld::new(path)?;
     world.set_source(path, content)?;
-    let warned = typst::compile::<typst::layout::PagedDocument>(&world);
+    let warned = typst::compile::<typst_layout::PagedDocument>(&world);
     match warned.output {
         Ok(_) => Ok(()),
         Err(errors) => {
@@ -225,7 +225,7 @@ fn validate_typst_source(path: &Path, content: &str) -> Result<(), String> {
 fn validate_typst_source_quiet(path: &Path, content: &str) -> Result<(), String> {
     let mut world = typst_world::TypstWorld::new(path)?;
     world.set_source(path, content)?;
-    let warned = typst::compile::<typst::layout::PagedDocument>(&world);
+    let warned = typst::compile::<typst_layout::PagedDocument>(&world);
     match warned.output {
         Ok(_) => Ok(()),
         Err(errors) => Err(errors
@@ -928,12 +928,19 @@ pub async fn compile_actor(
                 .unwrap()
                 .set_source(main_path, &source_content)?;
 
-            let warned = typst::compile::<typst::layout::PagedDocument>(guard.as_ref().unwrap());
+            let warned = typst::compile::<typst_layout::PagedDocument>(guard.as_ref().unwrap());
             drop(guard);
             comemo::evict(30);
 
             match warned.output {
-                Ok(doc) => Ok(doc.pages.iter().map(typst_svg::svg).collect::<Vec<_>>()),
+                Ok(doc) => {
+                    let options = typst_svg::SvgOptions::default();
+                    Ok(doc
+                        .pages()
+                        .iter()
+                        .map(|page| typst_svg::svg(page, &options))
+                        .collect::<Vec<_>>())
+                }
                 Err(errors) => {
                     eprintln!("[preview] Typst compile failed for {}", main_path.display());
                     for (index, error) in errors.iter().enumerate() {

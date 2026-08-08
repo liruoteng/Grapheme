@@ -4,11 +4,11 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use typst::diag::{FileError, FileResult};
-use typst::foundations::{Bytes, Datetime};
-use typst::syntax::{FileId, Source, VirtualPath};
+use typst::foundations::{Bytes, Datetime, Duration};
+use typst::syntax::{FileId, RootedPath, Source, VirtualPath, VirtualRoot};
 use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
-use typst::Library;
+use typst::{Library, LibraryExt};
 
 /// A minimal `typst::World` that compiles documents in-process.
 ///
@@ -105,12 +105,12 @@ impl typst::World for TypstWorld {
         self.fonts.get(index).cloned()
     }
 
-    fn today(&self, offset: Option<i64>) -> Option<Datetime> {
+    fn today(&self, offset: Option<Duration>) -> Option<Datetime> {
         let secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .ok()?
             .as_secs() as i64
-            + offset.unwrap_or(0) * 3600;
+            + offset.map_or(0, |duration| duration.seconds() as i64);
         date_from_unix(secs)
     }
 }
@@ -125,18 +125,22 @@ fn file_id(root: &Path, path: &Path) -> Result<FileId, String> {
             root.display()
         )
     })?;
-    Ok(FileId::new(None, VirtualPath::new(rel)))
+    let rel = rel
+        .to_str()
+        .ok_or_else(|| "path is not valid UTF-8".to_string())?;
+    let vpath = VirtualPath::new(rel).map_err(|err| err.to_string())?;
+    Ok(RootedPath::new(VirtualRoot::Project, vpath).intern())
 }
 
 fn id_to_path(root: &Path, id: FileId) -> FileResult<PathBuf> {
-    if id.package().is_some() {
+    if !matches!(id.root(), VirtualRoot::Project) {
         return Err(FileError::Other(Some(
             "typst packages not supported".into(),
         )));
     }
     id.vpath()
-        .resolve(root)
-        .ok_or_else(|| FileError::Other(Some("path outside workspace root".into())))
+        .realize(root)
+        .map_err(|_| FileError::Other(Some("path outside workspace root".into())))
 }
 
 fn io_err(err: io::Error, path: &Path) -> FileError {
