@@ -132,6 +132,9 @@ interface EditorState {
   // Workspace
   workspacePath: string | null;
   setWorkspacePath: (path: string) => void;
+  aiApprovedPaths: string[];
+  addAiApprovedPath: (path: string) => void;
+  clearAiApprovedPaths: () => void;
 
   // Open tabs
   tabs: Tab[];
@@ -430,7 +433,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   workspacePath: null,
-  setWorkspacePath: (path) => set({ workspacePath: path }),
+  setWorkspacePath: (path) => set({ workspacePath: path, aiApprovedPaths: [] }),
+  aiApprovedPaths: [],
+  addAiApprovedPath: (path) => set((s) => ({
+    aiApprovedPaths: s.aiApprovedPaths.includes(path) ? s.aiApprovedPaths : [...s.aiApprovedPaths, path],
+  })),
+  clearAiApprovedPaths: () => set({ aiApprovedPaths: [] }),
 
   tabs: [],
   activeTabPath: null,

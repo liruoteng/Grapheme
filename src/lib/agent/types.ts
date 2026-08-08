@@ -31,6 +31,27 @@ export interface ToolUseContext {
   paperId?: string;
 }
 
+export type AgentMode = "primary" | "subagent" | "all";
+export type PermissionAction = "allow" | "ask" | "deny";
+
+export interface PermissionRule {
+  permission: string;
+  pattern: string;
+  action: PermissionAction;
+}
+
+export interface AgentInfo {
+  name: string;
+  description: string;
+  mode: AgentMode;
+  prompt: string;
+  permissions: readonly PermissionRule[];
+  native?: boolean;
+  hidden?: boolean;
+  steps?: number;
+  options?: Record<string, unknown>;
+}
+
 export interface Tool<Input = Record<string, unknown>, Output = unknown> {
   readonly name: string;
   readonly description: string;

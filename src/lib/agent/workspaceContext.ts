@@ -62,6 +62,14 @@ async function collectFiles(
   }
 }
 
+function fileEntry(path: string): WorkspaceEntry {
+  return {
+    path,
+    name: path.split(/[\\/]/).pop() ?? path,
+    is_dir: false,
+  };
+}
+
 /**
  * Build bounded, explicit workspace context for the writing agent.
  * Files are read through the existing approved-path Tauri commands; the model
@@ -71,20 +79,30 @@ export async function loadWorkspaceAiContext(
   workspacePath: string | null,
   activePath: string | null,
   activeContent: string | null,
+  approvedPaths: readonly string[] = [],
 ): Promise<string> {
-  if (!workspacePath) return "";
+  if (!workspacePath && approvedPaths.length === 0) return "";
 
   const files: WorkspaceEntry[] = [];
-  await collectFiles(workspacePath, files, 0);
-  files.sort((a, b) => priority(a, activePath) - priority(b, activePath));
+  if (workspacePath) await collectFiles(workspacePath, files, 0);
+  for (const approvedPath of approvedPaths) {
+    const before = files.length;
+    await collectFiles(approvedPath, files, 0);
+    // list_dir fails for an approved file; include that exact file instead.
+    if (files.length === before && isTextCandidate(fileEntry(approvedPath))) {
+      files.push(fileEntry(approvedPath));
+    }
+  }
+  const uniqueFiles = [...new Map(files.map((file) => [file.path, file])).values()];
+  uniqueFiles.sort((a, b) => priority(a, activePath) - priority(b, activePath));
 
-  const inventory = files.length > 0
-    ? files.map((file) => `- ${relativePath(file.path, workspacePath)}`).join("\n")
+  const inventory = uniqueFiles.length > 0
+    ? uniqueFiles.map((file) => `- ${workspacePath ? relativePath(file.path, workspacePath) : file.path}`).join("\n")
     : "(No supported text files were found.)";
   const sections: string[] = [];
   let remaining = MAX_CONTEXT_CHARS;
 
-  for (const file of files) {
+  for (const file of uniqueFiles) {
     if (remaining <= 0) break;
     let content: string;
     try {
@@ -97,12 +115,15 @@ export async function loadWorkspaceAiContext(
     if (!content.trim()) continue;
     const limit = Math.min(MAX_FILE_CHARS, remaining);
     const truncated = content.length > limit ? "\n[truncated]" : "";
-    sections.push(`File: ${relativePath(file.path, workspacePath)}\n${content.slice(0, limit)}${truncated}`);
+    const label = workspacePath && file.path.startsWith(workspacePath)
+      ? relativePath(file.path, workspacePath)
+      : file.path;
+    sections.push(`File: ${label}\n${content.slice(0, limit)}${truncated}`);
     remaining -= Math.min(content.length, limit);
   }
 
   return [
-    `Workspace root: ${workspacePath}`,
+    workspacePath ? `Workspace root: ${workspacePath}` : "Workspace root: (external files explicitly approved)",
     "Workspace text-file inventory:",
     inventory,
     sections.length > 0 ? `Relevant workspace file contents:\n\n${sections.join("\n\n---\n\n")}` : "",

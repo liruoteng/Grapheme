@@ -1,4 +1,5 @@
 import type {
+  AgentInfo,
   LLMProvider,
   Message,
   Tool,
@@ -6,7 +7,7 @@ import type {
   Tools,
   ToolUseContext,
 } from "./types";
-import { getToolByName } from "./tools";
+import { getToolPermission, type PermissionRequest } from "./permissions";
 
 export interface QueryEngineConfig {
   provider: LLMProvider;
@@ -14,6 +15,8 @@ export interface QueryEngineConfig {
   systemPrompt: string;
   maxTurns?: number;
   context?: ToolUseContext;
+  agent?: AgentInfo;
+  requestPermission?: (request: PermissionRequest) => Promise<boolean>;
 }
 
 export interface QueryResult {
@@ -26,11 +29,12 @@ export interface QueryResult {
 }
 
 export interface QueryEvent {
-  type: "text_delta" | "tool_call_start" | "tool_call_result" | "turn_complete" | "done";
+  type: "text_delta" | "tool_call_start" | "tool_call_result" | "permission_request" | "turn_complete" | "done";
   text?: string;
   toolName?: string;
   toolInput?: Record<string, unknown>;
   toolResult?: unknown;
+  permission?: PermissionRequest;
   turn?: number;
 }
 
@@ -45,7 +49,16 @@ export class QueryEngine {
   }
 
   async *submitMessage(prompt: string): AsyncGenerator<QueryEvent, QueryResult> {
-    const { provider, tools, systemPrompt, maxTurns = 20, context } = this.config;
+    const {
+      provider,
+      tools,
+      systemPrompt: baseSystemPrompt,
+      maxTurns: configuredMaxTurns,
+      context,
+      agent,
+    } = this.config;
+    const systemPrompt = agent ? `${agent.prompt}\n\n${baseSystemPrompt}` : baseSystemPrompt;
+    const maxTurns = configuredMaxTurns ?? agent?.steps ?? 20;
 
     this.abortController = new AbortController();
 
@@ -96,7 +109,7 @@ export class QueryEngine {
 
       for (const call of toolCalls) {
         toolCallsMade++;
-        const tool = getToolByName(call.name);
+        const tool = tools.find((candidate) => candidate.name === call.name);
 
         yield {
           type: "tool_call_start",
@@ -104,7 +117,32 @@ export class QueryEngine {
           toolInput: call.input,
         };
 
-        const toolResult = await this.executeTool(call, tool, context);
+        let toolResult: unknown;
+        if (!tool) {
+          toolResult = { error: `Unknown tool: ${call.name}` };
+        } else {
+          const permission = agent ? getToolPermission(agent, tool, call.input) : "allow";
+          if (permission === "deny") {
+            toolResult = { error: `Agent "${agent?.name}" is not allowed to use ${call.name}` };
+          } else if (permission === "ask") {
+            const request: PermissionRequest = {
+              permission: tool.isReadOnly(call.input) ? "read" : "write",
+              pattern: call.name,
+              agent: agent?.name ?? "default",
+              toolName: call.name,
+              input: call.input,
+            };
+            yield { type: "permission_request", permission: request };
+            const approved = this.config.requestPermission
+              ? await this.config.requestPermission(request)
+              : false;
+            toolResult = approved
+              ? await this.executeTool(call, tool, context)
+              : { error: `Permission denied for ${call.name}` };
+          } else {
+            toolResult = await this.executeTool(call, tool, context);
+          }
+        }
 
         yield {
           type: "tool_call_result",

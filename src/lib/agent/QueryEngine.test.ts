@@ -2,17 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import { QueryEngine } from "./QueryEngine";
 import type { LLMProvider, LLMStreamEvent, Tools } from "./types";
 
-vi.mock("./tools", () => ({
-  getToolByName: (name: string) => {
-    if (name === "KnownTool") {
-      return {
-        name: "KnownTool",
-        call: async (input: Record<string, unknown>) => ({ data: { result: "ok", ...input } }),
-      };
-    }
-    return undefined;
-  },
-}));
+const knownTool = {
+  name: "KnownTool",
+  isReadOnly: () => false,
+  call: async (input: Record<string, unknown>) => ({ data: { result: "ok", ...input } }),
+  description: "Known test tool",
+  inputSchema: { type: "object" },
+  prompt: () => "Known test tool",
+};
 
 function makeProvider(events: LLMStreamEvent[]): LLMProvider {
   return {
@@ -33,6 +30,7 @@ function makeMultiTurnProvider(eventSets: LLMStreamEvent[][]): LLMProvider {
 }
 
 const emptyTools: Tools = [];
+const knownTools: Tools = [knownTool];
 
 describe("QueryEngine", () => {
   it("returns text from a simple response", async () => {
@@ -44,7 +42,7 @@ describe("QueryEngine", () => {
 
     const engine = new QueryEngine({
       provider,
-      tools: emptyTools,
+      tools: knownTools,
       systemPrompt: "test",
     });
 
@@ -73,7 +71,7 @@ describe("QueryEngine", () => {
       { type: "done" },
     ]);
 
-    const engine = new QueryEngine({ provider, tools: emptyTools, systemPrompt: "test" });
+    const engine = new QueryEngine({ provider, tools: knownTools, systemPrompt: "test" });
     const gen = engine.submitMessage("Hi");
     const events: unknown[] = [];
     for (;;) {
@@ -104,7 +102,7 @@ describe("QueryEngine", () => {
       ],
     ]);
 
-    const engine = new QueryEngine({ provider, tools: emptyTools, systemPrompt: "test" });
+    const engine = new QueryEngine({ provider, tools: knownTools, systemPrompt: "test" });
     const gen = engine.submitMessage("Use a tool");
     const events: unknown[] = [];
     let result;
@@ -179,7 +177,7 @@ describe("QueryEngine", () => {
 
     const engine = new QueryEngine({
       provider,
-      tools: emptyTools,
+      tools: knownTools,
       systemPrompt: "test",
       maxTurns: 3,
     });
@@ -251,7 +249,7 @@ describe("QueryEngine", () => {
 
     const engine = new QueryEngine({
       provider: errorProvider,
-      tools: emptyTools,
+      tools: knownTools,
       systemPrompt: "test",
     });
     const gen = engine.submitMessage("go");
@@ -271,5 +269,63 @@ describe("QueryEngine", () => {
     ) as { toolResult: unknown };
     expect(toolResult.toolResult).toEqual({ error: "Unknown tool: NonexistentTool" });
     expect(result.stopReason).toBe("end_turn");
+  });
+
+  it("denies write tools for a read-only agent", async () => {
+    const provider = makeProvider([
+      { type: "tool_call", toolCall: { id: "tc1", name: "KnownTool", input: {} } },
+      { type: "done" },
+    ]);
+    const engine = new QueryEngine({
+      provider,
+      tools: knownTools,
+      systemPrompt: "test",
+      agent: {
+        name: "reviewer",
+        description: "read only",
+        mode: "subagent",
+        prompt: "",
+        permissions: [{ permission: "write", pattern: "*", action: "deny" }],
+      },
+    });
+    const events: unknown[] = [];
+    const gen = engine.submitMessage("review");
+    for (;;) {
+      const next = await gen.next();
+      if (next.done) break;
+      events.push(next.value);
+    }
+    expect(events.some((event) => JSON.stringify(event).includes("not allowed"))).toBe(true);
+  });
+
+  it("asks for permission before an agent uses a write tool", async () => {
+    const provider = makeProvider([
+      { type: "tool_call", toolCall: { id: "tc1", name: "KnownTool", input: {} } },
+      { type: "done" },
+    ]);
+    const requestPermission = vi.fn().mockResolvedValue(true);
+    const engine = new QueryEngine({
+      provider,
+      tools: knownTools,
+      systemPrompt: "test",
+      requestPermission,
+      agent: {
+        name: "writing",
+        description: "writing",
+        mode: "primary",
+        prompt: "",
+        permissions: [{ permission: "write", pattern: "*", action: "ask" }],
+      },
+    });
+    const gen = engine.submitMessage("edit");
+    for (;;) {
+      const next = await gen.next();
+      if (next.done) break;
+    }
+    expect(requestPermission).toHaveBeenCalledWith(expect.objectContaining({
+      agent: "writing",
+      permission: "write",
+      toolName: "KnownTool",
+    }));
   });
 });

@@ -7,6 +7,7 @@ import {
   PenLine,
   ArrowUp,
   Sparkles,
+  ShieldCheck,
   X,
 } from "lucide-react";
 import { useEditorStore, useActiveTab, type AiMessage } from "../../stores/editorStore";
@@ -21,6 +22,7 @@ import {
   filterSlashCommands,
   type GraphemeSlashCommand,
 } from "../../lib/agent/slashCommands";
+import { getAgentForWorkflow } from "../../lib/agent/agents";
 import { loadWorkspaceAiContext } from "../../lib/agent/workspaceContext";
 import matrixLoaderSvg from "../../../matrix-loader-effect.svg?raw";
 import "./AIChatPanel.css";
@@ -102,6 +104,32 @@ type ActionEdit =
   | { kind: "replace_selection"; text: string }
   | { kind: "insert_at_cursor"; text: string }
   | { kind: "replace_document"; text: string };
+
+interface AccessRequest {
+  message: string;
+  paths: string[];
+}
+
+function extractAbsolutePaths(text: string): string[] {
+  const matches = text.match(/(?:\/(?:Users|private|tmp|Volumes)\/[^\s"'<>]+|[A-Za-z]:\\[^\s"'<>]+)/g) ?? [];
+  return [...new Set(matches.map((path) => path.replace(/[.,!?;:)\]]+$/, "")))];
+}
+
+function isWithinPath(path: string, root: string): boolean {
+  const normalizedPath = path.replace(/\\/g, "/").replace(/\/+$/, "");
+  const normalizedRoot = root.replace(/\\/g, "/").replace(/\/+$/, "");
+  return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}/`);
+}
+
+function findUnapprovedExternalPaths(
+  text: string,
+  workspacePath: string | null,
+  approvedPaths: readonly string[],
+): string[] {
+  return extractAbsolutePaths(text)
+    .filter((path) => !workspacePath || !isWithinPath(path, workspacePath))
+    .filter((path) => !approvedPaths.some((approved) => isWithinPath(path, approved)));
+}
 
 function generateBibKey(paper: CitationResult): string {
   const firstAuthor = paper.authors[0]?.name ?? "unknown";
@@ -315,6 +343,8 @@ export function AIChatPanel() {
   const [contextTokens, setContextTokens] = useState<{ used: number; window: number } | null>(null);
   const [citationResults, setCitationResults] = useState<CitationResult[] | null>(null);
   const [isCiteMode, setIsCiteMode] = useState(false);
+  const [accessRequest, setAccessRequest] = useState<AccessRequest | null>(null);
+  const [accessError, setAccessError] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
   const [historyIndex, setHistoryIndex] = useState(-1);
@@ -334,16 +364,20 @@ export function AIChatPanel() {
   const isReadOnlyMode = isReadOnlyAcademicMode(academicMode);
   const isActionDisabled = isReadOnlyMode;
   const isActionMode = chatMode === "action" && !isActionDisabled;
-  const systemPrompt =
+  const baseSystemPrompt =
     isActionMode
       ? getGraphemeActionSystemPrompt(academicMode)
       : getGraphemeWritingSystemPrompt(academicMode);
+  const activeAgent = getAgentForWorkflow(academicMode, isActionMode);
+  const systemPrompt = `${activeAgent.prompt}\n\n${baseSystemPrompt}`;
   const slashCommands = filterSlashCommands(input);
   const showSlashCommands = !isLoading && slashCommands.length > 0;
 
   // ── Provider settings ──────────────────────────────────────────────────
   const selectedText = useEditorStore((s) => s.selectedText);
   const workspacePath = useEditorStore((s) => s.workspacePath);
+  const aiApprovedPaths = useEditorStore((s) => s.aiApprovedPaths);
+  const addAiApprovedPath = useEditorStore((s) => s.addAiApprovedPath);
   const activeTab = useActiveTab();
   const aiProvider   = useEditorStore((s) => s.aiProvider);
   const setAiProvider  = useEditorStore((s) => s.setAiProvider);
@@ -530,9 +564,20 @@ export function AIChatPanel() {
     : Math.min(99, Math.round(contextPct)).toString();
 
   // ── Send message ───────────────────────────────────────────────────────
-  const handleSend = async () => {
-    const trimmed = input.trim();
+  const handleSend = async (messageOverride?: string, approvedPathsOverride?: string[]) => {
+    const trimmed = (messageOverride ?? input).trim();
     if (!trimmed || isLoading) return;
+    const approvedPaths = approvedPathsOverride ?? aiApprovedPaths;
+
+    if (!messageOverride) {
+      const externalPaths = findUnapprovedExternalPaths(trimmed, workspacePath, approvedPaths);
+      if (externalPaths.length > 0) {
+        setAccessError(null);
+        setAccessRequest({ message: trimmed, paths: externalPaths });
+        return;
+      }
+    }
+
     setInput("");
     setHistoryIndex(-1);
 
@@ -594,6 +639,7 @@ export function AIChatPanel() {
       workspacePath,
       activeTab?.path ?? null,
       activeTab?.content ?? null,
+      approvedPaths,
     );
     if (isActionMode) {
       contextualContent =
@@ -721,6 +767,18 @@ export function AIChatPanel() {
       setLocalMessages(finalMsgs);
       commitMessages(finalMsgs);
 
+      const lastReply = finalMsgs[finalMsgs.length - 1];
+      if (
+        lastReply?.role === "assistant" &&
+        /\b(permission|access|outside|allow|unavailable|cannot)\b/i.test(lastReply.content)
+      ) {
+        const responsePaths = findUnapprovedExternalPaths(lastReply.content, workspacePath, approvedPaths);
+        if (responsePaths.length > 0) {
+          setAccessError(null);
+          setAccessRequest({ message: trimmed, paths: responsePaths });
+        }
+      }
+
       if (isActionMode) {
         const last = finalMsgs[finalMsgs.length - 1];
         const edit = last?.role === "assistant" ? parseActionEdit(last.content) : null;
@@ -749,6 +807,33 @@ export function AIChatPanel() {
       }
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleGrantAccess = async () => {
+    if (!accessRequest) return;
+    setAccessError(null);
+    const approved: string[] = [];
+    try {
+      for (const path of accessRequest.paths) {
+        await invoke("approve_path", { path });
+        addAiApprovedPath(path);
+        approved.push(path);
+
+        // Open the requested paper in Grapheme so Act mode can apply the edit
+        // through the normal editor/save pipeline.
+        if (/\.typ$/i.test(path)) {
+          const content = await invoke<string>("read_file", { path });
+          const name = path.split(/[\\/]/).pop() ?? "paper.typ";
+          useEditorStore.getState().openTab(path, name, content);
+        }
+      }
+      const request = accessRequest;
+      const nextApproved = [...aiApprovedPaths, ...approved];
+      setAccessRequest(null);
+      await handleSend(request.message, [...new Set(nextApproved)]);
+    } catch (error) {
+      setAccessError(`Could not grant access: ${String(error)}`);
     }
   };
 
@@ -968,6 +1053,26 @@ export function AIChatPanel() {
                 {" "}and run <code>claude</code> to log in.</>}
             </>
           )}
+        </div>
+      )}
+
+      {accessRequest && (
+        <div className="ai-access-request" role="alert">
+          <div className="ai-access-request-icon"><ShieldCheck size={16} /></div>
+          <div className="ai-access-request-copy">
+            <div className="ai-access-request-title">Grapheme needs permission to use these files</div>
+            <div className="ai-access-request-help">
+              These paths are outside the currently open workspace. Access is limited to the exact paths you approve.
+            </div>
+            <ul className="ai-access-request-paths">
+              {accessRequest.paths.map((path) => <li key={path}><code>{path}</code></li>)}
+            </ul>
+            {accessError && <div className="ai-access-request-error">{accessError}</div>}
+            <div className="ai-access-request-actions">
+              <button className="ai-access-request-approve" onClick={handleGrantAccess}>Grant access and continue</button>
+              <button className="ai-access-request-cancel" onClick={() => { setAccessRequest(null); setAccessError(null); }}>Cancel</button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1234,7 +1339,7 @@ export function AIChatPanel() {
             {isLoading ? (
               <button className="ai-chat-btn ai-chat-btn--stop" onClick={handleStop}>Stop</button>
             ) : (
-              <button className="ai-chat-btn ai-chat-btn--send" onClick={handleSend} disabled={!input.trim()} aria-label="Send">
+              <button className="ai-chat-btn ai-chat-btn--send" onClick={() => handleSend()} disabled={!input.trim()} aria-label="Send">
                 <ArrowUp size={15} />
               </button>
             )}

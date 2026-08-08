@@ -288,6 +288,82 @@
   text-decoration: underline;
 }
 
+/* ── External workspace permission request ──────────────────────────────── */
+
+.ai-access-request {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-elevated));
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.ai-access-request-icon {
+  color: var(--accent-bright);
+  padding-top: 2px;
+}
+
+.ai-access-request-copy {
+  min-width: 0;
+  font-size: var(--type-ui-small);
+  line-height: var(--line-ui-body);
+}
+
+.ai-access-request-title {
+  color: var(--text);
+  font-weight: 650;
+}
+
+.ai-access-request-help {
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.ai-access-request-paths {
+  margin: var(--space-1) 0;
+  padding-left: var(--space-3);
+}
+
+.ai-access-request-paths code {
+  color: var(--text);
+  font-family: monospace;
+  font-size: var(--type-ui-code);
+  overflow-wrap: anywhere;
+}
+
+.ai-access-request-error {
+  color: var(--accent-bright);
+  margin-bottom: var(--space-1);
+}
+
+.ai-access-request-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.ai-access-request-approve,
+.ai-access-request-cancel {
+  border-radius: var(--radius-control);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--type-ui-caption);
+  padding: var(--space-1) var(--space-2);
+}
+
+.ai-access-request-approve {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: var(--bg-base);
+}
+
+.ai-access-request-cancel {
+  background: transparent;
+  border: 1px solid var(--border-btn);
+  color: var(--text-muted);
+}
+
 /* ── Messages area ────────────────────────────────────────────────────────── */
 
 .ai-chat-messages {
