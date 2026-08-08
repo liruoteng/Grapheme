@@ -310,7 +310,9 @@ export function AIChatPanel() {
   const deleteChatSession     = useEditorStore((s) => s.deleteChatSession);
 
   const currentWorkspace = normalizeWorkspacePath(workspacePath);
-  const workspaceSessions = chatSessions.filter((session) => normalizeWorkspacePath(session.workspacePath) === currentWorkspace);
+  const isCurrentWorkspaceSession = (session: { workspacePath?: string | null }) =>
+    currentWorkspace !== null && normalizeWorkspacePath(session.workspacePath) === currentWorkspace;
+  const workspaceSessions = chatSessions.filter(isCurrentWorkspaceSession);
   const activeSession = workspaceSessions.find((s) => s.id === activeChatSessionId) ?? null;
   const matrixLoaderUrl = theme === "dark" ? matrixLoaderDarkUrl : matrixLoaderLightUrl;
 
@@ -325,7 +327,7 @@ export function AIChatPanel() {
   const [localMessages, setLocalMessages] = useState<AiMessage[]>(activeSession?.messages ?? []);
   const [input, setInput] = useState("");
   const [slashCommandIndex, setSlashCommandIndex] = useState(0);
-  const [isLoading, setIsLoading] = useState(false);
+  const [loadingSessionId, setLoadingSessionId] = useState<string | null>(null);
   const [thinkingHint, setThinkingHint] = useState<string | null>(null);
   const [thinkingSeconds, setThinkingSeconds] = useState(0);
   const [contextTokens, setContextTokens] = useState<{ used: number; window: number } | null>(null);
@@ -343,7 +345,13 @@ export function AIChatPanel() {
   const abortRef = useRef<boolean>(false);
   const localMessagesRef = useRef(localMessages);
   localMessagesRef.current = localMessages;
-  const isStreamActive = isLoading || streamingChatSessionId === activeChatSessionId;
+  // Loading belongs to a request/session, not to the panel instance. The
+  // history view can temporarily replace the composer while a request keeps
+  // running; a request from another session must not leave the newly selected
+  // composer disabled when history is closed.
+  const isStreamActive =
+    (loadingSessionId !== null && loadingSessionId === activeChatSessionId) ||
+    streamingChatSessionId === activeChatSessionId;
 
   // ── Toolbar state ──────────────────────────────────────────────────────
   const [effort, setEffort] = useState<Effort>("medium");
@@ -665,7 +673,7 @@ export function AIChatPanel() {
       const now = Date.now();
       const next: AiMessage[] = [...localMessages, { role: "user", content: trimmed, timestamp: now }];
       setLocalMessages(next);
-      setIsLoading(true);
+      setLoadingSessionId(activeChatSessionId);
       try {
         const results = await invoke<CitationResult[]>("search_citations", { query });
         setCitationResults(results);
@@ -687,7 +695,9 @@ export function AIChatPanel() {
         setLocalMessages(withErr);
         commitMessages(withErr);
       } finally {
-        setIsLoading(false);
+        if (loadingSessionId === activeChatSessionId) {
+          setLoadingSessionId(null);
+        }
       }
       return;
     }
@@ -761,7 +771,7 @@ export function AIChatPanel() {
     updateChatSessionLive(requestSessionId, withPlaceholder);
     setStreamingChatSession(requestSessionId);
 
-    setIsLoading(true);
+    setLoadingSessionId(requestSessionId);
     abortRef.current = false;
     setThinkingHint(null);
     requestStartRef.current = Date.now();
@@ -882,7 +892,7 @@ export function AIChatPanel() {
         commitMessages(errMsgs);
       }
     } finally {
-      setIsLoading(false);
+      setLoadingSessionId((current) => current === requestSessionId ? null : current);
       if (useEditorStore.getState().streamingChatSessionId === requestSessionId) {
         setStreamingChatSession(null);
       }
@@ -977,7 +987,7 @@ export function AIChatPanel() {
   const handleStop = () => {
     abortRef.current = true;
     invoke("cancel_ai_stream").catch(() => {});
-    setIsLoading(false);
+    setLoadingSessionId((current) => current === activeChatSessionId ? null : current);
     if (activeChatSessionId === streamingChatSessionId) {
       setStreamingChatSession(null);
     }
@@ -1010,7 +1020,7 @@ export function AIChatPanel() {
   }
 
   const filteredSessions = [...chatSessions]
-    .filter((session) => normalizeWorkspacePath(session.workspacePath) === currentWorkspace)
+    .filter(isCurrentWorkspaceSession)
     .filter((session) => session.messages.length > 0)
     .reverse()
     .filter((s) => s.title.toLowerCase().includes(sessionSearch.toLowerCase()));

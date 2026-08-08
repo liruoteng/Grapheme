@@ -103,6 +103,7 @@ interface EditorState {
   renameChatSession: (id: string, title: string) => void;
   forkChatSession: (id: string) => void;
   deleteChatSession: (id: string) => void;
+  loadWorkspaceSessions: (path: string) => Promise<void>;
 
   // AI editor integration
   selectedText: string | null;
@@ -279,6 +280,8 @@ const PERSISTED_KEYS = [
 ] as const;
 
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
+let workspacePersistTimer: ReturnType<typeof setTimeout> | null = null;
+let workspaceLoadGeneration = 0;
 function schedulePersist(getState: () => EditorState) {
   if (!isTauriRuntime()) return;
 
@@ -288,13 +291,29 @@ function schedulePersist(getState: () => EditorState) {
     const payload: Record<string, unknown> = {};
     for (const k of PERSISTED_KEYS) {
       if (k === "chatSessions") {
-        // Empty sessions are in-memory drafts until the first message exists.
-        payload[k] = s.chatSessions.filter((session) => session.messages.length > 0);
+        // Chat transcripts are stored in the active project's .grapheme folder.
+        continue;
       } else {
         payload[k] = (s as unknown as Record<string, unknown>)[k];
       }
     }
     invoke("write_settings", { contents: JSON.stringify(payload, null, 2) }).catch((e) => logger.error("write_settings failed", e));
+  }, 150);
+}
+
+function scheduleWorkspacePersist(getState: () => EditorState) {
+  if (!isTauriRuntime()) return;
+  if (workspacePersistTimer) clearTimeout(workspacePersistTimer);
+  workspacePersistTimer = setTimeout(() => {
+    const s = getState();
+    if (!s.workspacePath) return;
+    const workspace = normalizeWorkspacePath(s.workspacePath);
+    const sessions = s.chatSessions
+      .filter((session) => sessionWorkspacePath(session) === workspace && session.messages.length > 0);
+    invoke("write_workspace_sessions", {
+      workspacePath: workspace,
+      contents: JSON.stringify(sessions, null, 2),
+    }).catch((e) => logger.error("write_workspace_sessions failed", e));
   }, 150);
 }
 
@@ -317,7 +336,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       workspacePath: normalizeWorkspacePath(get().workspacePath),
     };
     set((s) => ({ chatSessions: [...s.chatSessions, session], activeChatSessionId: id }));
-    schedulePersist(get);
+    scheduleWorkspacePersist(get);
     return id;
   },
   setActiveChatSession: (id) => { set({ activeChatSessionId: id }); schedulePersist(get); },
@@ -334,6 +353,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       ),
     }));
     schedulePersist(get);
+    scheduleWorkspacePersist(get);
   },
   updateChatSessionLive: (id, messages) => {
     set((s) => ({
@@ -355,6 +375,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       ),
     }));
     schedulePersist(get);
+    scheduleWorkspacePersist(get);
   },
   updateSessionCodexId: (id, codexSessionId) => {
     set((s) => ({
@@ -363,6 +384,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       ),
     }));
     schedulePersist(get);
+    scheduleWorkspacePersist(get);
   },
   renameChatSession: (id, title) => {
     set((s) => ({
@@ -371,6 +393,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       ),
     }));
     schedulePersist(get);
+    scheduleWorkspacePersist(get);
   },
   forkChatSession: (id) => {
     const original = get().chatSessions.find((s) => s.id === id);
@@ -385,6 +408,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     };
     set((s) => ({ chatSessions: [...s.chatSessions, forked], activeChatSessionId: newId }));
     schedulePersist(get);
+    scheduleWorkspacePersist(get);
   },
   deleteChatSession: (id) => {
     set((s) => {
@@ -397,6 +421,39 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       return { chatSessions: remaining, activeChatSessionId: nextActive };
     });
     schedulePersist(get);
+    scheduleWorkspacePersist(get);
+  },
+  loadWorkspaceSessions: async (path) => {
+    const workspace = normalizeWorkspacePath(path);
+    if (!workspace || !isTauriRuntime()) return;
+    const generation = ++workspaceLoadGeneration;
+    try {
+      const raw = await invoke<string>("read_workspace_sessions", { workspacePath: workspace });
+      const parsed = raw ? JSON.parse(raw) : [];
+      const loaded = Array.isArray(parsed)
+        ? (parsed as AiChatSession[])
+            .filter((session) => Array.isArray(session.messages) && session.messages.length > 0)
+            .map((session) => ({ ...session, workspacePath: workspace }))
+        : [];
+      const state = get();
+      if (generation !== workspaceLoadGeneration || normalizeWorkspacePath(state.workspacePath) !== workspace) return;
+
+      // Sessions from the old global settings file had no project association.
+      // If this project has no local store yet, adopt them once and write them
+      // into the project so subsequent launches are fully project-local.
+      const legacy = loaded.length === 0
+        ? state.chatSessions.filter((session) => sessionWorkspacePath(session) === workspace && session.messages.length > 0)
+        : [];
+      const sessions = legacy.map((session) => ({ ...session, workspacePath: workspace }));
+      const current = state.chatSessions.filter((session) => sessionWorkspacePath(session) !== workspace);
+      set({
+        chatSessions: [...current, ...(loaded.length > 0 ? loaded : sessions)],
+        activeChatSessionId: null,
+      });
+      if (legacy.length > 0) scheduleWorkspacePersist(get);
+    } catch (e) {
+      logger.error("read_workspace_sessions failed", e);
+    }
   },
 
   selectedText: null,
@@ -491,7 +548,25 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       set({ aiApprovedPaths: [] });
       return;
     }
-    set({ workspacePath: nextPath, aiApprovedPaths: [], activeChatSessionId: null });
+    const sessions = get().chatSessions;
+    const hasProjectHistory = sessions.some((session) =>
+      sessionWorkspacePath(session) === nextPath && session.messages.length > 0
+    );
+    const recoveredSessions = !hasProjectHistory && nextPath
+      ? sessions.map((session) =>
+          sessionWorkspacePath(session) === null && session.messages.length > 0
+            ? { ...session, workspacePath: nextPath }
+            : session
+        )
+      : sessions;
+    set({
+      workspacePath: nextPath,
+      chatSessions: recoveredSessions,
+      aiApprovedPaths: [],
+      activeChatSessionId: null,
+    });
+    if (recoveredSessions !== sessions) schedulePersist(get);
+    if (nextPath) void get().loadWorkspaceSessions(nextPath);
   },
   aiApprovedPaths: [],
   addAiApprovedPath: (path) => set((s) => ({
@@ -646,10 +721,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       if (Array.isArray(parsed.chatSessions)) {
         patch.chatSessions = (parsed.chatSessions as AiChatSession[])
           .filter((session) => Array.isArray(session.messages) && session.messages.length > 0)
-          .map((session) => ({
-            ...session,
-            workspacePath: normalizeWorkspacePath(session.workspacePath),
-          }));
+          .map((session) => {
+            // Preserve the missing-property distinction so first-project
+            // recovery can recognize sessions created before workspace scoping.
+            if (!Object.prototype.hasOwnProperty.call(session, "workspacePath")) return session;
+            return { ...session, workspacePath: normalizeWorkspacePath(session.workspacePath) };
+          });
       }
       // The active chat is deliberately ephemeral: reopening Grapheme starts
       // a fresh chat, while the persisted sessions remain available in History.

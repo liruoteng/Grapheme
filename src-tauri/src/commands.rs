@@ -367,6 +367,43 @@ pub fn write_settings(app: tauri::AppHandle, contents: String) -> Result<(), Str
     fs::write(&p, contents).map_err(|e| e.to_string())
 }
 
+fn workspace_sessions_path(
+    workspace_path: &str,
+    state: &State<'_, AppState>,
+) -> Result<PathBuf, String> {
+    let workspace = approved_path(state, workspace_path)?;
+    if !workspace.is_dir() {
+        return Err(format!(
+            "workspace is not a directory: {}",
+            workspace.display()
+        ));
+    }
+    Ok(workspace.join(".grapheme").join("sessions.json"))
+}
+
+#[tauri::command]
+pub fn read_workspace_sessions(
+    workspace_path: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let path = workspace_sessions_path(&workspace_path, &state)?;
+    if !path.exists() {
+        return Ok(String::new());
+    }
+    fs::read_to_string(path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn write_workspace_sessions(
+    workspace_path: String,
+    contents: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let path = workspace_sessions_path(&workspace_path, &state)?;
+    fs::create_dir_all(path.parent().expect("sessions parent")).map_err(|e| e.to_string())?;
+    fs::write(path, contents).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn convert_to_typst(path: String, state: State<'_, AppState>) -> Result<String, String> {
     let path = approved_path(&state, &path)?.to_string_lossy().to_string();

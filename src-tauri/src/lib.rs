@@ -134,6 +134,8 @@ pub fn run() {
             latex_import::import_latex_template,
             commands::read_settings,
             commands::write_settings,
+            commands::read_workspace_sessions,
+            commands::write_workspace_sessions,
             ai::check_claude_cli,
             ai::check_codex_cli,
             ai::get_codex_cli_version,

@@ -589,6 +589,33 @@ describe("chatSessions", () => {
     expect(useEditorStore.getState().activeChatSessionId).toBe(id);
   });
 
+  it("recovers unscoped historical sessions when opening the first project", () => {
+    useEditorStore.setState({
+      chatSessions: [{
+        id: "legacy-session",
+        title: "Earlier work",
+        messages: [{ role: "user", content: "Old question" }],
+        createdAt: 1,
+      }],
+    });
+    useEditorStore.getState().setWorkspacePath("/projects/recovered");
+    expect(useEditorStore.getState().chatSessions[0].workspacePath).toBe("/projects/recovered");
+  });
+
+  it("does not treat unscoped sessions as project history", () => {
+    useEditorStore.setState({
+      workspacePath: null,
+      chatSessions: [{
+        id: "unscoped-session",
+        title: "Unscoped",
+        messages: [{ role: "user", content: "Draft" }],
+        createdAt: 1,
+      }],
+    });
+    expect(useEditorStore.getState().workspacePath).toBeNull();
+    expect(useEditorStore.getState().chatSessions[0].workspacePath).toBeUndefined();
+  });
+
   it("setActiveChatSession switches active session", () => {
     const id1 = useEditorStore.getState().createChatSession();
     useEditorStore.getState().createChatSession();
