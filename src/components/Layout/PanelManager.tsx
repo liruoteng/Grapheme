@@ -181,6 +181,7 @@ export function PanelManager({ contents, headerExtras, headerExtrasLeft, titleSu
     side: "before" | "after";
     layout: "horizontal" | "vertical";
   } | null>(null);
+  const dropPreviewRef = useRef<typeof dropPreview>(null);
 
   const singleColRef = useRef<HTMLDivElement>(null);
 
@@ -189,6 +190,7 @@ export function PanelManager({ contents, headerExtras, headerExtrasLeft, titleSu
     dragFromIdx = idx;
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/plain", String(idx));
+    dropPreviewRef.current = null;
     setDropPreview(null);
     const el = (e.currentTarget as HTMLElement).closest(".pm-panel") as HTMLElement | null;
     if (el) setTimeout(() => el.classList.add("pm-panel--dragging"), 0);
@@ -211,13 +213,17 @@ export function PanelManager({ contents, headerExtras, headerExtrasLeft, titleSu
     const side = layout === "horizontal"
       ? (x < w / 2 ? "before" : "after")
       : (y < h / 2 ? "before" : "after");
-    setDropPreview({ idx, side, layout });
+    const nextPreview = { idx, side, layout } as const;
+    const previous = dropPreviewRef.current;
+    if (previous?.idx === idx && previous.side === side && previous.layout === layout) return;
+    dropPreviewRef.current = nextPreview;
+    setDropPreview(nextPreview);
   }, [panelLayout]);
 
   const handleDrop = useCallback((e: React.DragEvent, idx: number) => {
     e.preventDefault();
     const from = dragFromIdx;
-    const preview = dropPreview;
+    const preview = dropPreviewRef.current;
     if (from >= 0 && from !== idx && preview) {
       const next = [...activePanels];
       const [moved] = next.splice(from, 1);
@@ -227,10 +233,14 @@ export function PanelManager({ contents, headerExtras, headerExtrasLeft, titleSu
       setActivePanels(next);
       setPanelLayout(preview.layout);
     }
+    dropPreviewRef.current = null;
     clearDrag(setDropPreview);
-  }, [activePanels, dropPreview, setActivePanels, setPanelLayout]);
+  }, [activePanels, setActivePanels, setPanelLayout]);
 
-  const handleDragEnd = useCallback(() => { clearDrag(setDropPreview); }, []);
+  const handleDragEnd = useCallback(() => {
+    dropPreviewRef.current = null;
+    clearDrag(setDropPreview);
+  }, []);
 
   const closePanel = useCallback((idx: number) => {
     setActivePanels(activePanels.filter((_, i) => i !== idx));
