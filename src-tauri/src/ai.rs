@@ -1,6 +1,7 @@
 use futures_util::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -69,6 +70,138 @@ pub async fn check_codex_cli() -> String {
     }
 }
 
+#[tauri::command]
+pub async fn get_codex_cli_version() -> String {
+    TokioCommand::new("codex")
+        .arg("--version")
+        .env("PATH", extended_path())
+        .output()
+        .await
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| {
+            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            (!version.is_empty()).then_some(version)
+        })
+        .unwrap_or_else(|| "unavailable".to_string())
+}
+
+#[derive(Serialize, Clone)]
+pub struct CodexModelInfo {
+    pub id: String,
+    pub label: String,
+    pub default_effort: String,
+    pub efforts: Vec<String>,
+    pub context_window: u64,
+    pub is_default: bool,
+}
+
+#[derive(Deserialize)]
+struct CodexModelsCache {
+    models: Vec<CodexCachedModel>,
+}
+
+#[derive(Deserialize)]
+struct CodexCachedModel {
+    slug: String,
+    display_name: String,
+    #[serde(default)]
+    default_reasoning_level: Option<String>,
+    #[serde(default)]
+    supported_reasoning_levels: Vec<CodexReasoningLevel>,
+    #[serde(default)]
+    visibility: Option<String>,
+    #[serde(default)]
+    context_window: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct CodexReasoningLevel {
+    effort: String,
+}
+
+fn codex_home() -> PathBuf {
+    if let Ok(path) = std::env::var("CODEX_HOME") {
+        return PathBuf::from(path);
+    }
+    #[cfg(windows)]
+    if let Ok(path) = std::env::var("USERPROFILE") {
+        return PathBuf::from(path).join(".codex");
+    }
+    PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".codex")
+}
+
+fn codex_config_value(name: &str) -> Option<String> {
+    let contents = std::fs::read_to_string(codex_home().join("config.toml")).ok()?;
+    contents.lines().find_map(|line| {
+        let (key, value) = line.split_once('=')?;
+        if key.trim() != name {
+            return None;
+        }
+        Some(
+            value
+                .trim()
+                .trim_matches('"')
+                .trim_matches('\'')
+                .to_string(),
+        )
+    })
+}
+
+/// Read the same model catalog used by the installed Codex app/CLI.
+/// Missing or stale local metadata is reported as an empty list so the UI can
+/// keep its default fallback and still allow chat to work.
+#[tauri::command]
+pub fn list_codex_models() -> Result<Vec<CodexModelInfo>, String> {
+    let cache_path = codex_home().join("models_cache.json");
+    let contents = match std::fs::read_to_string(cache_path) {
+        Ok(contents) => contents,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let cache: CodexModelsCache = serde_json::from_str(&contents)
+        .map_err(|e| format!("could not parse Codex model catalog: {e}"))?;
+    let configured_model = codex_config_value("model");
+
+    Ok(cache
+        .models
+        .into_iter()
+        .filter(|model| model.visibility.as_deref().unwrap_or("list") == "list")
+        .map(|model| {
+            let efforts = model
+                .supported_reasoning_levels
+                .into_iter()
+                .map(|level| level.effort)
+                .collect::<Vec<_>>();
+            let default_effort = model.default_reasoning_level.unwrap_or_else(|| {
+                efforts
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "medium".to_string())
+            });
+            CodexModelInfo {
+                is_default: configured_model.as_deref() == Some(model.slug.as_str()),
+                id: model.slug,
+                label: model.display_name,
+                default_effort,
+                efforts,
+                context_window: model.context_window.unwrap_or(200_000),
+            }
+        })
+        .collect())
+}
+
+fn codex_context_window(model_id: Option<&str>) -> u64 {
+    model_id
+        .and_then(|id| {
+            list_codex_models()
+                .ok()?
+                .into_iter()
+                .find(|model| model.id == id)
+                .map(|model| model.context_window)
+        })
+        .unwrap_or(200_000)
+}
+
 /// Run Codex through its authenticated local CLI. This deliberately uses a
 /// read-only sandbox: the AI panel is a writing assistant, not a code agent.
 #[tauri::command]
@@ -87,6 +220,7 @@ pub async fn stream_codex_cli(
     cancel.0.store(false, Ordering::Relaxed);
     let mut cmd = TokioCommand::new("codex");
     cmd.env("PATH", extended_path());
+    let context_window = codex_context_window(model.as_deref());
 
     if let Some(ref sid) = session_id {
         cmd.args(["exec", "resume", sid, "--all"]);
@@ -99,6 +233,9 @@ pub async fn stream_codex_cli(
     cmd.arg("--json");
     if let Some(ref m) = model.filter(|m| !m.is_empty()) {
         cmd.args(["--model", m]);
+    }
+    if let Some(ref e) = effort.filter(|e| !e.is_empty()) {
+        cmd.arg("-c").arg(format!("model_reasoning_effort=\"{e}\""));
     }
 
     let prompt = if system.is_empty() {
@@ -137,6 +274,21 @@ pub async fn stream_codex_cli(
         let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) else {
             continue;
         };
+        if let Some(usage) = event["usage"].as_object() {
+            let used = usage["input_tokens"]
+                .as_u64()
+                .or_else(|| usage["total_tokens"].as_u64())
+                .unwrap_or(0);
+            if used > 0 {
+                let window = event["context_window"]
+                    .as_u64()
+                    .or_else(|| event["model_context_window"].as_u64())
+                    .unwrap_or(context_window);
+                let _ = on_status.send(format!(
+                    r#"{{"t":"usage","used":{used},"window":{window}}}"#
+                ));
+            }
+        }
         match event["type"].as_str() {
             Some("thread.started") => {
                 thread_id = event["thread_id"].as_str().map(str::to_string);
@@ -171,7 +323,6 @@ pub async fn stream_codex_cli(
             stderr_output.trim().to_string()
         });
     }
-    let _ = effort; // Reserved until the installed CLI exposes a stable effort flag.
     Ok(thread_id)
 }
 

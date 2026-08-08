@@ -562,6 +562,33 @@ describe("chatSessions", () => {
     expect(s.activeChatSessionId).toBe(id);
   });
 
+  it("bundles new sessions with the current workspace", () => {
+    useEditorStore.getState().setWorkspacePath("/projects/paper");
+    const id = useEditorStore.getState().createChatSession();
+    expect(useEditorStore.getState().chatSessions.find((session) => session.id === id)?.workspacePath)
+      .toBe("/projects/paper");
+  });
+
+  it("clears the active session when switching workspaces but preserves both histories", () => {
+    useEditorStore.getState().setWorkspacePath("/projects/one");
+    const firstId = useEditorStore.getState().createChatSession();
+    useEditorStore.getState().setWorkspacePath("/projects/two");
+    const secondId = useEditorStore.getState().createChatSession();
+
+    useEditorStore.getState().setWorkspacePath("/projects/one");
+    const state = useEditorStore.getState();
+    expect(state.activeChatSessionId).toBeNull();
+    expect(state.chatSessions.find((session) => session.id === firstId)?.workspacePath).toBe("/projects/one");
+    expect(state.chatSessions.find((session) => session.id === secondId)?.workspacePath).toBe("/projects/two");
+  });
+
+  it("keeps the active session when setting the same workspace again", () => {
+    useEditorStore.getState().setWorkspacePath("/projects/paper/");
+    const id = useEditorStore.getState().createChatSession();
+    useEditorStore.getState().setWorkspacePath("/projects/paper");
+    expect(useEditorStore.getState().activeChatSessionId).toBe(id);
+  });
+
   it("setActiveChatSession switches active session", () => {
     const id1 = useEditorStore.getState().createChatSession();
     useEditorStore.getState().createChatSession();

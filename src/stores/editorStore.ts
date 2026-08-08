@@ -36,8 +36,20 @@ export interface AiChatSession {
   title: string;
   messages: AiMessage[];
   createdAt: number;
+  /** Project directory this conversation belongs to. Omitted on legacy sessions. */
+  workspacePath?: string | null;
   claudeSessionId?: string; // CLI session for --resume
   codexSessionId?: string; // Codex CLI thread for resume
+}
+
+export function normalizeWorkspacePath(path: string | null | undefined): string | null {
+  if (!path) return null;
+  const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
+  return normalized || "/";
+}
+
+function sessionWorkspacePath(session: Pick<AiChatSession, "workspacePath">): string | null {
+  return normalizeWorkspacePath(session.workspacePath);
 }
 
 /** A reference paper the user has added — local PDF, .bib entry, or link.
@@ -80,9 +92,12 @@ interface EditorState {
   // AI chat sessions
   chatSessions: AiChatSession[];
   activeChatSessionId: string | null;
+  streamingChatSessionId: string | null;
+  setStreamingChatSession: (id: string | null) => void;
   createChatSession: () => string;
-  setActiveChatSession: (id: string) => void;
+  setActiveChatSession: (id: string | null) => void;
   updateChatSession: (id: string, messages: AiMessage[]) => void;
+  updateChatSessionLive: (id: string, messages: AiMessage[]) => void;
   updateSessionClaudeId: (id: string, claudeSessionId: string) => void;
   updateSessionCodexId: (id: string, codexSessionId: string) => void;
   renameChatSession: (id: string, title: string) => void;
@@ -103,6 +118,8 @@ interface EditorState {
   setOllamaModel: (model: string) => void;
   claudeModel: string;
   setClaudeModel: (model: string) => void;
+  codexModel: string;
+  setCodexModel: (model: string) => void;
 
   // Theme
   theme: AppTheme;
@@ -252,8 +269,8 @@ const PERSISTED_KEYS = [
   "ollamaUrl",
   "ollamaModel",
   "claudeModel",
+  "codexModel",
   "chatSessions",
-  "activeChatSessionId",
   "writingMode",
   "mdSourceMode",
   "references",
@@ -269,7 +286,14 @@ function schedulePersist(getState: () => EditorState) {
   persistTimer = setTimeout(() => {
     const s = getState();
     const payload: Record<string, unknown> = {};
-    for (const k of PERSISTED_KEYS) payload[k] = (s as unknown as Record<string, unknown>)[k];
+    for (const k of PERSISTED_KEYS) {
+      if (k === "chatSessions") {
+        // Empty sessions are in-memory drafts until the first message exists.
+        payload[k] = s.chatSessions.filter((session) => session.messages.length > 0);
+      } else {
+        payload[k] = (s as unknown as Record<string, unknown>)[k];
+      }
+    }
     invoke("write_settings", { contents: JSON.stringify(payload, null, 2) }).catch((e) => logger.error("write_settings failed", e));
   }, 150);
 }
@@ -281,9 +305,17 @@ function createSessionId() {
 export const useEditorStore = create<EditorState>((set, get) => ({
   chatSessions: [],
   activeChatSessionId: null,
+  streamingChatSessionId: null,
+  setStreamingChatSession: (id) => set({ streamingChatSessionId: id }),
   createChatSession: () => {
     const id = createSessionId();
-    const session: AiChatSession = { id, title: "New chat", messages: [], createdAt: Date.now() };
+    const session: AiChatSession = {
+      id,
+      title: "New chat",
+      messages: [],
+      createdAt: Date.now(),
+      workspacePath: normalizeWorkspacePath(get().workspacePath),
+    };
     set((s) => ({ chatSessions: [...s.chatSessions, session], activeChatSessionId: id }));
     schedulePersist(get);
     return id;
@@ -302,6 +334,19 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       ),
     }));
     schedulePersist(get);
+  },
+  updateChatSessionLive: (id, messages) => {
+    set((s) => ({
+      chatSessions: s.chatSessions.map((sess) =>
+        sess.id !== id ? sess : {
+          ...sess,
+          messages,
+          title: sess.title === "New chat" && messages.length > 0
+            ? (messages.find((m) => m.role === "user")?.content.slice(0, 40) ?? "New chat")
+            : sess.title,
+        }
+      ),
+    }));
   },
   updateSessionClaudeId: (id, claudeSessionId) => {
     set((s) => ({
@@ -336,6 +381,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       title: `Fork of ${original.title}`,
       messages: [...original.messages],
       createdAt: Date.now(),
+      workspacePath: sessionWorkspacePath(original) ?? get().workspacePath,
     };
     set((s) => ({ chatSessions: [...s.chatSessions, forked], activeChatSessionId: newId }));
     schedulePersist(get);
@@ -343,8 +389,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   deleteChatSession: (id) => {
     set((s) => {
       const remaining = s.chatSessions.filter((sess) => sess.id !== id);
-      const nextActive =
-        s.activeChatSessionId === id ? (remaining[remaining.length - 1]?.id ?? null) : s.activeChatSessionId;
+      const currentWorkspace = normalizeWorkspacePath(s.workspacePath);
+      const workspaceSessions = remaining.filter((sess) => sessionWorkspacePath(sess) === currentWorkspace);
+      const nextActive = s.activeChatSessionId === id
+        ? (workspaceSessions[workspaceSessions.length - 1]?.id ?? null)
+        : s.activeChatSessionId;
       return { chatSessions: remaining, activeChatSessionId: nextActive };
     });
     schedulePersist(get);
@@ -381,6 +430,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setOllamaModel: (model) => { set({ ollamaModel: model }); schedulePersist(get); },
   claudeModel: "claude-sonnet-4-6",
   setClaudeModel: (model) => { set({ claudeModel: model }); schedulePersist(get); },
+  codexModel: "",
+  setCodexModel: (model) => { set({ codexModel: model }); schedulePersist(get); },
 
   theme: (localStorage.getItem("app-theme") as AppTheme | null) ?? "dark",
   setTheme: (theme) => {
@@ -433,7 +484,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   workspacePath: null,
-  setWorkspacePath: (path) => set({ workspacePath: path, aiApprovedPaths: [] }),
+  setWorkspacePath: (path) => {
+    const nextPath = normalizeWorkspacePath(path);
+    const currentPath = normalizeWorkspacePath(get().workspacePath);
+    if (nextPath === currentPath) {
+      set({ aiApprovedPaths: [] });
+      return;
+    }
+    set({ workspacePath: nextPath, aiApprovedPaths: [], activeChatSessionId: null });
+  },
   aiApprovedPaths: [],
   addAiApprovedPath: (path) => set((s) => ({
     aiApprovedPaths: s.aiApprovedPaths.includes(path) ? s.aiApprovedPaths : [...s.aiApprovedPaths, path],
@@ -583,8 +642,18 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       if (typeof parsed.ollamaUrl === "string") patch.ollamaUrl = parsed.ollamaUrl;
       if (typeof parsed.ollamaModel === "string") patch.ollamaModel = parsed.ollamaModel;
       if (typeof parsed.claudeModel === "string") patch.claudeModel = parsed.claudeModel;
-      if (Array.isArray(parsed.chatSessions)) patch.chatSessions = parsed.chatSessions as AiChatSession[];
-      if (typeof parsed.activeChatSessionId === "string") patch.activeChatSessionId = parsed.activeChatSessionId;
+      if (typeof parsed.codexModel === "string") patch.codexModel = parsed.codexModel;
+      if (Array.isArray(parsed.chatSessions)) {
+        patch.chatSessions = (parsed.chatSessions as AiChatSession[])
+          .filter((session) => Array.isArray(session.messages) && session.messages.length > 0)
+          .map((session) => ({
+            ...session,
+            workspacePath: normalizeWorkspacePath(session.workspacePath),
+          }));
+      }
+      // The active chat is deliberately ephemeral: reopening Grapheme starts
+      // a fresh chat, while the persisted sessions remain available in History.
+      patch.activeChatSessionId = null;
       if (typeof parsed.writingMode === "boolean") patch.writingMode = parsed.writingMode;
       if (typeof parsed.mdSourceMode === "boolean") patch.mdSourceMode = parsed.mdSourceMode;
       if (Array.isArray(parsed.references)) patch.references = parsed.references as Reference[];

@@ -136,6 +136,8 @@ pub fn run() {
             commands::write_settings,
             ai::check_claude_cli,
             ai::check_codex_cli,
+            ai::get_codex_cli_version,
+            ai::list_codex_models,
             ai::stream_claude_cli,
             ai::stream_codex_cli,
             ai::stream_ai_chat,

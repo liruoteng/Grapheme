@@ -8,6 +8,8 @@ export type AiProvider = "claude-cli" | "codex-cli" | "ollama";
 export interface GraphemeProviderConfig {
   provider: AiProvider;
   claudeModel?: string;
+  codexModel?: string;
+  effort?: string;
   claudeApiKey?: string;
   ollamaUrl?: string;
   ollamaModel?: string;
@@ -252,8 +254,8 @@ export class GraphemeLLMProvider implements LLMProvider {
       sessionId: this.config.sessionId ?? null,
       message,
       system: systemPrompt,
-      model: this.config.claudeModel ?? null,
-      effort: "medium",
+      model: this.config.codexModel ?? null,
+      effort: this.config.effort ?? "medium",
       thinking: false,
       onChunk,
       onStatus,
@@ -291,6 +293,13 @@ export class GraphemeLLMProvider implements LLMProvider {
     signal?: AbortSignal,
   ): AsyncGenerator<LLMStreamEvent> {
     const lastUserMessage = [...messages].reverse().find((m) => m.role === "user");
+    const runtimeSystemPrompt = [
+      systemPrompt,
+      "Grapheme runtime metadata (trusted app configuration):",
+      `- requested Codex model ID: ${this.config.codexModel ?? "configured default"}`,
+      `- reasoning effort: ${this.config.effort ?? "medium"}`,
+      "When asked about the configured runtime, report these values. Do not claim that they reveal a hidden deployment build or internal model identity.",
+    ].filter(Boolean).join("\n\n");
     const onChunk = new Channel<string>();
     const queue: string[] = [];
     let resolve: (() => void) | null = null;
@@ -301,7 +310,7 @@ export class GraphemeLLMProvider implements LLMProvider {
     const request = invoke<string | null>("stream_codex_cli", {
       sessionId: this.config.sessionId ?? null,
       message: lastUserMessage?.content ?? "",
-      system: systemPrompt,
+      system: runtimeSystemPrompt,
       model: this.config.claudeModel ?? null,
       effort: "medium",
       cwd: this.config.cwd ?? null,

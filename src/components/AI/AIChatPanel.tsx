@@ -6,11 +6,10 @@ import {
   Option,
   PenLine,
   ArrowUp,
-  Sparkles,
   ShieldCheck,
   X,
 } from "lucide-react";
-import { useEditorStore, useActiveTab, type AiMessage } from "../../stores/editorStore";
+import { normalizeWorkspacePath, useEditorStore, useActiveTab, type AiMessage } from "../../stores/editorStore";
 import {
   getAcademicWorkflowPrompt,
   getGraphemeActionSystemPrompt,
@@ -45,7 +44,7 @@ interface CitationResult {
   externalIds: { DOI?: string } | null;
 }
 
-type Effort = "low" | "medium" | "high" | "xhigh" | "max";
+type Effort = "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 type ChatMode = "plan" | "action";
 
 const ACADEMIC_MODES: { id: AcademicWorkflowMode; label: string }[] = [
@@ -59,46 +58,29 @@ const ACADEMIC_MODES: { id: AcademicWorkflowMode; label: string }[] = [
   { id: "citation-audit", label: "Citations" },
 ];
 
-const EMPTY_STARTERS = [
-  {
-    title: "Clarify question",
-    body: "Scope a research question before drafting.",
-    prompt: "Help me scope this research topic: ",
-    mode: "clarify" as const,
-  },
-  {
-    title: "Plan a paper",
-    body: "Build an evidence-aware outline for approval.",
-    prompt: "Create an outline and argument blueprint for: ",
-    mode: "outline" as const,
-  },
-  {
-    title: "Improve selection",
-    body: "Make selected text clearer without changing the claim.",
-    prompt: "Improve the selected text for clarity, flow, and academic tone.",
-    mode: "revise" as const,
-  },
-  {
-    title: "Find sources",
-    body: "Search papers and prepare BibTeX-ready citations.",
-    prompt: "/cite ",
-    mode: "research" as const,
-  },
-  {
-    title: "Review draft",
-    body: "Get a read-only academic review and revision roadmap.",
-    prompt: "Review this manuscript and produce a revision roadmap.",
-    mode: "review" as const,
-  },
-];
-
 const CLAUDE_MODELS = [
   { id: "claude-opus-4-7",           label: "Opus 4.7" },
   { id: "claude-sonnet-4-6",         label: "Sonnet 4.6" },
   { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5" },
 ];
 
-const CODEX_MODELS = [{ id: "", label: "Default Codex model" }];
+interface CodexModelOption {
+  id: string;
+  label: string;
+  default_effort: string;
+  efforts: string[];
+  context_window: number;
+  is_default: boolean;
+}
+
+const CODEX_FALLBACK_MODELS: CodexModelOption[] = [{
+  id: "",
+  label: "Default Codex model",
+  default_effort: "medium",
+  efforts: ["low", "medium", "high", "xhigh", "max"],
+  context_window: 200_000,
+  is_default: true,
+}];
 
 type ActionEdit =
   | { kind: "replace_selection"; text: string }
@@ -314,16 +296,22 @@ export function AIChatPanel() {
   const theme               = useEditorStore((s) => s.theme);
   const chatSessions        = useEditorStore((s) => s.chatSessions);
   const activeChatSessionId = useEditorStore((s) => s.activeChatSessionId);
+  const streamingChatSessionId = useEditorStore((s) => s.streamingChatSessionId);
+  const setStreamingChatSession = useEditorStore((s) => s.setStreamingChatSession);
+  const workspacePath = useEditorStore((s) => s.workspacePath);
   const createChatSession     = useEditorStore((s) => s.createChatSession);
   const setActiveChatSession  = useEditorStore((s) => s.setActiveChatSession);
   const updateChatSession     = useEditorStore((s) => s.updateChatSession);
+  const updateChatSessionLive = useEditorStore((s) => s.updateChatSessionLive);
   const updateSessionClaudeId = useEditorStore((s) => s.updateSessionClaudeId);
   const updateSessionCodexId = useEditorStore((s) => s.updateSessionCodexId);
   const renameChatSession     = useEditorStore((s) => s.renameChatSession);
   const forkChatSession       = useEditorStore((s) => s.forkChatSession);
   const deleteChatSession     = useEditorStore((s) => s.deleteChatSession);
 
-  const activeSession = chatSessions.find((s) => s.id === activeChatSessionId) ?? null;
+  const currentWorkspace = normalizeWorkspacePath(workspacePath);
+  const workspaceSessions = chatSessions.filter((session) => normalizeWorkspacePath(session.workspacePath) === currentWorkspace);
+  const activeSession = workspaceSessions.find((s) => s.id === activeChatSessionId) ?? null;
   const matrixLoaderUrl = theme === "dark" ? matrixLoaderDarkUrl : matrixLoaderLightUrl;
 
   // ── Local view state ───────────────────────────────────────────────────
@@ -341,6 +329,7 @@ export function AIChatPanel() {
   const [thinkingHint, setThinkingHint] = useState<string | null>(null);
   const [thinkingSeconds, setThinkingSeconds] = useState(0);
   const [contextTokens, setContextTokens] = useState<{ used: number; window: number } | null>(null);
+  const [requestContextTokens, setRequestContextTokens] = useState(0);
   const [citationResults, setCitationResults] = useState<CitationResult[] | null>(null);
   const [isCiteMode, setIsCiteMode] = useState(false);
   const [accessRequest, setAccessRequest] = useState<AccessRequest | null>(null);
@@ -354,6 +343,7 @@ export function AIChatPanel() {
   const abortRef = useRef<boolean>(false);
   const localMessagesRef = useRef(localMessages);
   localMessagesRef.current = localMessages;
+  const isStreamActive = isLoading || streamingChatSessionId === activeChatSessionId;
 
   // ── Toolbar state ──────────────────────────────────────────────────────
   const [effort, setEffort] = useState<Effort>("medium");
@@ -361,6 +351,7 @@ export function AIChatPanel() {
   const [chatMode, setChatMode] = useState<ChatMode>("plan");
   const [academicMode, setAcademicMode] = useState<AcademicWorkflowMode>("general");
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [codexModels, setCodexModels] = useState<CodexModelOption[]>(CODEX_FALLBACK_MODELS);
   const isReadOnlyMode = isReadOnlyAcademicMode(academicMode);
   const isActionDisabled = isReadOnlyMode;
   const isActionMode = chatMode === "action" && !isActionDisabled;
@@ -369,13 +360,11 @@ export function AIChatPanel() {
       ? getGraphemeActionSystemPrompt(academicMode)
       : getGraphemeWritingSystemPrompt(academicMode);
   const activeAgent = getAgentForWorkflow(academicMode, isActionMode);
-  const systemPrompt = `${activeAgent.prompt}\n\n${baseSystemPrompt}`;
   const slashCommands = filterSlashCommands(input);
-  const showSlashCommands = !isLoading && slashCommands.length > 0;
+  const showSlashCommands = !isStreamActive && slashCommands.length > 0;
 
   // ── Provider settings ──────────────────────────────────────────────────
   const selectedText = useEditorStore((s) => s.selectedText);
-  const workspacePath = useEditorStore((s) => s.workspacePath);
   const aiApprovedPaths = useEditorStore((s) => s.aiApprovedPaths);
   const addAiApprovedPath = useEditorStore((s) => s.addAiApprovedPath);
   const activeTab = useActiveTab();
@@ -386,17 +375,82 @@ export function AIChatPanel() {
   const setOllamaModel = useEditorStore((s) => s.setOllamaModel);
   const claudeModel    = useEditorStore((s) => s.claudeModel);
   const setClaudeModel = useEditorStore((s) => s.setClaudeModel);
+  const codexModel     = useEditorStore((s) => s.codexModel);
+  const setCodexModel  = useEditorStore((s) => s.setCodexModel);
+  const [codexCliVersion, setCodexCliVersion] = useState<string | null>(null);
+
+  const selectedCodexModel = codexModels.find((model) => model.id === codexModel)
+    ?? codexModels.find((model) => model.is_default)
+    ?? CODEX_FALLBACK_MODELS[0];
+  const codexEfforts = selectedCodexModel.efforts.length > 0
+    ? selectedCodexModel.efforts
+    : CODEX_FALLBACK_MODELS[0].efforts;
+  const codexRuntimeModelId = codexModel || selectedCodexModel.id || "configured default";
+  const codexRuntimeModelLabel = selectedCodexModel.label;
+  const codexSessionMode = activeSession?.codexSessionId ? "resumed" : "new";
+  const codexRuntimeMetadata = aiProvider === "codex-cli"
+    ? [
+        "Grapheme runtime metadata (trusted app configuration):",
+        `- requested Codex model ID: ${codexRuntimeModelId}`,
+        `- model label: ${codexRuntimeModelLabel}`,
+        `- reasoning effort: ${effort}`,
+        `- Codex session mode: ${codexSessionMode}`,
+        "When asked about the configured runtime, report these values. Do not claim that they reveal a hidden deployment build or internal model identity.",
+      ].join("\n")
+    : "";
+  const systemPrompt = `${activeAgent.prompt}\n\n${baseSystemPrompt}${codexRuntimeMetadata ? `\n\n${codexRuntimeMetadata}` : ""}`;
 
   // ── Check Claude CLI on mount ──────────────────────────────────────────
   useEffect(() => {
     if (aiProvider === "claude-cli" || aiProvider === "codex-cli") {
       setCliStatus("checking");
-      invoke<string>(aiProvider === "codex-cli" ? "check_codex_cli" : "check_claude_cli")
-        .then((s) => setCliStatus(s as "ready" | "not_found"))
-        .catch(() => setCliStatus("not_found"));
+      if (aiProvider === "codex-cli") {
+        Promise.all([
+          invoke<string>("check_codex_cli"),
+          invoke<string>("get_codex_cli_version"),
+        ])
+          .then(([status, version]) => {
+            setCliStatus(status as "ready" | "not_found");
+            setCodexCliVersion(version === "unavailable" ? null : version);
+          })
+          .catch(() => {
+            setCliStatus("not_found");
+            setCodexCliVersion(null);
+          });
+      } else {
+        setCodexCliVersion(null);
+        invoke<string>("check_claude_cli")
+          .then((s) => setCliStatus(s as "ready" | "not_found"))
+          .catch(() => setCliStatus("not_found"));
+      }
     } else {
       setCliStatus("ready");
+      setCodexCliVersion(null);
     }
+  }, [aiProvider]);
+
+  // The Codex desktop app and CLI share this local catalog. Keep the model
+  // picker aligned with it so newly available variants and effort levels show
+  // up without requiring a Grapheme release.
+  useEffect(() => {
+    if (aiProvider !== "codex-cli") return;
+    invoke<CodexModelOption[]>("list_codex_models")
+      .then((models) => {
+        const available = models.length > 0 ? models : CODEX_FALLBACK_MODELS;
+        setCodexModels(available);
+        const selected = available.find((model) => model.id === codexModel)
+          ?? available.find((model) => model.is_default)
+          ?? available[0];
+        if (!selected) return;
+        if (selected.id !== codexModel) setCodexModel(selected.id);
+        if (!selected.efforts.includes(effort)) {
+          setEffort((selected.default_effort || "medium") as Effort);
+        }
+      })
+      .catch(() => setCodexModels(CODEX_FALLBACK_MODELS));
+  // Catalog refresh is intentionally tied to provider selection, while the
+  // latest persisted model/effort are read inside the callback.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aiProvider]);
 
   // ── Fetch Ollama models ────────────────────────────────────────────────
@@ -412,7 +466,14 @@ export function AIChatPanel() {
     setCitationResults(null);
     setIsCiteMode(false);
     setHistoryIndex(-1);
-  }, [activeChatSessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeChatSessionId, currentWorkspace]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    // API usage belongs to a specific conversation/provider/model. Never
+    // carry it into a new project, session, or model selection.
+    setContextTokens(null);
+    setRequestContextTokens(0);
+  }, [activeChatSessionId, aiProvider, codexModel, currentWorkspace]);
 
   // Commit local messages back to the store when streaming finishes or on unmount
   const commitMessages = useCallback((msgs: AiMessage[], options?: { deleteIfEmpty?: boolean }) => {
@@ -433,21 +494,17 @@ export function AIChatPanel() {
   }, [localMessages, citationResults]);
 
   useEffect(() => {
-    if (!isLoading) { setThinkingSeconds(0); return; }
+    if (!isStreamActive) { setThinkingSeconds(0); return; }
     setThinkingSeconds(0);
     const interval = setInterval(() => setThinkingSeconds((s) => s + 1), 1000);
     return () => clearInterval(interval);
-  }, [isLoading]);
+  }, [isStreamActive]);
 
   // ── Ensure there is an active session without resetting existing chat ──
   useEffect(() => {
     if (activeSession) return;
-    if (chatSessions.length > 0) {
-      setActiveChatSession(chatSessions[chatSessions.length - 1].id);
-    } else {
-      createChatSession();
-    }
-  }, [activeSession, chatSessions, createChatSession, setActiveChatSession]);
+    createChatSession();
+  }, [activeSession, createChatSession]);
 
   useEffect(() => {
     if (isActionDisabled) setChatMode("plan");
@@ -505,7 +562,7 @@ export function AIChatPanel() {
   const modelValue = aiProvider === "claude-cli"
     ? `claude-cli:${claudeModel}`
     : aiProvider === "codex-cli"
-      ? "codex-cli:"
+      ? `codex-cli:${codexModel}`
     : `ollama:${ollamaModel}`;
 
   const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -516,8 +573,13 @@ export function AIChatPanel() {
       setClaudeModel(newModel);
       if (effort === "xhigh" && newModel !== "claude-opus-4-7") setEffort("high");
     } else if (val.startsWith("codex-cli:")) {
+      const newModel = val.slice(10);
       setAiProvider("codex-cli");
-      if (effort === "xhigh") setEffort("high");
+      setCodexModel(newModel);
+      const selected = codexModels.find((model) => model.id === newModel);
+      if (selected && !selected.efforts.includes(effort)) {
+        setEffort((selected.default_effort || "medium") as Effort);
+      }
     } else if (val.startsWith("ollama:")) {
       setAiProvider("ollama");
       setOllamaModel(val.slice(7));
@@ -529,44 +591,57 @@ export function AIChatPanel() {
   // remaining characters use the ~4 chars/token rule of thumb.
   const estTokens = (text: string) => {
     const newlines = (text.match(/\n/g) ?? []).length;
-    return newlines + Math.ceil((text.length - newlines) / 4);
+    const characters = text.length - newlines;
+    if (characters <= 0) return newlines;
+    // A conservative cross-provider estimate: prose averages about 4 chars
+    // per token, while paths/code/Typst tend to tokenize more densely.
+    return newlines + Math.ceil(characters / 3.5);
   };
 
   // total tokens = input tokens + output tokens
   //   input  = system prompt + user messages (+ 4 per message for role/format overhead)
   //   output = assistant completions (+ 4 per message for role/format overhead)
-  const inputTokens =
-    estTokens(systemPrompt) +
-    localMessages
-      .filter((m) => m.role === "user")
-      .reduce((sum, m) => sum + estTokens(m.content) + 4, 0);
-  const outputTokens =
-    localMessages
-      .filter((m) => m.role === "assistant")
-      .reduce((sum, m) => sum + estTokens(m.content) + 4, 0);
+  const conversationTokens = localMessages
+    .reduce((sum, m) => sum + estTokens(m.content) + 4, 0);
+  const inputTokens = estTokens(systemPrompt) + conversationTokens + requestContextTokens;
 
   // Thinking blocks returned in conversation history count toward the next input.
   // Estimate ~50% of the effort budget per completed assistant turn as an average.
   const THINKING_BUDGET: Record<Effort, number> = {
-    low: 500, medium: 2_500, high: 5_000, xhigh: 10_000, max: 16_000,
+    low: 500, medium: 2_500, high: 5_000, xhigh: 10_000, max: 16_000, ultra: 24_000,
   };
   const completedAssistantTurns = localMessages.filter(
     (m) => m.role === "assistant" && m.content.length > 0
   ).length;
   const thinkingTokens = thinking ? completedAssistantTurns * THINKING_BUDGET[effort] : 0;
 
-  const estimatedTokens = inputTokens + outputTokens + thinkingTokens;
+  const estimatedTokens = inputTokens + thinkingTokens;
+  const contextWindow = contextTokens?.window
+    ?? (aiProvider === "codex-cli" ? selectedCodexModel.context_window : 200_000);
   const contextPct = contextTokens
     ? (contextTokens.used / contextTokens.window) * 100
-    : (estimatedTokens / 200_000) * 100;
+    : (estimatedTokens / contextWindow) * 100;
   const contextPctDisplay = contextPct < 1
     ? contextPct.toFixed(1)
     : Math.min(99, Math.round(contextPct)).toString();
 
+  const appendLiveAssistantChunk = useCallback((sessionId: string, chunk: string) => {
+    const next = [...localMessagesRef.current];
+    const last = next.length - 1;
+    if (last < 0 || next[last]?.role !== "assistant") return;
+    next[last] = {
+      ...next[last],
+      content: `${next[last].content}${chunk}`,
+    };
+    localMessagesRef.current = next;
+    setLocalMessages(next);
+    updateChatSessionLive(sessionId, next);
+  }, [updateChatSessionLive]);
+
   // ── Send message ───────────────────────────────────────────────────────
   const handleSend = async (messageOverride?: string, approvedPathsOverride?: string[]) => {
     const trimmed = (messageOverride ?? input).trim();
-    if (!trimmed || isLoading) return;
+    if (!trimmed || isStreamActive) return;
     const approvedPaths = approvedPathsOverride ?? aiApprovedPaths;
 
     if (!messageOverride) {
@@ -666,10 +741,25 @@ export function AIChatPanel() {
     if (workspaceContext) {
       contextualContent += `\n\n${workspaceContext}`;
     }
+    // Resumed Codex sessions retain their original system prompt. Repeat the
+    // current app-owned runtime metadata in the request so model/effort
+    // answers cannot become stale after a settings change.
+    if (codexRuntimeMetadata && activeSession?.codexSessionId) {
+      contextualContent += `\n\n${codexRuntimeMetadata}`;
+    }
+    // The visible chat history stores the short user message, while the
+    // provider receives this expanded request with document/workspace context.
+    // Keep that extra payload in the estimate for the next turn.
+    setRequestContextTokens(Math.max(0, estTokens(contextualContent) - estTokens(trimmed)));
 
+    const requestSessionId = activeChatSessionId;
+    if (!requestSessionId) return;
     const withUser: AiMessage[] = [...localMessages, { role: "user", content: trimmed, timestamp: Date.now() }];
     const withPlaceholder: AiMessage[] = [...withUser, { role: "assistant", content: "" }];
+    localMessagesRef.current = withPlaceholder;
     setLocalMessages(withPlaceholder);
+    updateChatSessionLive(requestSessionId, withPlaceholder);
+    setStreamingChatSession(requestSessionId);
 
     setIsLoading(true);
     abortRef.current = false;
@@ -685,14 +775,7 @@ export function AIChatPanel() {
         const onChunk = new Channel<string>();
         onChunk.onmessage = (chunk: string) => {
           if (abortRef.current) return;
-          setLocalMessages((prev) => {
-            const copy = [...prev];
-            copy[copy.length - 1] = {
-              role: "assistant",
-              content: (copy[copy.length - 1]?.content ?? "") + chunk,
-            };
-            return copy;
-          });
+          appendLiveAssistantChunk(requestSessionId, chunk);
         };
         await invoke("stream_ai_chat", {
           messages: apiMessages,
@@ -706,14 +789,7 @@ export function AIChatPanel() {
         const onChunk = new Channel<string>();
         onChunk.onmessage = (chunk: string) => {
           if (abortRef.current) return;
-          setLocalMessages((prev) => {
-            const copy = [...prev];
-            copy[copy.length - 1] = {
-              role: "assistant",
-              content: (copy[copy.length - 1]?.content ?? "") + chunk,
-            };
-            return copy;
-          });
+          appendLiveAssistantChunk(requestSessionId, chunk);
         };
 
         const onStatus = new Channel<string>();
@@ -734,7 +810,7 @@ export function AIChatPanel() {
               sessionId: activeSession?.codexSessionId ?? null,
               message: contextualContent,
               system: activeSession?.codexSessionId ? "" : systemPrompt,
-              model: null,
+              model: codexModel || null,
               effort,
               cwd: workspacePath ?? (activeTab?.path ? activeTab.path.split("/").slice(0, -1).join("/") || null : null),
               onChunk,
@@ -807,6 +883,9 @@ export function AIChatPanel() {
       }
     } finally {
       setIsLoading(false);
+      if (useEditorStore.getState().streamingChatSessionId === requestSessionId) {
+        setStreamingChatSession(null);
+      }
     }
   };
 
@@ -890,10 +969,18 @@ export function AIChatPanel() {
     }
   };
 
+  const handleEffortChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const nextEffort = e.target.value as Effort;
+    setEffort(nextEffort);
+  };
+
   const handleStop = () => {
     abortRef.current = true;
     invoke("cancel_ai_stream").catch(() => {});
     setIsLoading(false);
+    if (activeChatSessionId === streamingChatSessionId) {
+      setStreamingChatSession(null);
+    }
     commitMessages(localMessagesRef.current);
   };
 
@@ -923,6 +1010,8 @@ export function AIChatPanel() {
   }
 
   const filteredSessions = [...chatSessions]
+    .filter((session) => normalizeWorkspacePath(session.workspacePath) === currentWorkspace)
+    .filter((session) => session.messages.length > 0)
     .reverse()
     .filter((s) => s.title.toLowerCase().includes(sessionSearch.toLowerCase()));
 
@@ -933,6 +1022,7 @@ export function AIChatPanel() {
   }, {});
 
   const GROUP_ORDER = ["Today", "Yesterday", "This week", "Older"];
+  const workspaceDisplayName = workspacePath?.split("/").filter(Boolean).pop() ?? "No project";
 
   const commitRename = () => {
     if (renamingId) renameChatSession(renamingId, renameValue);
@@ -945,7 +1035,9 @@ export function AIChatPanel() {
       <div className="ai-chat-panel">
         <div className="ai-sessions-header">
           <button className="ai-sessions-back" onClick={() => setShowAiSessions(false)}>← Back</button>
-          <span className="ai-sessions-header-title">Chats</span>
+          <span className="ai-sessions-header-title" title={workspacePath ?? "No project directory selected"}>
+            Chats · {workspaceDisplayName}
+          </span>
           <button className="ai-chat-btn ai-chat-btn--send ai-sessions-new" onClick={handleNewSession}>+ New</button>
         </div>
 
@@ -958,12 +1050,12 @@ export function AIChatPanel() {
           />
         </div>
 
-        <div className="ai-sessions-list">
-          {filteredSessions.length === 0 && (
-            <div className="ai-sessions-empty">
-              {sessionSearch ? "No matching chats." : "No chats yet."}
-            </div>
-          )}
+          <div className="ai-sessions-list">
+            {filteredSessions.length === 0 && (
+              <div className="ai-sessions-empty">
+                {sessionSearch ? "No matching chats in this project." : "No chats yet in this project."}
+              </div>
+            )}
 
           {GROUP_ORDER.filter((g) => grouped[g]?.length).map((group) => (
             <div key={group} className="ai-sessions-group">
@@ -1079,28 +1171,17 @@ export function AIChatPanel() {
       <div className="ai-chat-messages">
         {localMessages.length === 0 && (
           <div className="ai-chat-empty">
-            <div className="ai-chat-empty-kicker">
-              <Sparkles size={15} />
-              Essay copilot
-            </div>
-            <div className="ai-starter-grid">
-              {EMPTY_STARTERS.map((starter) => (
-                <button
-                  key={starter.title}
-                  className="ai-starter-card"
-                  onClick={() => applyPrompt(starter.prompt, starter.mode)}
-                >
-                  <span className="ai-starter-title">{starter.title}</span>
-                  <span className="ai-starter-body">{starter.body}</span>
-                </button>
-              ))}
+            <div className="ai-chat-empty-greeting">
+              <div className="ai-chat-empty-kicker">Good to see you.</div>
+              <h2>What shall we make clearer today?</h2>
+              <p>Bring a question, a paragraph, or a half-formed idea.</p>
             </div>
           </div>
         )}
 
         {localMessages.map((msg, i) => {
           const isThinking =
-            isLoading &&
+            isStreamActive &&
             i === localMessages.length - 1 &&
             msg.role === "assistant" &&
             msg.content === "";
@@ -1240,7 +1321,7 @@ export function AIChatPanel() {
             onKeyDown={handleKeyDown}
             placeholder={selectedText ? "Tell AI what to do with the selection…" : "Ask for drafting, editing, rephrasing, or /cite query"}
             rows={3}
-            disabled={isLoading}
+            disabled={isStreamActive}
           />
           <div className="ai-chat-input-actions">
             <select
@@ -1260,12 +1341,16 @@ export function AIChatPanel() {
               className="ai-toolbar-model"
               value={modelValue}
               onChange={handleModelChange}
+              disabled={isStreamActive}
               title="Model"
             >
               <optgroup label="Codex">
-                {CODEX_MODELS.map((m) => (
+                {codexModels.map((m) => (
                   <option key={m.id} value={`codex-cli:${m.id}`}>{m.label}</option>
                 ))}
+                {aiProvider === "codex-cli" && !codexModels.some((m) => m.id === codexModel) && (
+                  <option value={`codex-cli:${codexModel}`}>{codexModel || "Default Codex model"}</option>
+                )}
               </optgroup>
               <optgroup label="Claude">
                 {CLAUDE_MODELS.map((m) => (
@@ -1289,17 +1374,39 @@ export function AIChatPanel() {
             <select
               className="ai-toolbar-select"
               value={effort}
-              onChange={(e) => setEffort(e.target.value as Effort)}
+              onChange={handleEffortChange}
+              disabled={isStreamActive}
               title="Effort"
             >
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-              {claudeModel === "claude-opus-4-7" && (
-                <option value="xhigh">XHigh</option>
+              {aiProvider === "codex-cli" ? codexEfforts.map((level) => (
+                <option key={level} value={level}>{level[0].toUpperCase() + level.slice(1)}</option>
+              )) : (
+                <>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                  {claudeModel === "claude-opus-4-7" && (
+                    <option value="xhigh">XHigh</option>
+                  )}
+                  <option value="max">Max</option>
+                </>
               )}
-              <option value="max">Max</option>
             </select>
+
+            {aiProvider === "codex-cli" && (
+              <span
+                className="ai-codex-runtime-badge"
+                data-tooltip={[
+                  `Requested model: ${codexRuntimeModelId}`,
+                  `Effort: ${effort}`,
+                  `Session: ${codexSessionMode}`,
+                  `Workspace: ${workspacePath ?? "(none)"}`,
+                  `CLI: ${codexCliVersion ?? (cliStatus === "checking" ? "checking…" : "unavailable")}`,
+                ].join("\n")}
+              >
+                Codex · {codexRuntimeModelLabel} · {effort}
+              </span>
+            )}
 
             <button
               className={`ai-think-btn${thinking ? " active" : ""}`}
@@ -1313,7 +1420,7 @@ export function AIChatPanel() {
               className="ai-toolbar-tokens"
               data-tooltip={contextTokens
                 ? `${Math.round(contextTokens.used / 1000)}k / ${Math.round(contextTokens.window / 1000)}k tokens (API)`
-                : `~${Math.round(estimatedTokens / 1000)}k / 200k tokens (est.${thinking && thinkingTokens > 0 ? ` incl. ~${Math.round(thinkingTokens / 1000)}k thinking` : ""})`}
+                : `~${Math.round(estimatedTokens / 1000)}k / ${Math.round(contextWindow / 1000)}k tokens (est.${thinking && thinkingTokens > 0 ? ` incl. ~${Math.round(thinkingTokens / 1000)}k thinking` : ""})`}
             >
               {contextPctDisplay}%
             </span>
@@ -1336,7 +1443,7 @@ export function AIChatPanel() {
 
             <span className="ai-toolbar-sep" />
 
-            {isLoading ? (
+            {isStreamActive ? (
               <button className="ai-chat-btn ai-chat-btn--stop" onClick={handleStop}>Stop</button>
             ) : (
               <button className="ai-chat-btn ai-chat-btn--send" onClick={() => handleSend()} disabled={!input.trim()} aria-label="Send">
