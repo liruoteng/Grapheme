@@ -257,7 +257,7 @@
   flex: 1;
   min-height: 0;
   min-width: 0;
-  overflow: hidden;
+  overflow: auto;
   background: var(--bg-base);
 }
 
@@ -267,7 +267,7 @@
   flex: 1;
   min-height: 0;
   min-width: 0;
-  overflow: hidden;
+  overflow: auto;
   background: var(--bg-base);
 }
 
@@ -349,24 +349,47 @@ body.pm-resizing-row * { cursor: row-resize !important; user-select: none !impor
   opacity: 0.35;
 }
 
-.pm-panel--drop-target::after {
+.pm-panel--drop-horizontal,
+.pm-panel--drop-vertical {
+  background: color-mix(in srgb, var(--accent) 5%, var(--bg-base));
+}
+
+.pm-panel--drop-before::after,
+.pm-panel--drop-after::after {
   content: "";
   position: absolute;
-  inset: 0;
-  pointer-events: none;
   z-index: 10;
+  pointer-events: none;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), 0 0 16px color-mix(in srgb, var(--accent) 70%, transparent);
 }
 
-.pm-panel--drop-horizontal::after {
-  border-left: 3px solid var(--accent);
-  border-right: 3px solid var(--accent);
-  background: rgba(225, 163, 111, 0.06);
+.pm-panel--drop-before.pm-panel--drop-horizontal::after {
+  left: -2px;
+  top: 0;
+  bottom: 0;
+  width: 4px;
 }
 
-.pm-panel--drop-vertical::after {
-  border-top: 3px solid var(--accent);
-  border-bottom: 3px solid var(--accent);
-  background: rgba(225, 163, 111, 0.06);
+.pm-panel--drop-after.pm-panel--drop-horizontal::after {
+  right: -2px;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+}
+
+.pm-panel--drop-before.pm-panel--drop-vertical::after {
+  left: 0;
+  right: 0;
+  top: -2px;
+  height: 4px;
+}
+
+.pm-panel--drop-after.pm-panel--drop-vertical::after {
+  left: 0;
+  right: 0;
+  bottom: -2px;
+  height: 4px;
 }
 
 /* ── Panel header ─────────────────────────────────────────────────────────── */

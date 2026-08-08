@@ -28,7 +28,6 @@ interface PanelManagerProps {
 
 // ── Drag-to-reorder state ─────────────────────────────────────────────────────
 let dragFromIdx = -1;
-let dragOverIdx = -1;
 
 // ── Individual panel ──────────────────────────────────────────────────────────
 interface PanelProps {
@@ -37,6 +36,8 @@ interface PanelProps {
   label: string;
   isTopRight: boolean;
   isSideBySide: boolean;
+  dropSide?: "before" | "after";
+  dropLayout?: "horizontal" | "vertical";
   titleSuffix?: ReactNode;
   headerExtra?: ReactNode;
   headerExtraLeft?: ReactNode;
@@ -50,11 +51,14 @@ interface PanelProps {
 }
 
 function Panel({ id, idx, label, isTopRight, isSideBySide, titleSuffix, headerExtra, headerExtraLeft,
-  children, style, onClose, onDragStart, onDragOver, onDrop, onDragEnd }: PanelProps) {
+  dropSide, dropLayout, children, style, onClose, onDragStart, onDragOver, onDrop, onDragEnd }: PanelProps) {
   const diffMode = id === "diff" ? (isSideBySide ? "side by side" : "inline") : undefined;
+  const dropClass = dropSide && dropLayout
+    ? ` pm-panel--drop-${dropSide} pm-panel--drop-${dropLayout}`
+    : "";
   return (
     <div
-      className="pm-panel"
+      className={`pm-panel${dropClass}`}
       data-id={id}
       data-idx={idx}
       style={style}
@@ -95,12 +99,13 @@ interface RowHandleProps {
   colRef: RefObject<HTMLDivElement | null>;
   sizeFor: (id: string) => number;
   setPanelSizes: Dispatch<SetStateAction<Record<string, number>>>;
+  horizontal?: boolean;
 }
 
-function RowHandle({ topId, botId, colRef, sizeFor, setPanelSizes }: RowHandleProps) {
+function RowHandle({ topId, botId, colRef, sizeFor, setPanelSizes, horizontal = false }: RowHandleProps) {
   const startRef = useRef({ height: 600, top: 1, bottom: 1, total: 2 });
   const onPointerDown = usePointerDrag<HTMLDivElement>({
-    bodyClassName: "pm-resizing-row",
+    bodyClassName: horizontal ? "pm-resizing-col" : "pm-resizing-row",
     onStart: () => {
       const top = sizeFor(topId);
       const bottom = sizeFor(botId);
@@ -111,9 +116,13 @@ function RowHandle({ topId, botId, colRef, sizeFor, setPanelSizes }: RowHandlePr
         total: top + bottom,
       };
     },
-    onMove: ({ deltaY }) => {
+    onMove: ({ deltaX, deltaY }) => {
       const start = startRef.current;
-      const dy = (deltaY / start.height) * start.total;
+      const size = horizontal
+        ? (colRef.current?.getBoundingClientRect().width ?? 800)
+        : start.height;
+      const delta = horizontal ? deltaX : deltaY;
+      const dy = (delta / size) * start.total;
       setPanelSizes((sizes) => ({
         ...sizes,
         [topId]: Math.max(start.total * 0.05, start.top + dy),
@@ -122,32 +131,7 @@ function RowHandle({ topId, botId, colRef, sizeFor, setPanelSizes }: RowHandlePr
     },
   });
 
-  return <div className="pm-row-handle" onPointerDown={onPointerDown} />;
-}
-
-interface ColHandleProps {
-  colFr: number;
-  rowRef: RefObject<HTMLDivElement | null>;
-  setColFr: Dispatch<SetStateAction<number>>;
-}
-
-function ColHandle({ colFr, rowRef, setColFr }: ColHandleProps) {
-  const startRef = useRef({ width: 800, fraction: 0.5 });
-  const onPointerDown = usePointerDrag<HTMLDivElement>({
-    bodyClassName: "pm-resizing-col",
-    onStart: () => {
-      startRef.current = {
-        width: rowRef.current?.getBoundingClientRect().width ?? 800,
-        fraction: colFr,
-      };
-    },
-    onMove: ({ deltaX }) => {
-      const start = startRef.current;
-      setColFr(Math.max(0.1, Math.min(0.9, start.fraction + deltaX / start.width)));
-    },
-  });
-
-  return <div className="pm-col-handle" onPointerDown={onPointerDown} />;
+  return <div className={horizontal ? "pm-col-handle" : "pm-row-handle"} onPointerDown={onPointerDown} />;
 }
 
 // ── Panel selector dropdown ───────────────────────────────────────────────────
@@ -192,13 +176,12 @@ export function PanelManager({ contents, headerExtras, headerExtrasLeft, titleSu
 
   // Panel sizes as flex-grow values, keyed by panel ID (or "__top__" for the two-col section)
   const [panelSizes, setPanelSizes] = useState<Record<string, number>>({});
-  // Fraction [0.1, 0.9] for left column width in horizontal layout
-  const [colFr, setColFr] = useState(0.5);
+  const [dropPreview, setDropPreview] = useState<{
+    idx: number;
+    side: "before" | "after";
+    layout: "horizontal" | "vertical";
+  } | null>(null);
 
-  const outerRef   = useRef<HTMLDivElement>(null);
-  const rowRef     = useRef<HTMLDivElement>(null);
-  const leftColRef = useRef<HTMLDivElement>(null);
-  const rightColRef = useRef<HTMLDivElement>(null);
   const singleColRef = useRef<HTMLDivElement>(null);
 
   // ── Drag-to-reorder ───────────────────────────────────────────────────────
@@ -206,6 +189,7 @@ export function PanelManager({ contents, headerExtras, headerExtrasLeft, titleSu
     dragFromIdx = idx;
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/plain", String(idx));
+    setDropPreview(null);
     const el = (e.currentTarget as HTMLElement).closest(".pm-panel") as HTMLElement | null;
     if (el) setTimeout(() => el.classList.add("pm-panel--dragging"), 0);
   }, []);
@@ -221,46 +205,32 @@ export function PanelManager({ contents, headerExtras, headerExtrasLeft, titleSu
     const w = rect.width;
     const h = rect.height;
     
-    const isHorizontal = Math.min(x, w - x) < Math.min(y, h - y);
-
-    if (dragOverIdx !== idx) {
-      document.querySelectorAll<HTMLElement>(".pm-panel--drop-target")
-        .forEach((elem) => {
-          elem.classList.remove("pm-panel--drop-target", "pm-panel--drop-horizontal", "pm-panel--drop-vertical");
-        });
-      const panels = document.querySelectorAll<HTMLElement>(".pm-panel");
-      if (panels[idx]) panels[idx].classList.add("pm-panel--drop-target");
-      dragOverIdx = idx;
-    }
-    
-    const panels = document.querySelectorAll<HTMLElement>(".pm-panel");
-    if (panels[idx]) {
-      if (isHorizontal) {
-        panels[idx].classList.add("pm-panel--drop-horizontal");
-        panels[idx].classList.remove("pm-panel--drop-vertical");
-      } else {
-        panels[idx].classList.add("pm-panel--drop-vertical");
-        panels[idx].classList.remove("pm-panel--drop-horizontal");
-      }
-    }
-  }, []);
+    const edgeX = Math.min(x, w - x) / Math.max(1, w);
+    const edgeY = Math.min(y, h - y) / Math.max(1, h);
+    const layout = edgeX < 0.28 ? "horizontal" : edgeY < 0.28 ? "vertical" : panelLayout;
+    const side = layout === "horizontal"
+      ? (x < w / 2 ? "before" : "after")
+      : (y < h / 2 ? "before" : "after");
+    setDropPreview({ idx, side, layout });
+  }, [panelLayout]);
 
   const handleDrop = useCallback((e: React.DragEvent, idx: number) => {
     e.preventDefault();
-    const el = e.currentTarget as HTMLElement;
-    const isHorizontal = el.classList.contains("pm-panel--drop-horizontal");
-
     const from = dragFromIdx;
-    if (from >= 0 && from !== idx) {
+    const preview = dropPreview;
+    if (from >= 0 && from !== idx && preview) {
       const next = [...activePanels];
-      [next[from], next[idx]] = [next[idx], next[from]];
+      const [moved] = next.splice(from, 1);
+      let insertAt = preview.side === "after" ? idx + 1 : idx;
+      if (from < insertAt) insertAt -= 1;
+      next.splice(Math.max(0, Math.min(next.length, insertAt)), 0, moved);
       setActivePanels(next);
-      setPanelLayout(isHorizontal ? "horizontal" : "vertical");
+      setPanelLayout(preview.layout);
     }
-    clearDrag();
-  }, [activePanels, setActivePanels, setPanelLayout]);
+    clearDrag(setDropPreview);
+  }, [activePanels, dropPreview, setActivePanels, setPanelLayout]);
 
-  const handleDragEnd = useCallback(() => { clearDrag(); }, []);
+  const handleDragEnd = useCallback(() => { clearDrag(setDropPreview); }, []);
 
   const closePanel = useCallback((idx: number) => {
     setActivePanels(activePanels.filter((_, i) => i !== idx));
@@ -272,7 +242,6 @@ export function PanelManager({ contents, headerExtras, headerExtrasLeft, titleSu
   // ── Layout computation ────────────────────────────────────────────────────
   const n       = activePanels.length;
   const isHoriz = panelLayout === "horizontal" && n > 1;
-  const hasWide = isHoriz && n % 2 === 1 && n >= 3;
 
   // ── Panel renderer ────────────────────────────────────────────────────────
   const makePanel = (id: string, globalIdx: number, isTopRight: boolean, isSideBySide: boolean) => {
@@ -294,7 +263,16 @@ export function PanelManager({ contents, headerExtras, headerExtrasLeft, titleSu
         onDragOver={handleDragOver}
         onDrop={handleDrop}
         onDragEnd={handleDragEnd}
-        style={{ flexGrow: sz(id), flexShrink: 1, flexBasis: 0, minHeight: 0, overflow: "hidden" }}
+        dropSide={dropPreview?.idx === globalIdx ? dropPreview.side : undefined}
+        dropLayout={dropPreview?.idx === globalIdx ? dropPreview.layout : undefined}
+        style={{
+          flexGrow: sz(id),
+          flexShrink: 1,
+          flexBasis: 0,
+          minHeight: 0,
+          minWidth: isHoriz ? 220 : 0,
+          overflow: "hidden",
+        }}
       >
         <div className="pm-panel-content-wrap" style={{ display: id === "editor" || id === "preview" ? "flex" : undefined }}>
           {contents[id as PanelId]}
@@ -303,105 +281,33 @@ export function PanelManager({ contents, headerExtras, headerExtrasLeft, titleSu
     );
   };
 
-  // ── Single-column layout (vertical mode, or n=1) ──────────────────────────
-  if (!isHoriz) {
-    return (
-      <div className="pm-root">
-        <div ref={singleColRef} className="pm-flex-col">
-          {activePanels.map((id, i) => (
-            <Fragment key={id}>
-              {i > 0 && (
-                <RowHandle
-                  key={`h${i}`}
-                  topId={activePanels[i - 1]}
-                  botId={id}
-                  colRef={singleColRef}
-                  sizeFor={sz}
-                  setPanelSizes={setPanelSizes}
-                />
-              )}
-              {makePanel(id, i, i === 0, n === 1)}
-            </Fragment>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  // ── Horizontal layout ─────────────────────────────────────────────────────
-  const mainCount = hasWide ? n - 1 : n;
-  const leftIds   = activePanels.slice(0, mainCount).filter((_, i) => i % 2 === 0);
-  const rightIds  = activePanels.slice(0, mainCount).filter((_, i) => i % 2 === 1);
-  const wideId    = hasWide ? activePanels[n - 1] : null;
-
   return (
     <div className="pm-root">
-      <div ref={outerRef} className="pm-flex-col">
-        {/* Two-column section */}
-        <div
-          ref={rowRef}
-          className="pm-flex-row"
-          style={{ flexGrow: sz("__top__"), flexShrink: 1, flexBasis: 0, minHeight: 0 }}
-        >
-          {/* Left column */}
-          <div ref={leftColRef} className="pm-flex-col" style={{ flex: `${colFr} 1 0`, minWidth: 0, overflow: "hidden" }}>
-            {leftIds.map((id, i) => (
-              <Fragment key={id}>
-                {i > 0 && (
-                  <RowHandle
-                    key={`lh${i}`}
-                    topId={leftIds[i - 1]}
-                    botId={id}
-                    colRef={leftColRef}
-                    sizeFor={sz}
-                    setPanelSizes={setPanelSizes}
-                  />
-                )}
-                {makePanel(id, activePanels.indexOf(id), false, false)}
-              </Fragment>
-            ))}
-          </div>
-
-          {/* Column resize handle */}
-          <ColHandle colFr={colFr} rowRef={rowRef} setColFr={setColFr} />
-
-          {/* Right column */}
-          <div ref={rightColRef} className="pm-flex-col" style={{ flex: `${1 - colFr} 1 0`, minWidth: 0, overflow: "hidden" }}>
-            {rightIds.map((id, i) => (
-              <Fragment key={id}>
-                {i > 0 && (
-                  <RowHandle
-                    key={`rh${i}`}
-                    topId={rightIds[i - 1]}
-                    botId={id}
-                    colRef={rightColRef}
-                    sizeFor={sz}
-                    setPanelSizes={setPanelSizes}
-                  />
-                )}
-                {makePanel(id, activePanels.indexOf(id), i === 0, false)}
-              </Fragment>
-            ))}
-          </div>
-        </div>
-
-        {/* Wide panel at bottom (n=3 or n=5) */}
-        {wideId && (
-          <Fragment key={wideId}>
-            <RowHandle topId="__top__" botId={wideId} colRef={outerRef} sizeFor={sz} setPanelSizes={setPanelSizes} />
-            {makePanel(wideId, activePanels.indexOf(wideId), false, true)}
+      <div ref={singleColRef} className={isHoriz ? "pm-flex-row" : "pm-flex-col"}>
+        {activePanels.map((id, i) => (
+          <Fragment key={id}>
+            {i > 0 && (
+              <RowHandle
+                key={`handle${i}`}
+                topId={activePanels[i - 1]}
+                botId={id}
+                colRef={singleColRef}
+                sizeFor={sz}
+                setPanelSizes={setPanelSizes}
+                horizontal={isHoriz}
+              />
+            )}
+            {makePanel(id, i, i === 0, n === 1)}
           </Fragment>
-        )}
+        ))}
       </div>
     </div>
   );
 }
 
-function clearDrag() {
+function clearDrag(setDropPreview?: (preview: null) => void) {
+  setDropPreview?.(null);
   document.querySelectorAll<HTMLElement>(".pm-panel--dragging")
     .forEach((el) => el.classList.remove("pm-panel--dragging"));
-  document.querySelectorAll<HTMLElement>(".pm-panel--drop-target")
-    .forEach((el) => el.classList.remove("pm-panel--drop-target", "pm-panel--drop-horizontal", "pm-panel--drop-vertical"));
   dragFromIdx = -1;
-  dragOverIdx = -1;
 }
