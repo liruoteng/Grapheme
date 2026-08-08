@@ -12,9 +12,13 @@
   border: var(--border-hairline-medium);
   border-radius: var(--radius-floating);
   box-shadow: var(--shadow-floating);
-  transition: width 0.24s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.16s ease, border-color 0.16s ease;
+  /* Width changes are intentionally immediate: the main workspace can host
+     a PDF canvas or preview iframe, and animating both widths causes a costly
+     full layout pass on every frame. */
+  transition: box-shadow 0.16s ease, border-color 0.16s ease;
   overflow: hidden;
   backdrop-filter: blur(14px);
+  contain: layout paint;
 }
 .fsb--open {
   min-width: 160px;

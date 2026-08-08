@@ -67,7 +67,7 @@ function Panel({ id, idx, label, isTopRight, isSideBySide, titleSuffix, headerEx
     >
       <div
         className="pm-panel-header"
-        style={isTopRight ? { paddingRight: 48 } : undefined}
+        style={isTopRight ? { paddingRight: 56 } : undefined}
         draggable
         onDragStart={(e) => onDragStart(e, idx)}
         onDragEnd={onDragEnd}
@@ -282,7 +282,7 @@ export function PanelManager({ contents, headerExtras, headerExtrasLeft, titleSu
   };
 
   return (
-    <div className="pm-root">
+    <div className={`pm-root${n === 1 ? " pm-root--single" : ""}`}>
       <div ref={singleColRef} className={isHoriz ? "pm-flex-row" : "pm-flex-col"}>
         {activePanels.map((id, i) => (
           <Fragment key={id}>
@@ -297,7 +297,7 @@ export function PanelManager({ contents, headerExtras, headerExtrasLeft, titleSu
                 horizontal={isHoriz}
               />
             )}
-            {makePanel(id, i, i === 0, n === 1)}
+            {makePanel(id, i, isHoriz ? i === n - 1 : i === 0, n === 1)}
           </Fragment>
         ))}
       </div>

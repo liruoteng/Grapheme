@@ -9,6 +9,7 @@
 
 /* ── Root layout ── */
 .pdf-viewer-root {
+  contain: layout paint;
   display: flex;
   flex-direction: column;
   height: 100%;

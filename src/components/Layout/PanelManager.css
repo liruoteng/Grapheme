@@ -163,8 +163,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--bg-elevated);
@@ -343,6 +343,13 @@ body.pm-resizing-row * { cursor: row-resize !important; user-select: none !impor
   border-radius: 10px;
   margin: 2px;
   border: 1px solid var(--border);
+  /* Keep expensive canvas/iframe descendants from invalidating sibling panel
+     layout when the sidebar changes the available workspace width. */
+  contain: layout paint;
+}
+
+.pm-root--single .pm-panel {
+  margin-bottom: 0;
 }
 
 .pm-panel--dragging {

@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useEditorStore } from "../../stores/editorStore";
 import { logger } from "../../lib/logger";
@@ -90,7 +90,7 @@ export function FloatingSidebar({ onOpenFolder }: FloatingSidebarProps) {
 
   const toggle = useCallback(() => setSidebarOpen(!sidebarOpen), [sidebarOpen, setSidebarOpen]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const mobileQuery = window.matchMedia("(max-width: 640px)");
     const collapseOnMobile = () => {
       if (mobileQuery.matches) setSidebarOpen(false);
@@ -104,7 +104,7 @@ export function FloatingSidebar({ onOpenFolder }: FloatingSidebarProps) {
     };
   }, [setSidebarOpen]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const mobileQuery = window.matchMedia("(max-width: 640px)");
 
     const updateOffset = () => {

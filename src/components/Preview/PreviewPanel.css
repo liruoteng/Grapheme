@@ -1,4 +1,5 @@
 .preview-panel {
+  contain: layout paint;
   display: flex;
   flex-direction: row;
   height: 100%;

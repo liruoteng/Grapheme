@@ -179,14 +179,14 @@
   overflow: hidden;
   position: relative;
   padding-left: var(--fsb-content-offset, 56px);
-  transition: padding-left 0.24s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* ── Panel selector floating anchor (top-right, always visible) ──────────── */
 .panel-selector-anchor {
   position: absolute;
-  top: var(--space-2);
-  right: var(--space-2);
+  /* Keep the control inside the panel rather than on the window edge. */
+  top: 14px;
+  right: 10px;
   z-index: 300;
 }
 
@@ -199,6 +199,12 @@
   overflow: hidden;
   padding-top: var(--space-2);
   padding-bottom: var(--space-2);
+}
+
+/* A lone panel should reach the status bar. The bottom gutter is useful when
+   panels are stacked, but reads as an empty belt when there is no splitter. */
+.panel-area:has(.pm-root--single) {
+  padding-bottom: 0;
 }
 
 /* ── Layout dropdown ─────────────────────────────────────────────────────── */
