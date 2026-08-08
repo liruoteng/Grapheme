@@ -21,6 +21,7 @@ import {
   filterSlashCommands,
   type GraphemeSlashCommand,
 } from "../../lib/agent/slashCommands";
+import { loadWorkspaceAiContext } from "../../lib/agent/workspaceContext";
 import matrixLoaderSvg from "../../../matrix-loader-effect.svg?raw";
 import "./AIChatPanel.css";
 
@@ -94,6 +95,8 @@ const CLAUDE_MODELS = [
   { id: "claude-sonnet-4-6",         label: "Sonnet 4.6" },
   { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5" },
 ];
+
+const CODEX_MODELS = [{ id: "", label: "Default Codex model" }];
 
 type ActionEdit =
   | { kind: "replace_selection"; text: string }
@@ -287,6 +290,7 @@ export function AIChatPanel() {
   const setActiveChatSession  = useEditorStore((s) => s.setActiveChatSession);
   const updateChatSession     = useEditorStore((s) => s.updateChatSession);
   const updateSessionClaudeId = useEditorStore((s) => s.updateSessionClaudeId);
+  const updateSessionCodexId = useEditorStore((s) => s.updateSessionCodexId);
   const renameChatSession     = useEditorStore((s) => s.renameChatSession);
   const forkChatSession       = useEditorStore((s) => s.forkChatSession);
   const deleteChatSession     = useEditorStore((s) => s.deleteChatSession);
@@ -339,6 +343,7 @@ export function AIChatPanel() {
 
   // ── Provider settings ──────────────────────────────────────────────────
   const selectedText = useEditorStore((s) => s.selectedText);
+  const workspacePath = useEditorStore((s) => s.workspacePath);
   const activeTab = useActiveTab();
   const aiProvider   = useEditorStore((s) => s.aiProvider);
   const setAiProvider  = useEditorStore((s) => s.setAiProvider);
@@ -350,10 +355,13 @@ export function AIChatPanel() {
 
   // ── Check Claude CLI on mount ──────────────────────────────────────────
   useEffect(() => {
-    if (aiProvider === "claude-cli") {
-      invoke<string>("check_claude_cli")
+    if (aiProvider === "claude-cli" || aiProvider === "codex-cli") {
+      setCliStatus("checking");
+      invoke<string>(aiProvider === "codex-cli" ? "check_codex_cli" : "check_claude_cli")
         .then((s) => setCliStatus(s as "ready" | "not_found"))
         .catch(() => setCliStatus("not_found"));
+    } else {
+      setCliStatus("ready");
     }
   }, [aiProvider]);
 
@@ -462,6 +470,8 @@ export function AIChatPanel() {
   // ── Toolbar helpers ────────────────────────────────────────────────────
   const modelValue = aiProvider === "claude-cli"
     ? `claude-cli:${claudeModel}`
+    : aiProvider === "codex-cli"
+      ? "codex-cli:"
     : `ollama:${ollamaModel}`;
 
   const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -471,6 +481,9 @@ export function AIChatPanel() {
       setAiProvider("claude-cli");
       setClaudeModel(newModel);
       if (effort === "xhigh" && newModel !== "claude-opus-4-7") setEffort("high");
+    } else if (val.startsWith("codex-cli:")) {
+      setAiProvider("codex-cli");
+      if (effort === "xhigh") setEffort("high");
     } else if (val.startsWith("ollama:")) {
       setAiProvider("ollama");
       setOllamaModel(val.slice(7));
@@ -563,11 +576,13 @@ export function AIChatPanel() {
     setIsCiteMode(false);
     setCitationResults(null);
 
-    if (aiProvider === "claude-cli" && cliStatus !== "ready") {
+    if ((aiProvider === "claude-cli" || aiProvider === "codex-cli") && cliStatus !== "ready") {
       const msgs: AiMessage[] = [
         ...localMessages,
         { role: "user", content: trimmed },
-        { role: "assistant", content: "Claude CLI not found. Install it with: npm install -g @anthropic-ai/claude-code, then run `claude` to authenticate." },
+        { role: "assistant", content: aiProvider === "codex-cli"
+          ? "Codex CLI not found. Install Codex and run `codex login` to authenticate."
+          : "Claude CLI not found. Install it with: npm install -g @anthropic-ai/claude-code, then run `claude` to authenticate." },
       ];
       setLocalMessages(msgs);
       commitMessages(msgs);
@@ -575,6 +590,11 @@ export function AIChatPanel() {
     }
 
     let contextualContent = trimmed;
+    const workspaceContext = await loadWorkspaceAiContext(
+      workspacePath,
+      activeTab?.path ?? null,
+      activeTab?.content ?? null,
+    );
     if (isActionMode) {
       contextualContent =
         `${systemPrompt}\n\n` +
@@ -596,6 +616,9 @@ export function AIChatPanel() {
       }
     } else if (selectedText) {
       contextualContent += `\n\nSelected text:\n\`\`\`\n${selectedText}\n\`\`\``;
+    }
+    if (workspaceContext) {
+      contextualContent += `\n\n${workspaceContext}`;
     }
 
     const withUser: AiMessage[] = [...localMessages, { role: "user", content: trimmed, timestamp: Date.now() }];
@@ -633,7 +656,7 @@ export function AIChatPanel() {
           onChunk,
         });
       } else {
-        // Claude CLI: session-based, no need to replay history
+        // CLI providers are session-based, so history is resumed by the backend.
         const onChunk = new Channel<string>();
         onChunk.onmessage = (chunk: string) => {
           if (abortRef.current) return;
@@ -659,21 +682,32 @@ export function AIChatPanel() {
           }
         };
 
-        const returnedSessionId = await invoke<string | null>("stream_claude_cli", {
-          sessionId: activeSession?.claudeSessionId ?? null,
-          message: contextualContent,
-          system: activeSession?.claudeSessionId
-            ? ""
-            : systemPrompt,
-          model: claudeModel || null,
-          effort,
-          thinking,
-          onChunk,
-          onStatus,
-        });
+        const isCodex = aiProvider === "codex-cli";
+        const returnedSessionId = await invoke<string | null>(isCodex ? "stream_codex_cli" : "stream_claude_cli", isCodex
+          ? {
+              sessionId: activeSession?.codexSessionId ?? null,
+              message: contextualContent,
+              system: activeSession?.codexSessionId ? "" : systemPrompt,
+              model: null,
+              effort,
+              cwd: workspacePath ?? (activeTab?.path ? activeTab.path.split("/").slice(0, -1).join("/") || null : null),
+              onChunk,
+              onStatus,
+            }
+          : {
+              sessionId: activeSession?.claudeSessionId ?? null,
+              message: contextualContent,
+              system: activeSession?.claudeSessionId ? "" : systemPrompt,
+              model: claudeModel || null,
+              effort,
+              thinking,
+              onChunk,
+              onStatus,
+            });
 
         if (returnedSessionId && activeChatSessionId) {
-          updateSessionClaudeId(activeChatSessionId, returnedSessionId);
+          if (isCodex) updateSessionCodexId(activeChatSessionId, returnedSessionId);
+          else updateSessionClaudeId(activeChatSessionId, returnedSessionId);
         }
       }
 
@@ -925,13 +959,13 @@ export function AIChatPanel() {
   // ── Chat view ──────────────────────────────────────────────────────────
   return (
     <div className="ai-chat-panel">
-      {aiProvider === "claude-cli" && cliStatus !== "ready" && (
+      {(aiProvider === "claude-cli" || aiProvider === "codex-cli") && cliStatus !== "ready" && (
         <div className={`ai-cli-banner ai-cli-banner--${cliStatus}`}>
-          {cliStatus === "checking" ? "Checking Claude CLI…" : (
+          {cliStatus === "checking" ? `Checking ${aiProvider === "codex-cli" ? "Codex" : "Claude"} CLI…` : (
             <>
-              Claude CLI not found.{" "}
-              <a href="https://claude.ai/download" target="_blank" rel="noreferrer">Install Claude</a>
-              {" "}and run <code>claude</code> to log in.
+              {aiProvider === "codex-cli" ? "Codex CLI not found. Install Codex and run `codex login` to log in." : <>Claude CLI not found.{" "}
+                <a href="https://claude.ai/download" target="_blank" rel="noreferrer">Install Claude</a>
+                {" "}and run <code>claude</code> to log in.</>}
             </>
           )}
         </div>
@@ -1123,6 +1157,11 @@ export function AIChatPanel() {
               onChange={handleModelChange}
               title="Model"
             >
+              <optgroup label="Codex">
+                {CODEX_MODELS.map((m) => (
+                  <option key={m.id} value={`codex-cli:${m.id}`}>{m.label}</option>
+                ))}
+              </optgroup>
               <optgroup label="Claude">
                 {CLAUDE_MODELS.map((m) => (
                   <option key={m.id} value={`claude-cli:${m.id}`}>{m.label}</option>

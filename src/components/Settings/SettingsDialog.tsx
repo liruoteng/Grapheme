@@ -217,12 +217,18 @@ function AiSection() {
       <h2>AI</h2>
       <Row label="Provider">
         <select value={provider} onChange={(e) => setProvider(e.target.value as "claude-cli" | "ollama")}>
+          <option value="codex-cli">Codex (via Codex CLI)</option>
           <option value="claude-cli">Claude (via Claude CLI)</option>
           <option value="ollama">Ollama (local)</option>
         </select>
       </Row>
 
-      {provider === "claude-cli" && (
+        {provider === "codex-cli" && (
+          <Row label="Codex CLI" hint="Uses your Codex subscription through the local Codex CLI — no API key needed.">
+            <span className="settings-muted">Install Codex, then run <code>codex login</code>.</span>
+          </Row>
+        )}
+        {provider === "claude-cli" && (
         <Row label="Claude CLI" hint="Uses your Claude subscription — no API key needed.">
           <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
             Install: <code>npm install -g @anthropic-ai/claude-code</code>, then run <code>claude</code> to log in.

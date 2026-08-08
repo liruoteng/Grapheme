@@ -3,7 +3,7 @@ import type { LLMProvider, LLMStreamEvent, Message, Tools, JsonSchema } from "./
 import { DEFAULT_OLLAMA_URL } from "../constants";
 import { logger } from "../logger";
 
-export type AiProvider = "claude-cli" | "ollama";
+export type AiProvider = "claude-cli" | "codex-cli" | "ollama";
 
 export interface GraphemeProviderConfig {
   provider: AiProvider;
@@ -12,6 +12,7 @@ export interface GraphemeProviderConfig {
   ollamaUrl?: string;
   ollamaModel?: string;
   sessionId?: string | null;
+  cwd?: string;
   onSessionId?: (id: string) => void;
 }
 
@@ -130,6 +131,8 @@ export class GraphemeLLMProvider implements LLMProvider {
   ): AsyncGenerator<LLMStreamEvent> {
     if (this.config.provider === "ollama") {
       yield* this.chatOllama(messages, tools, systemPrompt, signal);
+    } else if (this.config.provider === "codex-cli") {
+      yield* this.chatCodexCli(messages, systemPrompt, signal);
     } else if (this.config.claudeApiKey) {
       yield* this.chatClaudeApi(messages, tools, systemPrompt, signal);
     } else {
@@ -279,6 +282,38 @@ export class GraphemeLLMProvider implements LLMProvider {
     }
 
     await invokePromise.catch(() => {});
+    yield { type: "done" };
+  }
+
+  private async *chatCodexCli(
+    messages: Message[],
+    systemPrompt: string,
+    signal?: AbortSignal,
+  ): AsyncGenerator<LLMStreamEvent> {
+    const lastUserMessage = [...messages].reverse().find((m) => m.role === "user");
+    const onChunk = new Channel<string>();
+    const queue: string[] = [];
+    let resolve: (() => void) | null = null;
+    let done = false;
+    onChunk.onmessage = (chunk) => { queue.push(chunk); resolve?.(); };
+    const onStatus = new Channel<string>();
+    onStatus.onmessage = () => {};
+    const request = invoke<string | null>("stream_codex_cli", {
+      sessionId: this.config.sessionId ?? null,
+      message: lastUserMessage?.content ?? "",
+      system: systemPrompt,
+      model: this.config.claudeModel ?? null,
+      effort: "medium",
+      cwd: this.config.cwd ?? null,
+      onChunk,
+      onStatus,
+    }).then((id) => { done = true; resolve?.(); if (id) this.config.onSessionId?.(id); });
+    while (!done || queue.length) {
+      if (signal?.aborted) { await invoke("cancel_ai_stream").catch(() => {}); break; }
+      if (queue.length) yield { type: "text_delta", text: queue.shift()! };
+      else await new Promise<void>((r) => { resolve = r; });
+    }
+    await request.catch(() => {});
     yield { type: "done" };
   }
 }

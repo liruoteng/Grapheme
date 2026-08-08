@@ -37,6 +37,7 @@ export interface AiChatSession {
   messages: AiMessage[];
   createdAt: number;
   claudeSessionId?: string; // CLI session for --resume
+  codexSessionId?: string; // Codex CLI thread for resume
 }
 
 /** A reference paper the user has added — local PDF, .bib entry, or link.
@@ -83,6 +84,7 @@ interface EditorState {
   setActiveChatSession: (id: string) => void;
   updateChatSession: (id: string, messages: AiMessage[]) => void;
   updateSessionClaudeId: (id: string, claudeSessionId: string) => void;
+  updateSessionCodexId: (id: string, codexSessionId: string) => void;
   renameChatSession: (id: string, title: string) => void;
   forkChatSession: (id: string) => void;
   deleteChatSession: (id: string) => void;
@@ -93,8 +95,8 @@ interface EditorState {
   documentOutline: OutlineItem[];
   setDocumentOutline: (outline: OutlineItem[]) => void;
   getAiContext: () => string;
-  aiProvider: "claude-cli" | "ollama";
-  setAiProvider: (p: "claude-cli" | "ollama") => void;
+  aiProvider: "claude-cli" | "codex-cli" | "ollama";
+  setAiProvider: (p: "claude-cli" | "codex-cli" | "ollama") => void;
   ollamaUrl: string;
   setOllamaUrl: (url: string) => void;
   ollamaModel: string;
@@ -302,6 +304,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set((s) => ({
       chatSessions: s.chatSessions.map((sess) =>
         sess.id !== id ? sess : { ...sess, claudeSessionId }
+      ),
+    }));
+    schedulePersist(get);
+  },
+  updateSessionCodexId: (id, codexSessionId) => {
+    set((s) => ({
+      chatSessions: s.chatSessions.map((sess) =>
+        sess.id !== id ? sess : { ...sess, codexSessionId }
       ),
     }));
     schedulePersist(get);
@@ -560,6 +570,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       if (typeof parsed.confirmOnClose === "boolean") patch.confirmOnClose = parsed.confirmOnClose;
       // Migrate old "claude" provider value to "claude-cli"
       if (parsed.aiProvider === "claude" || parsed.aiProvider === "claude-cli") patch.aiProvider = "claude-cli";
+      else if (parsed.aiProvider === "codex-cli") patch.aiProvider = "codex-cli";
       else if (parsed.aiProvider === "ollama") patch.aiProvider = "ollama";
       if (typeof parsed.ollamaUrl === "string") patch.ollamaUrl = parsed.ollamaUrl;
       if (typeof parsed.ollamaModel === "string") patch.ollamaModel = parsed.ollamaModel;

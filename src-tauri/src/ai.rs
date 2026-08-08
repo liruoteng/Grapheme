@@ -35,7 +35,13 @@ pub struct ChatMessage {
 
 fn extended_path() -> String {
     let current = std::env::var("PATH").unwrap_or_default();
-    let extras = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
+    let extras = [
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+        "/Applications/ChatGPT.app/Contents/Resources",
+    ];
     let mut parts: Vec<String> = extras
         .iter()
         .filter(|p| !current.contains(*p))
@@ -43,6 +49,130 @@ fn extended_path() -> String {
         .collect();
     parts.push(current);
     parts.join(":")
+}
+
+#[tauri::command]
+pub async fn check_codex_cli() -> String {
+    let ok = TokioCommand::new("codex")
+        .arg("--version")
+        .env("PATH", extended_path())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if ok {
+        "ready".to_string()
+    } else {
+        "not_found".to_string()
+    }
+}
+
+/// Run Codex through its authenticated local CLI. This deliberately uses a
+/// read-only sandbox: the AI panel is a writing assistant, not a code agent.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn stream_codex_cli(
+    session_id: Option<String>,
+    message: String,
+    system: String,
+    model: Option<String>,
+    effort: Option<String>,
+    cwd: Option<String>,
+    on_chunk: Channel<String>,
+    on_status: Channel<String>,
+    cancel: tauri::State<'_, AiCancelFlag>,
+) -> Result<Option<String>, String> {
+    cancel.0.store(false, Ordering::Relaxed);
+    let mut cmd = TokioCommand::new("codex");
+    cmd.env("PATH", extended_path());
+
+    if let Some(ref sid) = session_id {
+        cmd.args(["exec", "resume", sid, "--all"]);
+    } else {
+        cmd.args(["exec", "--sandbox", "read-only", "--skip-git-repo-check"]);
+        if let Some(ref dir) = cwd {
+            cmd.args(["--cd", dir]);
+        }
+    }
+    cmd.arg("--json");
+    if let Some(ref m) = model.filter(|m| !m.is_empty()) {
+        cmd.args(["--model", m]);
+    }
+
+    let prompt = if system.is_empty() {
+        message
+    } else {
+        format!("System instructions:\n{system}\n\nUser request:\n{message}")
+    };
+    cmd.arg(prompt)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = cmd.spawn().map_err(|e| {
+        format!("Codex CLI not found: {e}. Install Codex and run `codex login` to authenticate.")
+    })?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Codex CLI stdout unavailable".to_string())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "Codex CLI stderr unavailable".to_string())?;
+    let stderr_task = tokio::spawn(async move {
+        let mut out = String::new();
+        BufReader::new(stderr).read_to_string(&mut out).await.ok();
+        out
+    });
+
+    let mut lines = BufReader::new(stdout).lines();
+    let mut thread_id = None;
+    while let Some(line) = lines.next_line().await.map_err(|e| e.to_string())? {
+        if cancel.0.load(Ordering::Relaxed) {
+            let _ = child.kill().await;
+            return Err("cancelled".to_string());
+        }
+        let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        match event["type"].as_str() {
+            Some("thread.started") => {
+                thread_id = event["thread_id"].as_str().map(str::to_string);
+            }
+            Some("item.completed") => {
+                if event["item"]["type"].as_str() == Some("agent_message") {
+                    if let Some(text) = event["item"]["text"].as_str() {
+                        on_chunk.send(text.to_string()).map_err(|e| e.to_string())?;
+                    }
+                }
+            }
+            Some("item.started") if event["item"]["type"].as_str() == Some("reasoning") => {
+                let _ = on_status.send("Codex is thinking…".to_string());
+            }
+            Some("turn.failed") | Some("error") => {
+                let msg = event["error"]["message"]
+                    .as_str()
+                    .or_else(|| event["message"].as_str())
+                    .unwrap_or("Codex CLI returned an error");
+                return Err(msg.to_string());
+            }
+            _ => {}
+        }
+    }
+    let status = child.wait().await.map_err(|e| e.to_string())?;
+    let stderr_output = stderr_task.await.unwrap_or_default();
+    if !status.success() {
+        return Err(if stderr_output.trim().is_empty() {
+            "Codex CLI failed. Make sure Codex is installed and authenticated with `codex login`."
+                .to_string()
+        } else {
+            stderr_output.trim().to_string()
+        });
+    }
+    let _ = effort; // Reserved until the installed CLI exposes a stable effort flag.
+    Ok(thread_id)
 }
 
 #[tauri::command]
