@@ -32,6 +32,7 @@ import { SelectionToolbar } from "./SelectionToolbar";
 import { copyImageFilesToAssets } from "../../lib/utils";
 import { logger } from "../../lib/logger";
 import { getActiveDragSource } from "../FileExplorer/fileDrag";
+import { PANEL_DRAG_MIME } from "../Layout/PanelManager";
 import { linkClickPlugin } from "./linkClickPlugin";
 import { imageViewPlugin } from "./imageView";
 import { typewriterPlugin } from "./typewriterPlugin";
@@ -675,12 +676,14 @@ function WritingModeEditorInner({ path, initialContent, externalContent, onSave,
         };
 
         const onDragOver = (e: DragEvent) => {
+            if (e.dataTransfer?.types.includes(PANEL_DRAG_MIME)) return;
             if (e.dataTransfer?.types.includes("Files") || getActiveDragSource()) {
                 e.preventDefault();
             }
         };
 
         const onDrop = (e: DragEvent) => {
+            if (e.dataTransfer?.types.includes(PANEL_DRAG_MIME)) return;
             const workspacePath = useEditorStore.getState().workspacePath;
             if (!workspacePath) return;
 

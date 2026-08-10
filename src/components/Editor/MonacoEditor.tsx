@@ -6,6 +6,7 @@ import { useEditorStore } from "../../stores/editorStore";
 import { useLspClient } from "../../hooks/useLspClient";
 import { SlashMenu, type SlashCommand } from "./SlashMenu";
 import { copyImageFilesToAssets, extractOutline } from "../../lib/utils";
+import { PANEL_DRAG_MIME } from "../Layout/PanelManager";
 import { logger } from "../../lib/logger";
 import "./MonacoEditor.css";
 
@@ -614,12 +615,14 @@ export function MonacoEditor({ onSave, onSnapshot, onNewFile, onPreviewTrigger, 
     if (!domNode) return;
 
     const onNativeDragOver = (e: DragEvent) => {
+      if (e.dataTransfer?.types.includes(PANEL_DRAG_MIME)) return;
       if (e.dataTransfer?.types.includes("Files")) {
         e.preventDefault();
       }
     };
 
     const onNativeDrop = (e: DragEvent) => {
+      if (e.dataTransfer?.types.includes(PANEL_DRAG_MIME)) return;
       const files = Array.from(e.dataTransfer?.files ?? []);
       const imageFiles = files.filter((f) => f.type.startsWith("image/"));
       if (imageFiles.length === 0) return;

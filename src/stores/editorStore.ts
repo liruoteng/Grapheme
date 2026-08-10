@@ -185,6 +185,8 @@ interface EditorState {
   setEditorMinimap: (v: boolean) => void;
   editorLineNumbers: boolean;
   setEditorLineNumbers: (v: boolean) => void;
+  markdownCodeLineNumbers: boolean;
+  setMarkdownCodeLineNumbers: (v: boolean) => void;
   typewriterMode: boolean;
   setTypewriterMode: (v: boolean) => void;
   editorWidth: number;
@@ -262,6 +264,7 @@ const PERSISTED_KEYS = [
   "editorWordWrap",
   "editorMinimap",
   "editorLineNumbers",
+  "markdownCodeLineNumbers",
   "typewriterMode",
   "useSidecarPreview",
   "defaultPreviewZoom",
@@ -671,6 +674,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setEditorMinimap: (v) => { set({ editorMinimap: v }); schedulePersist(get); },
   editorLineNumbers: true,
   setEditorLineNumbers: (v) => { set({ editorLineNumbers: v }); schedulePersist(get); },
+  markdownCodeLineNumbers: true,
+  setMarkdownCodeLineNumbers: (v) => { set({ markdownCodeLineNumbers: v }); schedulePersist(get); },
   typewriterMode: false,
   setTypewriterMode: (v) => { set({ typewriterMode: v }); schedulePersist(get); },
   editorWidth: 960,
@@ -702,6 +707,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       if (typeof parsed.editorWordWrap === "boolean") patch.editorWordWrap = parsed.editorWordWrap;
       if (typeof parsed.editorMinimap === "boolean") patch.editorMinimap = parsed.editorMinimap;
       if (typeof parsed.editorLineNumbers === "boolean") patch.editorLineNumbers = parsed.editorLineNumbers;
+      if (typeof parsed.markdownCodeLineNumbers === "boolean") patch.markdownCodeLineNumbers = parsed.markdownCodeLineNumbers;
       if (typeof parsed.typewriterMode === "boolean") patch.typewriterMode = parsed.typewriterMode;
       if (typeof parsed.editorWidth === "number") patch.editorWidth = parsed.editorWidth;
       if (typeof parsed.useSidecarPreview === "boolean") patch.useSidecarPreview = parsed.useSidecarPreview;

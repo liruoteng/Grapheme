@@ -6,6 +6,7 @@ import { ALL_PANELS, type PanelId } from "./panelDefinitions";
 import "./PanelManager.css";
 
 export type { PanelId };
+export const PANEL_DRAG_MIME = "application/x-grapheme-panel";
 
 export interface PanelContents {
   ai:      ReactNode;
@@ -62,15 +63,29 @@ function Panel({ id, idx, label, isTopRight, isSideBySide, titleSuffix, headerEx
       data-id={id}
       data-idx={idx}
       style={style}
-      onDragOver={(e) => onDragOver(e, idx)}
-      onDrop={(e) => onDrop(e, idx)}
+      onDragOver={(e) => {
+        if (!e.dataTransfer.types.includes(PANEL_DRAG_MIME)) return;
+        e.stopPropagation();
+        onDragOver(e, idx);
+      }}
+      onDrop={(e) => {
+        if (!e.dataTransfer.types.includes(PANEL_DRAG_MIME)) return;
+        e.stopPropagation();
+        onDrop(e, idx);
+      }}
     >
       <div
         className="pm-panel-header"
         style={isTopRight ? { paddingRight: 56 } : undefined}
         draggable
-        onDragStart={(e) => onDragStart(e, idx)}
-        onDragEnd={onDragEnd}
+        onDragStart={(e) => {
+          e.stopPropagation();
+          onDragStart(e, idx);
+        }}
+        onDragEnd={(e) => {
+          e.stopPropagation();
+          onDragEnd(e);
+        }}
       >
         <div className="pm-panel-header-left">
           {headerExtraLeft}
@@ -189,7 +204,7 @@ export function PanelManager({ contents, headerExtras, headerExtrasLeft, titleSu
   const handleDragStart = useCallback((e: React.DragEvent, idx: number) => {
     dragFromIdx = idx;
     e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", String(idx));
+    e.dataTransfer.setData(PANEL_DRAG_MIME, String(idx));
     dropPreviewRef.current = null;
     setDropPreview(null);
     const el = (e.currentTarget as HTMLElement).closest(".pm-panel") as HTMLElement | null;

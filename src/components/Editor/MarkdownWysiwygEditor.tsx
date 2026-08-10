@@ -29,6 +29,7 @@ import type { DecorationSet } from "@codemirror/view";
 import { useEditorStore, type Reference } from "../../stores/editorStore";
 import { copyImageFilesToAssets } from "../../lib/utils";
 import { getActiveDragSource } from "../FileExplorer/fileDrag";
+import { PANEL_DRAG_MIME } from "../Layout/PanelManager";
 import { SlashMenu, type SlashCommand } from "./SlashMenu";
 import { codeBlockLanguages } from "./codeBlockLanguages";
 import {
@@ -72,6 +73,7 @@ type MarkdownDecorationBuildOptions = {
   suppressActiveInline?: boolean;
   allowDefaultCursor?: boolean;
   selectionOverride?: { from: number; to: number };
+  showCodeLineNumbers?: boolean;
 };
 
 type InlineRange = {
@@ -387,6 +389,39 @@ function inlineMarkerActive(markers: InlineRange[], cursorFrom: number, cursorTo
 function rangeActive(range: InlineRange, cursorFrom: number, cursorTo: number, selectionEmpty: boolean) {
   if (!selectionEmpty) return cursorFrom === range.from && cursorTo === range.to;
   return cursorTo >= range.from && cursorFrom <= range.to;
+}
+
+function continueMarkdownList(view: EditorView) {
+  const selection = view.state.selection.main;
+  if (!selection.empty) return false;
+
+  const line = view.state.doc.lineAt(selection.head);
+  if (codeBlockAt(view.state, line.number)) return false;
+  const beforeCursor = line.text.slice(0, selection.head - line.from);
+  const match = beforeCursor.match(/^(\s*)([-*+])(\s+)(.*)$/)
+    ?? beforeCursor.match(/^(\s*)(\d+\.)(\s+)(.*)$/);
+  if (!match) return false;
+
+  const [, indent, marker, spacing, content] = match;
+  if (content.trim() === "") {
+    view.dispatch({
+      changes: { from: line.from, to: selection.head, insert: indent },
+      selection: EditorSelection.cursor(line.from + indent.length),
+      scrollIntoView: true,
+    });
+    return true;
+  }
+
+  const nextMarker = /^\d+\.$/.test(marker)
+    ? `${Number.parseInt(marker, 10) + 1}.`
+    : marker;
+  const continuation = `\n${indent}${nextMarker}${spacing}`;
+  view.dispatch({
+    changes: { from: selection.head, insert: continuation },
+    selection: EditorSelection.cursor(selection.head + continuation.length),
+    scrollIntoView: true,
+  });
+  return true;
 }
 
 function escaped(text: string, index: number) {
@@ -2892,6 +2927,28 @@ class CodeBlockActionsWidget extends WidgetType {
   }
 }
 
+class CodeLineNumberWidget extends WidgetType {
+  constructor(private readonly number: number) {
+    super();
+  }
+
+  eq(other: CodeLineNumberWidget) {
+    return this.number === other.number;
+  }
+
+  toDOM() {
+    const span = document.createElement("span");
+    span.className = "cm-md-code-line-number";
+    span.textContent = String(this.number);
+    span.setAttribute("aria-hidden", "true");
+    return span;
+  }
+
+  ignoreEvent() {
+    return true;
+  }
+}
+
 class ListMarkerWidget extends WidgetType {
   constructor(
     private readonly kind: "bullet" | "ordered",
@@ -3417,6 +3474,7 @@ function buildMarkdownDecorations(state: EditorState, options: MarkdownDecoratio
   const selectionEmpty = selection.from === selection.to;
   const doc = state.doc;
   const enableCodeSyntaxHighlighting = doc.length <= codeSyntaxHighlightMaxDocLength;
+  const showCodeLineNumbers = options.showCodeLineNumbers ?? true;
   const frontmatter = frontmatterAtTop(state);
   const tableSourceEditRange = state.field(tableSourceEditRangeField, false);
   const imageSourceEditRange = state.field(imageSourceEditRangeField, false);
@@ -3490,7 +3548,11 @@ function buildMarkdownDecorations(state: EditorState, options: MarkdownDecoratio
 
     const codeBlock = codeBlockAt(state, line.number);
     if (codeBlock) {
-      const activeCodeBlock = showActiveInline && selectionEmpty && cursorTo >= codeBlock.from && cursorFrom <= codeBlock.to;
+      // Keep the source text available whenever a mouse/keyboard selection
+      // intersects the block. The old empty-cursor-only check left fenced
+      // code hidden while dragging across it, making the text impossible to
+      // select or copy.
+      const activeCodeBlock = cursorTo >= codeBlock.from && cursorFrom <= codeBlock.to;
       const lastCodeLineNumber = doc.lineAt(codeBlock.to).number;
 
       for (let codeLineNumber = line.number; codeLineNumber <= lastCodeLineNumber; codeLineNumber += 1) {
@@ -3523,6 +3585,15 @@ function buildMarkdownDecorations(state: EditorState, options: MarkdownDecoratio
         }
         if (!isFenceLine && enableCodeSyntaxHighlighting) {
           addSyntax(codeLine.text, codeLine.from, codeBlock.language);
+        }
+        if (showCodeLineNumbers && !isFenceLine) {
+          pushLayout({
+            from: codeLine.from,
+            to: codeLine.from,
+            point: true,
+            side: -1,
+            widget: new CodeLineNumberWidget(codeLineNumber - line.number),
+          });
         }
       }
 
@@ -3768,6 +3839,17 @@ function buildMarkdownDecorations(state: EditorState, options: MarkdownDecoratio
   return decorationRangesToSet(ranges);
 }
 
+const setCodeBlockLineNumbersEffect = StateEffect.define<boolean>();
+const codeBlockLineNumbersField = StateField.define<boolean>({
+  create: () => true,
+  update(value, transaction) {
+    for (const effect of transaction.effects) {
+      if (effect.is(setCodeBlockLineNumbersEffect)) return effect.value;
+    }
+    return value;
+  },
+});
+
 function buildMarkdownImageAtomicRanges(state: EditorState) {
   const ranges: Range<Decoration>[] = [];
   const doc = state.doc;
@@ -3803,7 +3885,7 @@ function markdownWysiwygDecorations(
   isMarkdownSyntaxRevealed?: () => boolean,
 ): Extension {
   const decorationField = StateField.define<DecorationSet>({
-    create: (state) => buildMarkdownDecorations(state, { includeInline: false }),
+    create: (state) => buildMarkdownDecorations(state, { includeInline: false, showCodeLineNumbers: state.field(codeBlockLineNumbersField) }),
     update(value, transaction) {
       if (transaction.docChanged) {
         const dirtyRanges = layoutDirtyRangesForTransaction(transaction);
@@ -3812,6 +3894,7 @@ function markdownWysiwygDecorations(
         const additions = buildMarkdownDecorations(transaction.state, {
           includeInline: false,
           ranges: dirtyRanges,
+          showCodeLineNumbers: transaction.state.field(codeBlockLineNumbersField),
         });
         const additionRanges: Range<Decoration>[] = [];
         const cursor = additions.iter();
@@ -3829,12 +3912,14 @@ function markdownWysiwygDecorations(
 
       if (
         transaction.effects.some((effect) => effect.is(revealMarkdownSyntaxEffect)) ||
-        (transaction.selection && !isPointerSelectionActive?.())
+        transaction.effects.some((effect) => effect.is(setCodeBlockLineNumbersEffect)) ||
+        transaction.selection
       ) {
         return buildMarkdownDecorations(transaction.state, {
           includeInline: false,
           suppressActiveInline: isPointerSelectionActive?.(),
           allowDefaultCursor: isMarkdownSyntaxRevealed?.(),
+          showCodeLineNumbers: transaction.state.field(codeBlockLineNumbersField),
         });
       }
       return value;
@@ -3848,10 +3933,11 @@ function markdownWysiwygDecorations(
       ranges: view.visibleRanges,
       selectionOverride: pointerSelectionOverride?.() ?? undefined,
       allowDefaultCursor: isMarkdownSyntaxRevealed?.(),
+      showCodeLineNumbers: view.state.field(codeBlockLineNumbersField),
     })
   );
 
-  return [decorationField, inlineDecorations, markdownImageAtomicRangeField];
+  return [codeBlockLineNumbersField, decorationField, inlineDecorations, markdownImageAtomicRangeField];
 }
 
 function revealMarkdownSyntax(view: EditorView) {
@@ -3956,6 +4042,7 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
   const editorWidth = useEditorStore((s) => s.editorWidth);
   const editorMdFont = useEditorStore((s) => s.editorMdFont);
   const appTheme = useEditorStore((s) => s.theme);
+  const markdownCodeLineNumbers = useEditorStore((s) => s.markdownCodeLineNumbers);
   const activeTabPath = useEditorStore((s) => s.activeTabPath);
   const updateTabContent = useEditorStore((s) => s.updateTabContent);
   const [editorFile, setEditorFile] = useState<{ path: string; content: string } | null>(() => {
@@ -4182,6 +4269,10 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
         },
       },
       {
+        key: "Enter",
+        run: continueMarkdownList,
+      },
+      {
         key: "Backspace",
         run: (view) => deleteImageAtCursor(view, "backward"),
       },
@@ -4270,6 +4361,7 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
         return true;
       },
       dragover(event) {
+        if (event.dataTransfer?.types.includes(PANEL_DRAG_MIME)) return false;
         if (event.dataTransfer?.types.includes("Files") || getActiveDragSource()) {
           event.preventDefault();
           return true;
@@ -4277,6 +4369,7 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
         return false;
       },
       drop(event, view) {
+        if (event.dataTransfer?.types.includes(PANEL_DRAG_MIME)) return false;
         const workspacePath = useEditorStore.getState().workspacePath;
         if (!workspacePath) return false;
 
@@ -4382,6 +4475,10 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
       })),
     });
   }, [editorFontSize, editorMdFont]);
+
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: setCodeBlockLineNumbersEffect.of(markdownCodeLineNumbers) });
+  }, [markdownCodeLineNumbers]);
 
   useEffect(() => {
     if (!externalContent || !viewRef.current) return;

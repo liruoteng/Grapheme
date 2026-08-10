@@ -12,6 +12,7 @@ import {
   RefreshCw,
   FolderOpen,
   Circle,
+  ListOrdered,
 } from "lucide-react";
 import { useEditorStore } from "../../stores/editorStore";
 import type { AppTheme, SidebarTab } from "../../stores/editorStore";
@@ -56,6 +57,8 @@ export function Toolbar({ onExportPdf, onConvertToTypst, sidebarOpen, onToggleSi
   const setTheme = useEditorStore((s) => s.setTheme);
   const writingMode = useEditorStore((s) => s.writingMode);
   const setWritingMode = useEditorStore((s) => s.setWritingMode);
+  const markdownCodeLineNumbers = useEditorStore((s) => s.markdownCodeLineNumbers);
+  const setMarkdownCodeLineNumbers = useEditorStore((s) => s.setMarkdownCodeLineNumbers);
 
   const isMd = (activeTabPath?.endsWith(".md") || activeTabPath?.endsWith(".markdown")) ?? false;
   const isTypst = (activeTabPath?.endsWith(".typ") ?? false) || isMd;
@@ -94,6 +97,16 @@ export function Toolbar({ onExportPdf, onConvertToTypst, sidebarOpen, onToggleSi
 
       <div className="toolbar-right">
         {isDirty && <span className="dirty-badge" title="Unsaved changes"><Circle size={10} fill="currentColor" /></span>}
+        {isMd && (
+          <button
+            className={`toolbar-btn-icon${markdownCodeLineNumbers ? " toolbar-btn-icon--active" : ""}`}
+            onClick={() => setMarkdownCodeLineNumbers(!markdownCodeLineNumbers)}
+            title={markdownCodeLineNumbers ? "Hide fenced code line numbers" : "Show fenced code line numbers"}
+            aria-label={markdownCodeLineNumbers ? "Hide fenced code line numbers" : "Show fenced code line numbers"}
+          >
+            <ListOrdered size={14} />
+          </button>
+        )}
         {isMd && (
           <button
             className="toolbar-btn-icon toolbar-btn-icon--text"
