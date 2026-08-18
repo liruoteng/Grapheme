@@ -344,6 +344,7 @@ function PDFPage({ pdf, pageNumber, scale, onCitationClick, pageRef }: PDFPagePr
     if (!page || !canvasRef.current || !textLayerRef.current) return;
     let active = true;
     let textLayer: pdfjsLib.TextLayer | null = null;
+    const textLayerDiv = textLayerRef.current;
 
     const render = async () => {
       const dpr = window.devicePixelRatio || 1;
@@ -361,7 +362,6 @@ function PDFPage({ pdf, pageNumber, scale, onCitationClick, pageRef }: PDFPagePr
       await page.render({ canvas, viewport }).promise;
       if (!active) return;
 
-      const textLayerDiv = textLayerRef.current!;
       // Keep pdf.js' text-layer DOM intact. Replacing span.innerHTML here makes
       // the browser treat the rendered text as a nested, synthetic text tree,
       // which produces broken drag selection (especially across columns).

@@ -9,7 +9,9 @@
 
 /* ── Root layout ── */
 .pdf-viewer-root {
-  contain: layout paint;
+  /* Keep layout containment, but do not paint-contain the text layer: native
+     selection highlights need prompt invalidation while dragging. */
+  contain: layout;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -153,6 +155,7 @@
   /* The canvas paints the page; this layer supplies the selectable text. */
   opacity: 1;
   pointer-events: auto;
+  -webkit-user-select: text;
   user-select: text;
   /* css vars needed by pdf.js TextLayer class */
   --total-scale-factor: var(--pdf-scale, 1);
