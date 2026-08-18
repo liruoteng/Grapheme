@@ -140,15 +140,19 @@
 .textLayer {
   position: absolute;
   inset: 0;
-  overflow: hidden;
+  overflow: clip;
   line-height: 1;
   text-size-adjust: none;
+  text-align: initial;
   transform-origin: 0 0;
+  caret-color: CanvasText;
   z-index: 0;
-  /* invisible but selectable; citations override below */
-  opacity: 0.2;
-  pointer-events: none;
+  /* The canvas paints the page; this layer supplies the selectable text. */
+  opacity: 1;
+  pointer-events: auto;
+  user-select: text;
   /* css vars needed by pdf.js TextLayer class */
+  --total-scale-factor: var(--pdf-scale, 1);
   --min-font-size: 1;
   --text-scale-factor: calc(var(--total-scale-factor, 1) * var(--min-font-size));
   --min-font-size-inv: calc(1 / var(--min-font-size));
@@ -160,7 +164,15 @@
   white-space: pre;
   cursor: text;
   transform-origin: 0% 0%;
-  pointer-events: all;
+  pointer-events: auto;
+}
+
+.textLayer ::selection {
+  background: rgba(45, 110, 220, 0.35);
+}
+
+.textLayer br::selection {
+  background: transparent;
 }
 
 .textLayer > :not(.markedContent),
@@ -189,6 +201,8 @@
   pointer-events: all;
   border-bottom: 1px solid rgba(200, 180, 0, 0.7);
   border-radius: 2px;
+  -webkit-user-select: text;
+  user-select: text;
 }
 .pdf-citation-highlight:hover {
   background-color: rgba(255, 220, 0, 0.7);

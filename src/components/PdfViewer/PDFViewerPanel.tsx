@@ -362,10 +362,14 @@ function PDFPage({ pdf, pageNumber, scale, onCitationClick, pageRef }: PDFPagePr
       if (!active) return;
 
       const textLayerDiv = textLayerRef.current!;
-      textLayerDiv.innerHTML = "";
+      // Keep pdf.js' text-layer DOM intact. Replacing span.innerHTML here makes
+      // the browser treat the rendered text as a nested, synthetic text tree,
+      // which produces broken drag selection (especially across columns).
+      textLayerDiv.replaceChildren();
 
       // Text layer must use CSS-pixel viewport (not the dpr-scaled one)
       const cssViewport = page.getViewport({ scale });
+      textLayerDiv.style.setProperty("--total-scale-factor", String(scale));
       textLayer = new pdfjsLib.TextLayer({
         textContentSource: page.streamTextContent(),
         container: textLayerDiv,
@@ -375,22 +379,11 @@ function PDFPage({ pdf, pageNumber, scale, onCitationClick, pageRef }: PDFPagePr
       await textLayer.render();
       if (!active) return;
 
-      // Highlight citation patterns like [1], [2-4], [1, 2]
+      // Mark citation spans without rewriting their contents. Native selection
+      // relies on the exact text nodes created by pdf.js.
       textLayerDiv.querySelectorAll("span").forEach((span) => {
-        const text = span.innerText;
-        const replaced = text.replace(
-          /(\[[\d\s,-]+\])/g,
-          (m) => `<span class="pdf-citation-highlight">${m}</span>`
-        );
-        if (replaced !== text) {
-          span.innerHTML = replaced;
-          span.querySelectorAll<HTMLElement>(".pdf-citation-highlight").forEach((h) => {
-            h.addEventListener("click", (e) => {
-              e.stopPropagation();
-              const rect = (e.target as Element).getBoundingClientRect();
-              onCitationClick(rect.left, rect.bottom + 8, h.textContent ?? "");
-            });
-          });
+        if (/^\s*\[[\d\s,-]+\][.,;:]?\s*$/.test(span.textContent ?? "")) {
+          span.classList.add("pdf-citation-highlight");
         }
       });
     };
@@ -408,7 +401,21 @@ function PDFPage({ pdf, pageNumber, scale, onCitationClick, pageRef }: PDFPagePr
   return (
     <div className="pdf-page-wrapper" data-page={pageNumber} ref={pageRef}>
       <canvas ref={canvasRef} />
-      <div ref={textLayerRef} className="textLayer pdf-text-layer" />
+      <div
+        ref={textLayerRef}
+        className="textLayer pdf-text-layer"
+        onClick={(event) => {
+          // A click after a drag is also a click event. Do not open a citation
+          // popup or disturb the user's selection in that case.
+          if (!window.getSelection()?.isCollapsed) return;
+          const target = (event.target as HTMLElement).closest<HTMLSpanElement>(
+            "span.pdf-citation-highlight",
+          );
+          if (!target) return;
+          const rect = target.getBoundingClientRect();
+          onCitationClick(rect.left, rect.bottom + 8, target.textContent ?? "");
+        }}
+      />
     </div>
   );
 }
