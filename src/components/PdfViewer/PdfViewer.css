@@ -88,7 +88,7 @@
   flex: 1;
   overflow: auto;
   display: flex;
-  justify-content: center;
+  justify-content: flex-start;
   align-items: flex-start;
   padding: 20px;
   background: #3a3a3a;
@@ -112,6 +112,7 @@
 }
 
 .pdf-canvas-area canvas {
+  margin-inline: auto;
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
   background: #fff;
   display: block;
