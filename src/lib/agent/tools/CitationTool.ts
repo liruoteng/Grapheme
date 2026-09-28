@@ -29,7 +29,7 @@ interface CitationResult {
   message?: string;
 }
 
-const citationStore = new Map<string, CitationEntry>();
+const citationStores = new Map<string, Map<string, CitationEntry>>();
 
 function generateBibKey(authors: string[], year: number): string {
   const firstAuthor = authors[0] ?? "unknown";
@@ -82,7 +82,8 @@ export const CitationTool = buildTool<CitationInput, CitationResult>({
     required: ["action"],
   },
   isReadOnly: (input) => input.action === "list" || input.action === "format",
-  async call(input) {
+  async call(input, context) {
+    const citationStore = getCitationStore(context.paperId);
     switch (input.action) {
       case "add": {
         if (!input.title || !input.authors?.length || !input.year) {
@@ -142,5 +143,11 @@ export const CitationTool = buildTool<CitationInput, CitationResult>({
 });
 
 export function clearCitationStore(): void {
-  citationStore.clear();
+  citationStores.clear();
+}
+
+export function getCitationStore(paperId = "default"): Map<string, CitationEntry> {
+  let state = citationStores.get(paperId);
+  if (!state) { state = new Map(); citationStores.set(paperId, state); }
+  return state;
 }

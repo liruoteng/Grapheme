@@ -373,6 +373,20 @@ export function MonacoEditor({ onSave, onSnapshot, onNewFile, onPreviewTrigger, 
     setScrollToLine(null);
   }, [scrollToLine, setScrollToLine]);
 
+  // Capture source offsets before an asynchronous agent edit starts.
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const editor = editorRef.current;
+      const model = editor?.getModel();
+      const selection = editor?.getSelection();
+      if (!model || !selection) return;
+      const { capture } = (event as CustomEvent<{ capture: (range: { from: number; to: number }) => void }>).detail;
+      capture({ from: model.getOffsetAt(selection.getStartPosition()), to: model.getOffsetAt(selection.getEndPosition()) });
+    };
+    window.addEventListener("editor:capture-selection", handler);
+    return () => window.removeEventListener("editor:capture-selection", handler);
+  }, []);
+
   // Insert text at cursor position when AI panel dispatches editor:insert
   useEffect(() => {
     const handler = (e: Event) => {

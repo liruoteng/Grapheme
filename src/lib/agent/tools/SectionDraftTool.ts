@@ -28,7 +28,7 @@ interface SectionResult {
   message?: string;
 }
 
-const sectionStore = new Map<string, Section>();
+const sectionStores = new Map<string, Map<string, Section>>();
 
 function generateId(): string {
   return `sec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -71,7 +71,8 @@ export const SectionDraftTool = buildTool<SectionDraftInput, SectionResult>({
     required: ["action"],
   },
   isReadOnly: (input) => input.action === "get" || input.action === "list",
-  async call(input) {
+  async call(input, context) {
+    const sectionStore = getSectionStore(context.paperId);
     switch (input.action) {
       case "create": {
         if (!input.title) {
@@ -161,9 +162,11 @@ export const SectionDraftTool = buildTool<SectionDraftInput, SectionResult>({
 });
 
 export function clearSectionStore(): void {
-  sectionStore.clear();
+  sectionStores.clear();
 }
 
-export function getSectionStore(): Map<string, Section> {
-  return sectionStore;
+export function getSectionStore(paperId = "default"): Map<string, Section> {
+  let state = sectionStores.get(paperId);
+  if (!state) { state = new Map(); sectionStores.set(paperId, state); }
+  return state;
 }

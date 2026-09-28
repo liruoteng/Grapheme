@@ -1,10 +1,14 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::{Read, Write};
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use tauri::Manager;
 use tauri::State;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+use tauri_plugin_fs::FsExt;
+use tauri_plugin_opener::OpenerExt;
 
 use crate::converter;
 use crate::AppState;
@@ -18,7 +22,14 @@ pub(crate) fn approved_path(state: &State<'_, AppState>, path: &str) -> Result<P
 }
 
 #[tauri::command]
-pub fn set_workspace_root(path: String, state: State<'_, AppState>) -> Result<(), String> {
+pub fn set_workspace_root(
+    path: String,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    if !app.fs_scope().is_allowed(&path) && approved_path(&state, &path).is_err() {
+        return Err("Choose the workspace using the native folder picker first".into());
+    }
     state
         .path_policy
         .lock()
@@ -27,12 +38,65 @@ pub fn set_workspace_root(path: String, state: State<'_, AppState>) -> Result<()
 }
 
 #[tauri::command]
-pub fn approve_path(path: String, state: State<'_, AppState>) -> Result<(), String> {
+pub async fn approve_path(
+    path: String,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let canonical = crate::path_policy::canonicalize_for_access(Path::new(&path))?;
+    if !app.fs_scope().is_allowed(&canonical) && approved_path(&state, &path).is_err() {
+        // Renderer code cannot grant itself access. Paths not selected through
+        // a native picker require confirmation outside the webview.
+        let dialog_app = app.clone();
+        let message = format!(
+            "Allow Grapheme to read and write {}?\n\n{}",
+            if canonical.is_dir() {
+                "this folder and its contents"
+            } else {
+                "this file"
+            },
+            canonical.display()
+        );
+        let allowed = tauri::async_runtime::spawn_blocking(move || {
+            dialog_app
+                .dialog()
+                .message(message)
+                .title("Approve file access")
+                .kind(MessageDialogKind::Warning)
+                .buttons(MessageDialogButtons::OkCancel)
+                .blocking_show()
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+        if !allowed {
+            return Err("File access was not approved".into());
+        }
+    }
+    let scope = app.asset_protocol_scope();
+    if canonical.is_dir() {
+        scope
+            .allow_directory(&canonical, true)
+            .map_err(|e| e.to_string())?;
+    } else {
+        scope.allow_file(&canonical).map_err(|e| e.to_string())?;
+    }
     state
         .path_policy
         .lock()
         .map_err(|_| "filesystem policy lock poisoned".to_string())?
-        .approve(Path::new(&path))
+        .approve(&canonical)
+}
+
+#[tauri::command]
+pub fn open_approved_path(
+    path: String,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let path = approved_path(&state, &path)?;
+    app.opener()
+        .open_path(path.to_string_lossy(), None::<&str>)
+        .map_err(|e| e.to_string())
 }
 
 #[derive(Serialize)]
@@ -71,9 +135,33 @@ pub fn file_stat(path: String, state: State<'_, AppState>) -> Result<FileStat, S
 }
 
 #[tauri::command]
-pub fn read_file(path: String, state: State<'_, AppState>) -> Result<String, String> {
+pub fn read_file(
+    path: String,
+    max_bytes: Option<usize>,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
     let path = approved_path(&state, &path)?;
-    fs::read_to_string(path).map_err(|e| e.to_string())
+    read_text(&path, max_bytes)
+}
+
+fn read_text(path: &Path, max_bytes: Option<usize>) -> Result<String, String> {
+    let Some(limit) = max_bytes else {
+        return fs::read_to_string(path).map_err(|e| e.to_string());
+    };
+    let mut bytes = Vec::new();
+    fs::File::open(path)
+        .map_err(|e| e.to_string())?
+        .take(limit.min(1_048_576) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    match std::str::from_utf8(&bytes) {
+        Ok(text) => Ok(text.to_string()),
+        Err(error) if error.error_len().is_none() => {
+            // A byte limit can end inside a multibyte code point.
+            Ok(String::from_utf8_lossy(&bytes[..error.valid_up_to()]).into_owned())
+        }
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 #[tauri::command]
@@ -103,16 +191,23 @@ pub fn write_file_bytes(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let path = approved_path(&state, &path)?;
-    if path.exists() {
-        return Err(format!("Destination already exists: {}", path.display()));
-    }
-    fs::write(path, bytes).map_err(|e| e.to_string())
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|e| e.to_string())?;
+    file.write_all(&bytes).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn create_file(path: String, state: State<'_, AppState>) -> Result<(), String> {
     let path = approved_path(&state, &path)?;
-    fs::write(path, "").map_err(|e| e.to_string())
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -188,20 +283,37 @@ pub fn search_in_files(
         return Err("Not a directory".to_string());
     }
     let query_lower = query.to_lowercase();
+    if query_lower.is_empty() {
+        return Ok(results);
+    }
     search_dir(&root, &root, &query_lower, &mut results)?;
     Ok(results)
 }
 
 fn search_dir(
-    _base: &Path,
+    base: &Path,
     dir: &Path,
     query: &str,
     results: &mut Vec<SearchMatch>,
 ) -> Result<(), String> {
     let entries = fs::read_dir(dir).map_err(|e| e.to_string())?;
     for entry in entries {
+        if results.len() >= 200 {
+            break;
+        }
         let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path();
+        // Do not follow workspace symlinks into private files or directory cycles.
+        if entry.file_type().map_err(|e| e.to_string())?.is_symlink() {
+            continue;
+        }
+        if !path
+            .canonicalize()
+            .map_err(|e| e.to_string())?
+            .starts_with(base)
+        {
+            continue;
+        }
 
         if let Some(name) = path.file_name() {
             let name = name.to_string_lossy();
@@ -218,7 +330,7 @@ fn search_dir(
         }
 
         if path.is_dir() {
-            let _ = search_dir(_base, &path, query, results);
+            let _ = search_dir(base, &path, query, results);
         } else if path.is_file() {
             if let Ok(meta) = path.metadata() {
                 if meta.len() > 1_048_576 {
@@ -228,11 +340,11 @@ fn search_dir(
             if let Ok(content) = fs::read_to_string(&path) {
                 for (i, line) in content.lines().enumerate() {
                     if line.to_lowercase().contains(query) {
-                        let line_content = if line.len() > 200 {
-                            format!("{}…", &line[..200])
-                        } else {
-                            line.to_string()
-                        };
+                        let mut chars = line.chars();
+                        let mut line_content: String = chars.by_ref().take(200).collect();
+                        if chars.next().is_some() {
+                            line_content.push('…');
+                        }
                         results.push(SearchMatch {
                             path: path.to_string_lossy().to_string(),
                             line: i + 1,
@@ -251,7 +363,7 @@ fn search_dir(
 
 #[tauri::command]
 pub fn path_exists(path: String, state: State<'_, AppState>) -> Result<bool, String> {
-    Ok(approved_path(&state, &path).is_ok())
+    Ok(approved_path(&state, &path)?.exists())
 }
 
 #[tauri::command]
@@ -306,10 +418,19 @@ pub fn delete_path(path: String, state: State<'_, AppState>) -> Result<(), Strin
 }
 
 fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+    if dst.starts_with(src) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Cannot copy a folder into itself",
+        ));
+    }
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
         let entry = entry?;
         let ty = entry.file_type()?;
+        if ty.is_symlink() {
+            continue;
+        }
         let src_child = entry.path();
         let dst_child = dst.join(entry.file_name());
         if ty.is_dir() {
@@ -378,7 +499,7 @@ fn workspace_sessions_path(
             workspace.display()
         ));
     }
-    Ok(workspace.join(".grapheme").join("sessions.json"))
+    crate::path_policy::confined_path(&workspace, Path::new(".grapheme/sessions.json"))
 }
 
 #[tauri::command]
@@ -490,6 +611,59 @@ pub async fn fetch_doi(doi: String) -> Result<serde_json::Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_text_reads_keep_unicode_intact() {
+        let path = std::env::temp_dir().join("grapheme_bounded_text_read.md");
+        fs::write(&path, "A你好 followed by more text").unwrap();
+        assert_eq!(read_text(&path, Some(5)).unwrap(), "A你");
+        assert_eq!(read_text(&path, Some(0)).unwrap(), "");
+        assert_eq!(
+            read_text(&path, None).unwrap(),
+            "A你好 followed by more text"
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn search_truncates_unicode_and_enforces_a_global_result_limit() {
+        let dir = std::env::temp_dir().join("grapheme_search_unicode_limit");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("nested")).unwrap();
+        let line = "你好🌍".repeat(150);
+        fs::write(dir.join("nested/one.md"), format!("{line}\n").repeat(220)).unwrap();
+        fs::write(dir.join("two.md"), format!("{line}\n").repeat(220)).unwrap();
+        let dir = dir.canonicalize().unwrap();
+        let mut results = Vec::new();
+        search_dir(&dir, &dir, "你好", &mut results).unwrap();
+        assert_eq!(results.len(), 200);
+        assert!(results
+            .iter()
+            .all(|result| result.line_content.chars().count() == 201));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn search_and_copy_do_not_follow_workspace_symlinks() {
+        let base = std::env::temp_dir().join("grapheme_search_copy_symlinks");
+        let workspace = base.join("workspace");
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(base.join("secret.txt"), "secret").unwrap();
+        fs::write(workspace.join("visible.md"), "visible").unwrap();
+        std::os::unix::fs::symlink(base.join("secret.txt"), workspace.join("linked.md")).unwrap();
+        std::os::unix::fs::symlink(&workspace, workspace.join("cycle")).unwrap();
+        let root = workspace.canonicalize().unwrap();
+        let mut results = Vec::new();
+        search_dir(&root, &root, "secret", &mut results).unwrap();
+        assert!(results.is_empty());
+        assert!(copy_dir_recursive(&root, &root.join("child")).is_err());
+        copy_dir_recursive(&root, &base.join("copy")).unwrap();
+        assert!(!base.join("copy/linked.md").exists());
+        assert!(base.join("copy/visible.md").exists());
+        let _ = fs::remove_dir_all(base);
+    }
 
     #[test]
     fn list_dir_sorts_dirs_before_files_then_alphabetically() {

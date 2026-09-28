@@ -381,8 +381,8 @@ export function ReferencesPanel() {
   const openPdf = useCallback(async (ref: Reference) => {
     if (!ref.path) return;
     try {
-      const { openPath } = await import("@tauri-apps/plugin-opener");
-      await openPath(ref.path);
+      await invoke("approve_path", { path: ref.path });
+      await invoke("open_approved_path", { path: ref.path });
     } catch (e) {
       logger.error("openPath failed", e);
     }

@@ -1,4 +1,5 @@
-import { QueryEngine, type QueryEvent, type QueryResult } from "./QueryEngine";
+import { QueryEngine, type QueryEngineConfig, type QueryEvent, type QueryResult } from "./QueryEngine";
+import { getAgentForWorkflow } from "./agents";
 import {
   getCoordinatorSystemPrompt,
   getPhasePrompt,
@@ -11,14 +12,17 @@ export interface PaperEngineConfig {
   provider: LLMProvider;
   paper: PaperState;
   customInstructions?: string;
+  requestPermission?: QueryEngineConfig["requestPermission"];
 }
 
 export class PaperEngine {
   private queryEngine: QueryEngine;
   private paper: PaperState;
+  private config: PaperEngineConfig;
 
   constructor(config: PaperEngineConfig) {
     this.paper = config.paper;
+    this.config = config;
 
     const systemPrompt = buildSystemPrompt(config);
     const tools = getToolsForCurrentPhase(config.paper.phase);
@@ -28,6 +32,9 @@ export class PaperEngine {
       tools,
       systemPrompt,
       maxTurns: 30,
+      context: { paperId: config.paper.id },
+      agent: agentForPaper(config.paper),
+      requestPermission: config.requestPermission,
     });
   }
 
@@ -42,7 +49,16 @@ export class PaperEngine {
   }
 
   updatePaper(paper: PaperState): void {
+    this.queryEngine.interrupt();
+    if (this.paper.id !== paper.id) this.queryEngine.clearMessages();
     this.paper = paper;
+    this.config = { ...this.config, paper };
+    this.queryEngine.updateConfig({
+      tools: getToolsForCurrentPhase(paper.phase),
+      systemPrompt: buildSystemPrompt(this.config),
+      context: { paperId: paper.id },
+      agent: agentForPaper(paper),
+    });
   }
 
   interrupt(): void {
@@ -54,8 +70,13 @@ export class PaperEngine {
   }
 
   clearHistory(): void {
+    this.queryEngine.interrupt();
     this.queryEngine.clearMessages();
   }
+}
+
+function agentForPaper(paper: PaperState) {
+  return getAgentForWorkflow(paper.phase === "reviewing" ? "review" : paper.phase === "research" ? "research" : "general");
 }
 
 function buildSystemPrompt(config: PaperEngineConfig): string {

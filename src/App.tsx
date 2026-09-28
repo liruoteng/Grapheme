@@ -18,8 +18,12 @@ import { StatusBar } from "./components/Layout/StatusBar";
 import { FloatingSidebar } from "./components/Layout/FloatingSidebar";
 import { PanelManager } from "./components/Layout/PanelManager";
 import { ALL_PANELS, type PanelId } from "./components/Layout/panelDefinitions";
-import { MonacoEditor } from "./components/Editor/MonacoEditor";
-import { MarkdownWysiwygEditor } from "./components/Editor/MarkdownWysiwygEditor";
+const MonacoEditor = lazy(async () => {
+  await import("./components/Editor/monacoSetup");
+  const module = await import("./components/Editor/MonacoEditor");
+  return { default: module.MonacoEditor };
+});
+const MarkdownWysiwygEditor = lazy(() => import("./components/Editor/MarkdownWysiwygEditor").then((module) => ({ default: module.MarkdownWysiwygEditor })));
 import { SidecarPreviewPanel } from "./components/Preview/SidecarPreviewPanel";
 import { TableOfContents } from "./components/Preview/TableOfContents";
 import { HistoryPanel } from "./components/FileHistory/HistoryPanel";
@@ -36,9 +40,11 @@ import { useFilePolling } from "./hooks/useFilePolling";
 import { useMenuListeners } from "./hooks/useMenuListeners";
 import { markProfilerDuration } from "./lib/performanceProfiler";
 import { isTauriRuntime } from "./lib/tauriRuntime";
+import { writeDocument } from "./lib/documentWrites";
 import { Toaster } from "./components/ui/sonner";
 import { toast } from "sonner";
 import "./App.css";
+import "./components/Editor/MonacoEditor.css";
 
 export default function App() {
   const markTabClean = useEditorStore((s) => s.markTabClean);
@@ -194,11 +200,10 @@ export default function App() {
       if (!destPath) return;
 
       await invoke("approve_path", { path: destPath });
-      await invoke("write_file", { path: tab.path, contents: tab.content });
-      markTabClean(tab.path);
+      await writeDocument(tab.path, tab.content);
+      markTabClean(tab.path, tab.content);
       const outputPath = await invoke<string>("export_pdf", { path: tab.path, destPath });
-      const { openPath } = await import("@tauri-apps/plugin-opener");
-      await openPath(outputPath);
+      await invoke("open_approved_path", { path: outputPath });
     } catch (e) {
       logger.error("export PDF error", e);
       toast.error("Failed to export PDF");
@@ -247,7 +252,7 @@ export default function App() {
         });
         if (!destPath) return;
         await invoke("approve_path", { path: destPath });
-        await invoke("write_file", { path: destPath, contents: content });
+        await writeDocument(destPath, content);
         markPathJustWritten(destPath);
         const name = destPath.split("/").pop() ?? destPath;
         const store = useEditorStore.getState();
@@ -265,9 +270,9 @@ export default function App() {
       return;
     }
     try {
-      await invoke("write_file", { path, contents: content });
+      await writeDocument(path, content);
       markPathJustWritten(path);
-      markTabClean(path);
+      markTabClean(path, content);
       setSaveEvent((prev) => ({ path, n: (prev?.n ?? 0) + 1 }));
 
       // Auto-save: snapshot at most once every 5 minutes per file
@@ -439,17 +444,26 @@ export default function App() {
               }}
               contents={{
                 ai: <ErrorBoundary name="AI Chat"><Suspense fallback={<div className="pm-placeholder">Loading...</div>}><AIChatPanel /></Suspense></ErrorBoundary>,
-                editor: isMdFile && !mdSourceMode ? (
+                editor: !activeTabPath ? (
+                  <div className="editor-empty"><div className="editor-empty-message">
+                    <p>Open a file to start editing</p>
+                    <p className="editor-empty-hint">Use the file explorer or click "Open Folder"</p>
+                    <button className="editor-empty-new-btn" onClick={() => handleNewFile()}>+ New File</button>
+                  </div></div>
+                ) : isMdFile && !mdSourceMode ? (
                   <ErrorBoundary name="Markdown Editor">
+                    <Suspense fallback={<div className="pm-placeholder">Loading editor…</div>}>
                     <MarkdownWysiwygEditor
                       onSave={handleSave}
                       onSnapshot={handleSnapshot}
                       onPreviewTrigger={handlePreviewTrigger}
                       externalContent={restoreState ?? undefined}
                     />
+                    </Suspense>
                   </ErrorBoundary>
                 ) : (
                   <ErrorBoundary name="Source Editor">
+                    <Suspense fallback={<div className="pm-placeholder">Loading editor…</div>}>
                     <MonacoEditor
                       onSave={handleSave}
                       onSnapshot={handleSnapshot}
@@ -457,6 +471,7 @@ export default function App() {
                       onPreviewTrigger={handlePreviewTrigger}
                       externalContent={restoreState ?? undefined}
                     />
+                    </Suspense>
                   </ErrorBoundary>
                 ),
                 preview: <ErrorBoundary name="Preview"><PreviewBody /></ErrorBoundary>,
@@ -724,8 +739,8 @@ const PreviewPanelControls = memo(function PreviewPanelControls({
     }
 
     try {
-      await invoke("write_file", { path: tab.path, contents: tab.content });
-      useEditorStore.getState().markTabClean(tab.path);
+      await writeDocument(tab.path, tab.content);
+      useEditorStore.getState().markTabClean(tab.path, tab.content);
       const { setPreviewLoading, setPreviewError } = useEditorStore.getState();
       if (tabIsMd) {
         await invoke("write_preview_sidecar_content", { path: tab.path, content: tab.content });

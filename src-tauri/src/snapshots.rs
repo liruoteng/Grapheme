@@ -4,6 +4,7 @@ use std::path::Path;
 use tauri::State;
 
 use crate::commands::approved_path;
+use crate::path_policy::confined_path;
 use crate::AppState;
 
 #[derive(Serialize)]
@@ -33,7 +34,7 @@ fn save_snapshot_impl(src: &Path) -> Result<(), String> {
         .map(|e| e.to_string_lossy().to_string())
         .unwrap_or_default();
 
-    let history_dir = parent.join(".history").join(&stem);
+    let history_dir = confined_path(parent, &Path::new(".history").join(&stem))?;
     fs::create_dir_all(&history_dir).map_err(|e| e.to_string())?;
 
     let secs = std::time::SystemTime::now()
@@ -45,7 +46,8 @@ fn save_snapshot_impl(src: &Path) -> Result<(), String> {
     } else {
         format!("{secs}.{ext}")
     };
-    fs::copy(src, history_dir.join(&filename)).map_err(|e| e.to_string())?;
+    let destination = confined_path(&history_dir, Path::new(&filename))?;
+    fs::copy(src, destination).map_err(|e| e.to_string())?;
 
     let mut files: Vec<_> = fs::read_dir(&history_dir)
         .map_err(|e| e.to_string())?
@@ -77,7 +79,7 @@ fn list_snapshots_impl(src: &Path) -> Result<Vec<SnapshotEntry>, String> {
         .unwrap_or_default()
         .to_string_lossy()
         .to_string();
-    let history_dir = parent.join(".history").join(&stem);
+    let history_dir = confined_path(parent, &Path::new(".history").join(&stem))?;
 
     if !history_dir.exists() {
         return Ok(vec![]);

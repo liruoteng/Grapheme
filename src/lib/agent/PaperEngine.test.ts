@@ -1,6 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { PaperEngine } from "./PaperEngine";
+import { clearAllToolState } from "./tools";
+import { getSectionStore } from "./tools/SectionDraftTool";
 import type { LLMProvider, LLMStreamEvent, PaperState } from "./types";
+
+afterEach(clearAllToolState);
 
 function makePaper(overrides: Partial<PaperState> = {}): PaperState {
   return {
@@ -41,6 +45,64 @@ async function drain(gen: AsyncGenerator<unknown>): Promise<unknown> {
 }
 
 describe("PaperEngine", () => {
+  it("refreshes instructions and available tools when the phase changes", async () => {
+    const calls: { prompt: string; tools: string[] }[] = [];
+    const provider: LLMProvider = {
+      async *chat(_messages, tools, prompt) {
+        calls.push({ prompt, tools: tools.map((tool) => tool.name) });
+        yield { type: "text_delta", text: "ok" };
+      },
+    };
+    const engine = new PaperEngine({ provider, paper: makePaper({ phase: "research" }) });
+    await drain(engine.chat("Find evidence"));
+    engine.updatePaper(makePaper({ phase: "polishing", title: "Updated title" }));
+    await drain(engine.chat("Polish"));
+    expect(calls[0].tools).toContain("LiteratureSearch");
+    expect(calls[1].tools).toEqual(["SectionDraft"]);
+    expect(calls[1].prompt).toContain("Updated title");
+    expect(calls[1].prompt).toContain("**Phase**: polishing");
+  });
+
+  it("requires write approval and never lets the reviewer mutate a paper", async () => {
+    let calls = 0;
+    const provider: LLMProvider = {
+      async *chat() {
+        if (calls++ % 2 === 0) yield {
+          type: "tool_call",
+          toolCall: { id: "call", name: "SectionDraft", input: { action: "create", sectionId: "intro", title: "Introduction" } },
+        };
+        else yield { type: "text_delta", text: "done" };
+      },
+    };
+    const approve = vi.fn().mockResolvedValue(true);
+    const engine = new PaperEngine({ provider, paper: makePaper(), requestPermission: approve });
+    await drain(engine.chat("Draft intro"));
+    expect(approve).toHaveBeenCalledOnce();
+    expect(getSectionStore("p1").has("intro")).toBe(true);
+    engine.updatePaper(makePaper({ id: "p2", phase: "reviewing" }));
+    expect(engine.getMessages()).toEqual([]);
+    await drain(engine.chat("Review"));
+    expect(approve).toHaveBeenCalledOnce();
+    expect(getSectionStore("p2").size).toBe(0);
+    expect(engine.getMessages().find((message) => message.role === "tool")?.content).toContain("not allowed");
+  });
+
+  it("does not append old tool results after switching papers mid-response", async () => {
+    const provider: LLMProvider = {
+      async *chat() {
+        yield { type: "tool_call", toolCall: { id: "call", name: "SectionDraft", input: { action: "list" } } };
+      },
+    };
+    const engine = new PaperEngine({ provider, paper: makePaper() });
+    const response = engine.chat("List sections");
+    let event = await response.next();
+    while (!event.done && event.value.type !== "tool_call_result") event = await response.next();
+    expect(event.done).toBe(false);
+    engine.updatePaper(makePaper({ id: "p2" }));
+    await expect(response.next()).rejects.toThrow();
+    expect(engine.getMessages()).toEqual([]);
+  });
+
   it("creates without error", () => {
     const engine = new PaperEngine({
       provider: makeProvider(),

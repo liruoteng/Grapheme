@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, type ReactNode } from "react";
+import { useState, useRef, useEffect, useCallback, memo, type ReactNode } from "react";
 import { invoke, Channel } from "@tauri-apps/api/core";
 import {
   BookOpen,
@@ -9,7 +9,7 @@ import {
   ShieldCheck,
   X,
 } from "lucide-react";
-import { normalizeWorkspacePath, useEditorStore, useActiveTab, type AiMessage } from "../../stores/editorStore";
+import { normalizeWorkspacePath, useEditorStore, type AiMessage } from "../../stores/editorStore";
 import {
   getAcademicWorkflowPrompt,
   getGraphemeActionSystemPrompt,
@@ -90,7 +90,19 @@ type ActionEdit =
 interface AccessRequest {
   message: string;
   paths: string[];
+  sessionId: string;
+  workspacePath: string | null;
 }
+
+interface ChatRequest {
+  sessionId: string;
+  controller: AbortController;
+  messages: AiMessage[];
+  flush: () => void;
+  providerStarted: boolean;
+}
+
+const EMPTY_MESSAGES: AiMessage[] = [];
 
 function extractAbsolutePaths(text: string): string[] {
   const matches = text.match(/(?:\/(?:Users|private|tmp|Volumes)\/[^\s"'<>]+|[A-Za-z]:\\[^\s"'<>]+)/g) ?? [];
@@ -192,7 +204,7 @@ function renderInlineMarkdownWithBreaks(text: string, keyPrefix: string) {
   ]);
 }
 
-function MarkdownMessage({ content }: { content: string }) {
+const MarkdownMessage = memo(function MarkdownMessage({ content }: { content: string }) {
   const lines = content.replace(/\r\n/g, "\n").split("\n");
   const blocks: ReactNode[] = [];
 
@@ -281,6 +293,12 @@ function MarkdownMessage({ content }: { content: string }) {
       paragraphLines.push(lines[i]);
       i += 1;
     }
+    // An incomplete fence or heading can look like a block start without
+    // matching its full grammar. Always consume it, including while streaming.
+    if (paragraphLines.length === 0) {
+      paragraphLines.push(lines[i]);
+      i += 1;
+    }
     blocks.push(
       <p key={`p-${i}`}>
         {renderInlineMarkdownWithBreaks(paragraphLines.join("\n"), `p-${i}`)}
@@ -289,7 +307,7 @@ function MarkdownMessage({ content }: { content: string }) {
   }
 
   return <div className="ai-chat-markdown">{blocks}</div>;
-}
+});
 
 export function AIChatPanel() {
   // ── Sessions from store ────────────────────────────────────────────────
@@ -311,7 +329,7 @@ export function AIChatPanel() {
 
   const currentWorkspace = normalizeWorkspacePath(workspacePath);
   const isCurrentWorkspaceSession = (session: { workspacePath?: string | null }) =>
-    currentWorkspace !== null && normalizeWorkspacePath(session.workspacePath) === currentWorkspace;
+    normalizeWorkspacePath(session.workspacePath) === currentWorkspace;
   const workspaceSessions = chatSessions.filter(isCurrentWorkspaceSession);
   const activeSession = workspaceSessions.find((s) => s.id === activeChatSessionId) ?? null;
   const matrixLoaderUrl = theme === "dark" ? matrixLoaderDarkUrl : matrixLoaderLightUrl;
@@ -323,11 +341,10 @@ export function AIChatPanel() {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [cliStatus, setCliStatus] = useState<"checking" | "ready" | "not_found">("checking");
-  // Local messages: mirrors active session + live streaming turn
-  const [localMessages, setLocalMessages] = useState<AiMessage[]>(activeSession?.messages ?? []);
+  // The session store is authoritative, including when a hidden conversation streams.
+  const localMessages = activeSession?.messages ?? EMPTY_MESSAGES;
   const [input, setInput] = useState("");
   const [slashCommandIndex, setSlashCommandIndex] = useState(0);
-  const [loadingSessionId, setLoadingSessionId] = useState<string | null>(null);
   const [thinkingHint, setThinkingHint] = useState<string | null>(null);
   const [thinkingSeconds, setThinkingSeconds] = useState(0);
   const [contextTokens, setContextTokens] = useState<{ used: number; window: number } | null>(null);
@@ -340,18 +357,10 @@ export function AIChatPanel() {
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const savedInputRef = useRef("");
-  const requestStartRef = useRef(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const abortRef = useRef<boolean>(false);
-  const localMessagesRef = useRef(localMessages);
-  localMessagesRef.current = localMessages;
-  // Loading belongs to a request/session, not to the panel instance. The
-  // history view can temporarily replace the composer while a request keeps
-  // running; a request from another session must not leave the newly selected
-  // composer disabled when history is closed.
-  const isStreamActive =
-    (loadingSessionId !== null && loadingSessionId === activeChatSessionId) ||
-    streamingChatSessionId === activeChatSessionId;
+  const requestRef = useRef<ChatRequest | null>(null);
+  const isStreamActive = activeChatSessionId !== null && streamingChatSessionId === activeChatSessionId;
+  const isAnotherSessionStreaming = streamingChatSessionId !== null && !isStreamActive;
 
   // ── Toolbar state ──────────────────────────────────────────────────────
   const [effort, setEffort] = useState<Effort>("medium");
@@ -375,7 +384,6 @@ export function AIChatPanel() {
   const selectedText = useEditorStore((s) => s.selectedText);
   const aiApprovedPaths = useEditorStore((s) => s.aiApprovedPaths);
   const addAiApprovedPath = useEditorStore((s) => s.addAiApprovedPath);
-  const activeTab = useActiveTab();
   const aiProvider   = useEditorStore((s) => s.aiProvider);
   const setAiProvider  = useEditorStore((s) => s.setAiProvider);
   const ollamaUrl      = useEditorStore((s) => s.ollamaUrl);
@@ -468,13 +476,15 @@ export function AIChatPanel() {
       .catch(() => setOllamaModels([]));
   }, [ollamaUrl]);
 
-  // Sync local messages when active session changes (panel switch or session switch)
   useEffect(() => {
-    setLocalMessages(activeSession?.messages ?? []);
     setCitationResults(null);
     setIsCiteMode(false);
     setHistoryIndex(-1);
-  }, [activeChatSessionId, currentWorkspace]); // eslint-disable-line react-hooks/exhaustive-deps
+    setAccessRequest(null);
+    setAccessError(null);
+    setThinkingHint(null);
+    setInput("");
+  }, [activeChatSessionId, currentWorkspace]);
 
   useEffect(() => {
     // API usage belongs to a specific conversation/provider/model. Never
@@ -483,23 +493,18 @@ export function AIChatPanel() {
     setRequestContextTokens(0);
   }, [activeChatSessionId, aiProvider, codexModel, currentWorkspace]);
 
-  // Commit local messages back to the store when streaming finishes or on unmount
-  const commitMessages = useCallback((msgs: AiMessage[], options?: { deleteIfEmpty?: boolean }) => {
-    if (!activeChatSessionId) return;
-    if (msgs.length === 0) {
-      if (options?.deleteIfEmpty !== false) deleteChatSession(activeChatSessionId);
-    } else {
-      updateChatSession(activeChatSessionId, msgs);
-    }
-  }, [activeChatSessionId, updateChatSession, deleteChatSession]);
+  useEffect(() => () => {
+    const request = requestRef.current;
+    if (!request) return;
+    request.flush();
+    request.controller.abort();
+    if (request.providerStarted) void invoke("cancel_ai_stream").catch(() => {});
+    useEditorStore.getState().updateChatSession(request.sessionId, request.messages);
+  }, []);
 
   useEffect(() => {
-    return () => { commitMessages(localMessagesRef.current, { deleteIfEmpty: false }); };
-  }, [commitMessages]);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [localMessages, citationResults]);
+    messagesEndRef.current?.scrollIntoView({ behavior: isStreamActive ? "auto" : "smooth" });
+  }, [localMessages, citationResults, isStreamActive]);
 
   useEffect(() => {
     if (!isStreamActive) { setThinkingSeconds(0); return; }
@@ -519,10 +524,9 @@ export function AIChatPanel() {
   }, [isActionDisabled]);
 
   const handleNewSession = useCallback(() => {
-    commitMessages(localMessagesRef.current);
     createChatSession();
     setShowAiSessions(false);
-  }, [commitMessages, createChatSession, setShowAiSessions]);
+  }, [createChatSession, setShowAiSessions]);
 
   useEffect(() => {
     const onNewSession = () => handleNewSession();
@@ -539,7 +543,6 @@ export function AIChatPanel() {
   }, []);
 
   const handleSwitchSession = (id: string) => {
-    commitMessages(localMessagesRef.current);
     setActiveChatSession(id);
     setShowAiSessions(false);
   };
@@ -551,14 +554,6 @@ export function AIChatPanel() {
   const replaceDocument = useCallback((text: string) => {
     window.dispatchEvent(new CustomEvent("editor:replace-document", { detail: text }));
   }, []);
-
-  const applyActionEdit = useCallback((edit: ActionEdit) => {
-    if (edit.kind === "replace_document") {
-      replaceDocument(edit.text);
-    } else {
-      insertAtCursor(edit.text);
-    }
-  }, [insertAtCursor, replaceDocument]);
 
   const handleCopyBib = useCallback(async (paper: CitationResult) => {
     await navigator.clipboard.writeText(generateBibEntry(paper));
@@ -633,279 +628,214 @@ export function AIChatPanel() {
     ? contextPct.toFixed(1)
     : Math.min(99, Math.round(contextPct)).toString();
 
-  const appendLiveAssistantChunk = useCallback((sessionId: string, chunk: string) => {
-    const next = [...localMessagesRef.current];
-    const last = next.length - 1;
-    if (last < 0 || next[last]?.role !== "assistant") return;
-    next[last] = {
-      ...next[last],
-      content: `${next[last].content}${chunk}`,
-    };
-    localMessagesRef.current = next;
-    setLocalMessages(next);
-    updateChatSessionLive(sessionId, next);
-  }, [updateChatSessionLive]);
-
   // ── Send message ───────────────────────────────────────────────────────
   const handleSend = async (messageOverride?: string, approvedPathsOverride?: string[]) => {
     const trimmed = (messageOverride ?? input).trim();
-    if (!trimmed || isStreamActive) return;
-    const approvedPaths = approvedPathsOverride ?? aiApprovedPaths;
+    const state = useEditorStore.getState();
+    const requestSessionId = state.activeChatSessionId;
+    // The native providers share one stream slot. Acquire it before loading
+    // context, so double sends and switching chats cannot start overlapping runs.
+    if (!trimmed || !requestSessionId || state.streamingChatSessionId) return;
+    const session = state.chatSessions.find((candidate) => candidate.id === requestSessionId);
+    if (!session) return;
+    const requestWorkspace = normalizeWorkspacePath(state.workspacePath);
+    const requestTab = state.tabs.find((tab) => tab.path === state.activeTabPath);
+    const requestSelection = state.selectedText;
+    const approvedPaths = approvedPathsOverride ?? state.aiApprovedPaths;
 
     if (!messageOverride) {
-      const externalPaths = findUnapprovedExternalPaths(trimmed, workspacePath, approvedPaths);
+      const externalPaths = findUnapprovedExternalPaths(trimmed, requestWorkspace, approvedPaths);
       if (externalPaths.length > 0) {
         setAccessError(null);
-        setAccessRequest({ message: trimmed, paths: externalPaths });
+        setAccessRequest({ message: trimmed, paths: externalPaths, sessionId: requestSessionId, workspacePath: requestWorkspace });
         return;
       }
     }
 
+    let selectionRange: { from: number; to: number } | null = null;
+    window.dispatchEvent(new CustomEvent("editor:capture-selection", {
+      detail: { capture: (range: { from: number; to: number }) => { selectionRange = range; } },
+    }));
+    const capturedRange = selectionRange as { from: number; to: number } | null;
+    const startedAt = Date.now();
+    const request: ChatRequest = {
+      sessionId: requestSessionId,
+      controller: new AbortController(),
+      messages: [...session.messages, { role: "user", content: trimmed, timestamp: startedAt }, { role: "assistant", content: "" }],
+      flush: () => {},
+      providerStarted: false,
+    };
+    requestRef.current = request;
+    const isCurrentView = () => {
+      const current = useEditorStore.getState();
+      return requestRef.current === request && current.activeChatSessionId === requestSessionId
+        && normalizeWorkspacePath(current.workspacePath) === requestWorkspace;
+    };
+    const isCancelled = () => request.controller.signal.aborted;
+    let pendingChunk = "";
+    let frame: number | null = null;
+    request.flush = () => {
+      if (frame !== null) cancelAnimationFrame(frame);
+      frame = null;
+      if (!pendingChunk) return;
+      const last = request.messages.length - 1;
+      request.messages = request.messages.map((message, index) => index === last
+        ? { ...message, content: message.content + pendingChunk }
+        : message);
+      pendingChunk = "";
+      updateChatSessionLive(requestSessionId, request.messages);
+    };
+    const appendChunk = (chunk: string) => {
+      if (isCancelled()) return;
+      pendingChunk += chunk;
+      if (frame === null) frame = requestAnimationFrame(request.flush);
+    };
+    const finishReply = (content?: string) => {
+      request.flush();
+      request.messages = request.messages.map((message, index, messages) => index === messages.length - 1
+        ? { ...message, ...(content === undefined ? {} : { content }), timestamp: Date.now(), elapsed: Date.now() - startedAt }
+        : message);
+      updateChatSession(requestSessionId, request.messages);
+    };
     setInput("");
     setHistoryIndex(-1);
-
-    // Citation search
-    if (trimmed.startsWith("/cite ")) {
-      const query = trimmed.slice(6).trim();
-      if (!query) return;
-      setIsCiteMode(true);
-      setCitationResults(null);
-      const now = Date.now();
-      const next: AiMessage[] = [...localMessages, { role: "user", content: trimmed, timestamp: now }];
-      setLocalMessages(next);
-      setLoadingSessionId(activeChatSessionId);
-      try {
-        const results = await invoke<CitationResult[]>("search_citations", { query });
-        setCitationResults(results);
-        const withReply: AiMessage[] = [
-          ...next,
-          {
-            role: "assistant",
-            content: results.length === 0
-              ? "No results found."
-              : `Found ${results.length} papers, ranked by citation count.`,
-            timestamp: Date.now(),
-          },
-        ];
-        setLocalMessages(withReply);
-        commitMessages(withReply);
-      } catch (e) {
-        setCitationResults([]);
-        const withErr: AiMessage[] = [...next, { role: "assistant", content: `Citation search failed: ${String(e)}`, timestamp: Date.now() }];
-        setLocalMessages(withErr);
-        commitMessages(withErr);
-      } finally {
-        if (loadingSessionId === activeChatSessionId) {
-          setLoadingSessionId(null);
-        }
-      }
-      return;
-    }
-
-    // AI chat
-    setIsCiteMode(false);
-    setCitationResults(null);
-
-    if ((aiProvider === "claude-cli" || aiProvider === "codex-cli") && cliStatus !== "ready") {
-      const msgs: AiMessage[] = [
-        ...localMessages,
-        { role: "user", content: trimmed },
-        { role: "assistant", content: aiProvider === "codex-cli"
-          ? "Codex CLI not found. Install Codex and run `codex login` to authenticate."
-          : "Claude CLI not found. Install it with: npm install -g @anthropic-ai/claude-code, then run `claude` to authenticate." },
-      ];
-      setLocalMessages(msgs);
-      commitMessages(msgs);
-      return;
-    }
-
-    let contextualContent = trimmed;
-    const workspaceContext = await loadWorkspaceAiContext(
-      workspacePath,
-      activeTab?.path ?? null,
-      activeTab?.content ?? null,
-      approvedPaths,
-    );
-    if (isActionMode) {
-      contextualContent =
-        `${systemPrompt}\n\n` +
-        `User request:\n${trimmed}\n\n` +
-        `Active document path: ${activeTab?.path ?? "(untitled)"}\n\n` +
-        `Current document:\n\`\`\`\n${activeTab?.content ?? ""}\n\`\`\``;
-      if (selectedText) {
-        contextualContent += `\n\nSelected text:\n\`\`\`\n${selectedText}\n\`\`\``;
-      }
-    } else if (academicMode !== "general") {
-      contextualContent = `${getAcademicWorkflowPrompt(academicMode)}\n\nUser request:\n${trimmed}`;
-      if (selectedText) {
-        contextualContent += `\n\nSelected text:\n\`\`\`\n${selectedText}\n\`\`\``;
-      }
-      if (isReadOnlyMode) {
-        contextualContent +=
-          `\n\nActive document path: ${activeTab?.path ?? "(untitled)"}\n\n` +
-          `Current document:\n\`\`\`\n${activeTab?.content ?? ""}\n\`\`\``;
-      }
-    } else if (selectedText) {
-      contextualContent += `\n\nSelected text:\n\`\`\`\n${selectedText}\n\`\`\``;
-    }
-    if (workspaceContext) {
-      contextualContent += `\n\n${workspaceContext}`;
-    }
-    // Resumed Codex sessions retain their original system prompt. Repeat the
-    // current app-owned runtime metadata in the request so model/effort
-    // answers cannot become stale after a settings change.
-    if (codexRuntimeMetadata && activeSession?.codexSessionId) {
-      contextualContent += `\n\n${codexRuntimeMetadata}`;
-    }
-    // The visible chat history stores the short user message, while the
-    // provider receives this expanded request with document/workspace context.
-    // Keep that extra payload in the estimate for the next turn.
-    setRequestContextTokens(Math.max(0, estTokens(contextualContent) - estTokens(trimmed)));
-
-    const requestSessionId = activeChatSessionId;
-    if (!requestSessionId) return;
-    const withUser: AiMessage[] = [...localMessages, { role: "user", content: trimmed, timestamp: Date.now() }];
-    const withPlaceholder: AiMessage[] = [...withUser, { role: "assistant", content: "" }];
-    localMessagesRef.current = withPlaceholder;
-    setLocalMessages(withPlaceholder);
-    updateChatSessionLive(requestSessionId, withPlaceholder);
-    setStreamingChatSession(requestSessionId);
-
-    setLoadingSessionId(requestSessionId);
-    abortRef.current = false;
     setThinkingHint(null);
-    requestStartRef.current = Date.now();
+    setStreamingChatSession(requestSessionId);
+    updateChatSessionLive(requestSessionId, request.messages);
 
     try {
-      if (aiProvider === "ollama") {
-        const apiMessages = [
-          ...localMessages.slice(-10).map((m) => ({ role: m.role, content: m.content })),
-          { role: "user" as const, content: contextualContent },
-        ];
-        const onChunk = new Channel<string>();
-        onChunk.onmessage = (chunk: string) => {
-          if (abortRef.current) return;
-          appendLiveAssistantChunk(requestSessionId, chunk);
-        };
-        await invoke("stream_ai_chat", {
-          messages: apiMessages,
-          ollamaUrl,
-          ollamaModel,
-          system: systemPrompt,
-          onChunk,
-        });
-      } else {
-        // CLI providers are session-based, so history is resumed by the backend.
-        const onChunk = new Channel<string>();
-        onChunk.onmessage = (chunk: string) => {
-          if (abortRef.current) return;
-          appendLiveAssistantChunk(requestSessionId, chunk);
-        };
-
-        const onStatus = new Channel<string>();
-        onStatus.onmessage = (msg: string) => {
-          if (abortRef.current) return;
-          try {
-            const ev = JSON.parse(msg) as { t: string; text?: string; used?: number; window?: number };
-            if (ev.t === "thinking" && ev.text) setThinkingHint(ev.text);
-            else if (ev.t === "usage" && ev.used && ev.window) setContextTokens({ used: ev.used, window: ev.window });
-          } catch {
-            setThinkingHint(msg);
-          }
-        };
-
-        const isCodex = aiProvider === "codex-cli";
-        const returnedSessionId = await invoke<string | null>(isCodex ? "stream_codex_cli" : "stream_claude_cli", isCodex
-          ? {
-              sessionId: activeSession?.codexSessionId ?? null,
-              message: contextualContent,
-              system: activeSession?.codexSessionId ? "" : systemPrompt,
-              model: codexModel || null,
-              effort,
-              cwd: workspacePath ?? (activeTab?.path ? activeTab.path.split("/").slice(0, -1).join("/") || null : null),
-              onChunk,
-              onStatus,
-            }
-          : {
-              sessionId: activeSession?.claudeSessionId ?? null,
-              message: contextualContent,
-              system: activeSession?.claudeSessionId ? "" : systemPrompt,
-              model: claudeModel || null,
-              effort,
-              thinking,
-              onChunk,
-              onStatus,
-            });
-
-        if (returnedSessionId && activeChatSessionId) {
-          if (isCodex) updateSessionCodexId(activeChatSessionId, returnedSessionId);
-          else updateSessionClaudeId(activeChatSessionId, returnedSessionId);
-        }
+      if (trimmed.startsWith("/cite ")) {
+        const query = trimmed.slice(6).trim();
+        setIsCiteMode(true);
+        setCitationResults(null);
+        const results = await invoke<CitationResult[]>("search_citations", { query });
+        if (isCancelled()) return;
+        if (isCurrentView()) setCitationResults(results);
+        finishReply(results.length === 0 ? "No results found." : `Found ${results.length} papers, ranked by citation count.`);
+        return;
       }
 
-      const finishedAt = Date.now();
-      const elapsed = finishedAt - requestStartRef.current;
-      const finalMsgs = localMessagesRef.current.map((m, i, arr) =>
-        i === arr.length - 1 && m.role === "assistant" && !m.timestamp
-          ? { ...m, timestamp: finishedAt, elapsed }
-          : m
-      );
-      setLocalMessages(finalMsgs);
-      commitMessages(finalMsgs);
+      setIsCiteMode(false);
+      setCitationResults(null);
+      if ((aiProvider === "claude-cli" || aiProvider === "codex-cli") && cliStatus !== "ready") {
+        finishReply(aiProvider === "codex-cli"
+          ? "Codex CLI not found. Install Codex and run `codex login` to authenticate."
+          : "Claude CLI not found. Install it with: npm install -g @anthropic-ai/claude-code, then run `claude` to authenticate.");
+        return;
+      }
 
-      const lastReply = finalMsgs[finalMsgs.length - 1];
-      if (
-        lastReply?.role === "assistant" &&
-        /\b(permission|access|outside|allow|unavailable|cannot)\b/i.test(lastReply.content)
-      ) {
-        const responsePaths = findUnapprovedExternalPaths(lastReply.content, workspacePath, approvedPaths);
-        if (responsePaths.length > 0) {
+      const workspaceContext = await loadWorkspaceAiContext(
+        requestWorkspace, requestTab?.path ?? null, requestTab?.content ?? null, approvedPaths, request.controller.signal,
+      );
+      if (isCancelled()) return;
+      let contextualContent = trimmed;
+      if (isActionMode) {
+        contextualContent = `${systemPrompt}\n\nUser request:\n${trimmed}\n\n`
+          + `Active document path: ${requestTab?.path ?? "(untitled)"}\n\nCurrent document:\n\`\`\`\n${requestTab?.content ?? ""}\n\`\`\``;
+      } else if (academicMode !== "general") {
+        contextualContent = `${getAcademicWorkflowPrompt(academicMode)}\n\nUser request:\n${trimmed}`;
+        if (isReadOnlyMode) {
+          contextualContent += `\n\nActive document path: ${requestTab?.path ?? "(untitled)"}\n\nCurrent document:\n\`\`\`\n${requestTab?.content ?? ""}\n\`\`\``;
+        }
+      }
+      if (requestSelection) contextualContent += `\n\nSelected text:\n\`\`\`\n${requestSelection}\n\`\`\``;
+      if (workspaceContext) contextualContent += `\n\n${workspaceContext}`;
+      if (codexRuntimeMetadata && session.codexSessionId) contextualContent += `\n\n${codexRuntimeMetadata}`;
+      if (isCurrentView()) setRequestContextTokens(Math.max(0, estTokens(contextualContent) - estTokens(trimmed)));
+
+      const onChunk = new Channel<string>();
+      onChunk.onmessage = appendChunk;
+      request.providerStarted = true;
+      if (aiProvider === "ollama") {
+        await invoke("stream_ai_chat", {
+          messages: [...session.messages.slice(-10).map((message) => ({ role: message.role, content: message.content })), { role: "user", content: contextualContent }],
+          ollamaUrl, ollamaModel, system: systemPrompt, onChunk,
+        });
+      } else {
+        const onStatus = new Channel<string>();
+        onStatus.onmessage = (message: string) => {
+          if (isCancelled() || !isCurrentView()) return;
+          try {
+            const event = JSON.parse(message) as { t: string; text?: string; used?: number; window?: number };
+            if (event.t === "thinking" && event.text) setThinkingHint(event.text);
+            else if (event.t === "usage" && Number.isFinite(event.used) && Number.isFinite(event.window) && event.used! >= 0 && event.window! > 0) {
+              setContextTokens({ used: event.used!, window: event.window! });
+            }
+          } catch { setThinkingHint(message); }
+        };
+        const isCodex = aiProvider === "codex-cli";
+        const providerSessionId = isCodex ? session.codexSessionId : session.claudeSessionId;
+        // A fork has visible history but intentionally has no native resume ID.
+        if (!providerSessionId && session.messages.length > 0) {
+          contextualContent = `Previous conversation (context only):\n${session.messages.map((message) => `${message.role}: ${message.content}`).join("\n\n")}\n\nCurrent request:\n${contextualContent}`;
+        }
+        const returnedSessionId = await invoke<string | null>(isCodex ? "stream_codex_cli" : "stream_claude_cli", {
+          sessionId: providerSessionId ?? null,
+          message: contextualContent,
+          system: systemPrompt,
+          model: (isCodex ? codexModel : claudeModel) || null,
+          effort,
+          ...(isCodex ? { cwd: requestWorkspace ?? (requestTab?.path ? requestTab.path.split("/").slice(0, -1).join("/") || null : null) } : { thinking }),
+          onChunk, onStatus,
+        });
+        if (returnedSessionId && !isCancelled()) {
+          if (isCodex) updateSessionCodexId(requestSessionId, returnedSessionId);
+          else updateSessionClaudeId(requestSessionId, returnedSessionId);
+        }
+      }
+      if (isCancelled()) return;
+      finishReply();
+      const lastReply = request.messages[request.messages.length - 1];
+      if (isCurrentView() && /\b(permission|access|outside|allow|unavailable|cannot)\b/i.test(lastReply.content)) {
+        const paths = findUnapprovedExternalPaths(lastReply.content, requestWorkspace, approvedPaths);
+        if (paths.length > 0) {
           setAccessError(null);
-          setAccessRequest({ message: trimmed, paths: responsePaths });
+          setAccessRequest({ message: trimmed, paths, sessionId: requestSessionId, workspacePath: requestWorkspace });
         }
       }
 
       if (isActionMode) {
-        const last = finalMsgs[finalMsgs.length - 1];
-        const edit = last?.role === "assistant" ? parseActionEdit(last.content) : null;
-        const actionMsgs = finalMsgs.map((m, i) => {
-          if (i !== finalMsgs.length - 1 || m.role !== "assistant") return m;
-          return {
-            ...m,
-            content: edit
-              ? `Applied ${edit.kind.replace(/_/g, " ")}.`
-              : "Act mode could not find a valid edit operation. No editor change was made.",
-          };
-        });
-        setLocalMessages(actionMsgs);
-        commitMessages(actionMsgs);
-        if (edit) applyActionEdit(edit);
+        const edit = parseActionEdit(lastReply.content);
+        const current = useEditorStore.getState();
+        const currentTab = current.tabs.find((tab) => tab.path === current.activeTabPath);
+        const canApply = isCurrentView() && requestTab && currentTab?.path === requestTab.path && currentTab.content === requestTab.content;
+        if (!edit) {
+          finishReply(`${lastReply.content}\n\nNo valid edit operation was returned. The document was not changed.`);
+        } else if (!canApply || (edit.kind !== "replace_document" && !capturedRange)) {
+          finishReply(`${lastReply.content}\n\nThe editor changed while this request was running. The proposed edit is preserved here; the document was not changed.`);
+        } else {
+          const text = edit.kind === "replace_document" ? edit.text
+            : requestTab.content.slice(0, capturedRange!.from) + edit.text + requestTab.content.slice(capturedRange!.to);
+          replaceDocument(text);
+          finishReply(`Applied ${edit.kind.replace(/_/g, " ")}.`);
+        }
       }
-    } catch (e: unknown) {
-      if (!abortRef.current) {
-        const errMsgs = localMessagesRef.current.map((m, i, arr) =>
-          i === arr.length - 1 && m.role === "assistant"
-            ? { ...m, content: `Error: ${String(e)}`, timestamp: Date.now() }
-            : m
-        );
-        setLocalMessages(errMsgs);
-        commitMessages(errMsgs);
-      }
+    } catch (error: unknown) {
+      if (!isCancelled()) finishReply(`${trimmed.startsWith("/cite ") ? "Citation search failed" : "Error"}: ${String(error)}`);
     } finally {
-      setLoadingSessionId((current) => current === requestSessionId ? null : current);
-      if (useEditorStore.getState().streamingChatSessionId === requestSessionId) {
-        setStreamingChatSession(null);
-      }
+      request.flush();
+      if (isCancelled()) finishReply();
+      if (requestRef.current === request) requestRef.current = null;
+      if (useEditorStore.getState().streamingChatSessionId === requestSessionId) setStreamingChatSession(null);
     }
   };
 
+
   const handleGrantAccess = async () => {
     if (!accessRequest) return;
+    const request = accessRequest;
+    const stillCurrent = () => {
+      const state = useEditorStore.getState();
+      return state.activeChatSessionId === request.sessionId && normalizeWorkspacePath(state.workspacePath) === request.workspacePath;
+    };
+    if (!stillCurrent()) return;
     setAccessError(null);
     const approved: string[] = [];
     try {
-      for (const path of accessRequest.paths) {
+      for (const path of request.paths) {
+        if (!stillCurrent()) return;
         await invoke("approve_path", { path });
+        if (!stillCurrent()) return;
         addAiApprovedPath(path);
         approved.push(path);
 
@@ -913,11 +843,12 @@ export function AIChatPanel() {
         // through the normal editor/save pipeline.
         if (/\.typ$/i.test(path)) {
           const content = await invoke<string>("read_file", { path });
+          if (!stillCurrent()) return;
           const name = path.split(/[\\/]/).pop() ?? "paper.typ";
           useEditorStore.getState().openTab(path, name, content);
         }
       }
-      const request = accessRequest;
+      if (!stillCurrent()) return;
       const nextApproved = [...aiApprovedPaths, ...approved];
       setAccessRequest(null);
       await handleSend(request.message, [...new Set(nextApproved)]);
@@ -927,6 +858,7 @@ export function AIChatPanel() {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     if (showSlashCommands) {
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
@@ -985,13 +917,12 @@ export function AIChatPanel() {
   };
 
   const handleStop = () => {
-    abortRef.current = true;
-    invoke("cancel_ai_stream").catch(() => {});
-    setLoadingSessionId((current) => current === activeChatSessionId ? null : current);
-    if (activeChatSessionId === streamingChatSessionId) {
-      setStreamingChatSession(null);
-    }
-    commitMessages(localMessagesRef.current);
+    const request = requestRef.current;
+    if (!request || request.sessionId !== activeChatSessionId) return;
+    request.flush();
+    request.controller.abort();
+    if (request.providerStarted) void invoke("cancel_ai_stream").catch(() => {});
+    updateChatSession(request.sessionId, request.messages);
   };
 
   const applyPrompt = (prompt: string, mode: AcademicWorkflowMode) => {
@@ -1297,6 +1228,9 @@ export function AIChatPanel() {
         </div>
       )}
 
+      {isAnotherSessionStreaming && (
+        <div className="ai-cli-banner" role="status">Another chat is still responding. You can draft your next message here.</div>
+      )}
       <div className="ai-chat-input-area">
         {showSlashCommands && (
           <div className="ai-slash-menu" role="listbox" aria-label="Writing modes">
@@ -1456,7 +1390,7 @@ export function AIChatPanel() {
             {isStreamActive ? (
               <button className="ai-chat-btn ai-chat-btn--stop" onClick={handleStop}>Stop</button>
             ) : (
-              <button className="ai-chat-btn ai-chat-btn--send" onClick={() => handleSend()} disabled={!input.trim()} aria-label="Send">
+              <button className="ai-chat-btn ai-chat-btn--send" onClick={() => handleSend()} disabled={!input.trim() || isAnotherSessionStreaming} aria-label="Send">
                 <ArrowUp size={15} />
               </button>
             )}

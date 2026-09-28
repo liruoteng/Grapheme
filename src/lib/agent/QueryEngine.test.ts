@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { QueryEngine } from "./QueryEngine";
 import type { LLMProvider, LLMStreamEvent, Tools } from "./types";
+import { getAgent } from "./agents";
 
 const knownTool = {
   name: "KnownTool",
@@ -80,9 +81,7 @@ describe("QueryEngine", () => {
       events.push(next.value);
     }
 
-    const textEvents = events.filter(
-      (e: unknown) => (e as { type: string }).type === "text_delta",
-    );
+    const textEvents = events.filter((e: unknown) => (e as { type: string }).type === "text_delta");
     expect(textEvents).toHaveLength(2);
   });
 
@@ -96,10 +95,7 @@ describe("QueryEngine", () => {
         },
         { type: "done" },
       ],
-      [
-        { type: "text_delta", text: "Done." },
-        { type: "done" },
-      ],
+      [{ type: "text_delta", text: "Done." }, { type: "done" }],
     ]);
 
     const engine = new QueryEngine({ provider, tools: knownTools, systemPrompt: "test" });
@@ -120,12 +116,12 @@ describe("QueryEngine", () => {
     expect(result.stopReason).toBe("end_turn");
 
     const toolStarts = events.filter(
-      (e: unknown) => (e as { type: string }).type === "tool_call_start",
+      (e: unknown) => (e as { type: string }).type === "tool_call_start"
     );
     expect(toolStarts).toHaveLength(1);
 
     const toolResults = events.filter(
-      (e: unknown) => (e as { type: string }).type === "tool_call_result",
+      (e: unknown) => (e as { type: string }).type === "tool_call_result"
     );
     expect(toolResults).toHaveLength(1);
   });
@@ -156,7 +152,7 @@ describe("QueryEngine", () => {
     }
 
     const toolResultEvent = events.find(
-      (e: unknown) => (e as { type: string }).type === "tool_call_result",
+      (e: unknown) => (e as { type: string }).type === "tool_call_result"
     ) as { toolResult: unknown };
     expect(toolResultEvent.toolResult).toEqual({ error: "Unknown tool: UnknownTool" });
     expect(result.stopReason).toBe("end_turn");
@@ -171,9 +167,7 @@ describe("QueryEngine", () => {
       { type: "done" },
     ];
 
-    const provider = makeMultiTurnProvider(
-      Array.from({ length: 5 }, () => alwaysToolCall),
-    );
+    const provider = makeMultiTurnProvider(Array.from({ length: 5 }, () => alwaysToolCall));
 
     const engine = new QueryEngine({
       provider,
@@ -265,7 +259,7 @@ describe("QueryEngine", () => {
     }
 
     const toolResult = events.find(
-      (e: unknown) => (e as { type: string }).type === "tool_call_result",
+      (e: unknown) => (e as { type: string }).type === "tool_call_result"
     ) as { toolResult: unknown };
     expect(toolResult.toolResult).toEqual({ error: "Unknown tool: NonexistentTool" });
     expect(result.stopReason).toBe("end_turn");
@@ -322,10 +316,100 @@ describe("QueryEngine", () => {
       const next = await gen.next();
       if (next.done) break;
     }
-    expect(requestPermission).toHaveBeenCalledWith(expect.objectContaining({
-      agent: "writing",
-      permission: "write",
-      toolName: "KnownTool",
-    }));
+    expect(requestPermission).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agent: "writing",
+        permission: "write",
+        toolName: "KnownTool",
+      })
+    );
+  });
+
+  it("stops waiting for approval on cancellation and never executes a late approval", async () => {
+    let approve!: (value: boolean) => void;
+    const requestPermission = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          approve = resolve;
+        })
+    );
+    const call = vi.fn().mockResolvedValue({ data: "changed" });
+    const engine = new QueryEngine({
+      provider: makeProvider([
+        { type: "tool_call", toolCall: { id: "tc1", name: "KnownTool", input: {} } },
+      ]),
+      tools: [{ ...knownTool, call }],
+      systemPrompt: "test",
+      agent: getAgent("writing"),
+      requestPermission,
+    });
+    const stream = engine.submitMessage("Edit");
+    while (true) {
+      const next = await stream.next();
+      if (next.done) throw new Error("Expected a permission request before completion");
+      if (next.value.type === "permission_request") break;
+    }
+    const pending = stream.next();
+    expect(requestPermission).toHaveBeenCalledOnce();
+    engine.interrupt();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    approve(true);
+    await Promise.resolve();
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it("does not execute queued tool calls after interruption", async () => {
+    const call = vi.fn().mockResolvedValue({ data: "changed" });
+    const engine = new QueryEngine({
+      provider: makeProvider([
+        { type: "tool_call", toolCall: { id: "tc1", name: "KnownTool", input: {} } },
+      ]),
+      tools: [{ ...knownTool, call }],
+      systemPrompt: "test",
+    });
+    const stream = engine.submitMessage("Edit");
+    expect((await stream.next()).value).toMatchObject({ type: "turn_complete" });
+    engine.interrupt();
+    await expect(stream.next()).rejects.toMatchObject({ name: "AbortError" });
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it("passes its cancellation signal to active tools and skips subsequent calls", async () => {
+    let toolSignal: AbortSignal | undefined;
+    const call = vi.fn(async (_input, context) => {
+      toolSignal = context.abortSignal;
+      engine.interrupt();
+      return { data: "done" };
+    });
+    const engine = new QueryEngine({
+      provider: makeProvider([
+        { type: "tool_call", toolCall: { id: "tc1", name: "KnownTool", input: {} } },
+        { type: "tool_call", toolCall: { id: "tc2", name: "KnownTool", input: {} } },
+      ]),
+      tools: [{ ...knownTool, call }],
+      systemPrompt: "test",
+    });
+    const run = async () => {
+      for await (const _event of engine.submitMessage("Edit")) {
+        expect(_event.type).toBeTruthy();
+      }
+    };
+    await expect(run()).rejects.toMatchObject({ name: "AbortError" });
+    expect(call).toHaveBeenCalledOnce();
+    expect(toolSignal?.aborted).toBe(true);
+  });
+
+  it("prevents concurrent submissions from replacing the current cancellation controller", async () => {
+    const engine = new QueryEngine({
+      provider: makeProvider([{ type: "text_delta", text: "First" }]),
+      tools: [],
+      systemPrompt: "test",
+    });
+    const first = engine.submitMessage("First");
+    await first.next();
+    await expect(engine.submitMessage("Second").next()).rejects.toThrow("already running");
+    engine.interrupt();
+    await expect(first.next()).rejects.toMatchObject({ name: "AbortError" });
+    expect(engine.getMessages().filter((message) => message.role === "user")).toHaveLength(1);
   });
 });

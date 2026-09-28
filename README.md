@@ -38,7 +38,7 @@ Create and edit graphs, diagrams, and other visual elements directly in the app 
 
 ### Prerequisites
 
-**Node.js 20+**
+**Node.js 22.13+**
 
 Install via [nvm](https://github.com/nvm-sh/nvm) (recommended) or directly from [nodejs.org](https://nodejs.org):
 

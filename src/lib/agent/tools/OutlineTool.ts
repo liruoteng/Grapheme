@@ -18,7 +18,7 @@ interface OutlineResult {
   message?: string;
 }
 
-let currentOutline: OutlineNode[] = [];
+const outlines = new Map<string, OutlineNode[]>();
 
 function generateId(): string {
   return `out_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -70,10 +70,12 @@ export const OutlineTool = buildTool<OutlineInput, OutlineResult>({
     required: ["action"],
   },
   isReadOnly: (input) => input.action === "get",
-  async call(input) {
+  async call(input, context) {
+    let currentOutline = getOutline(context.paperId);
     switch (input.action) {
       case "set": {
         currentOutline = input.nodes ?? [];
+        setOutline(currentOutline, context.paperId);
         return {
           data: {
             action: "set",
@@ -101,6 +103,7 @@ export const OutlineTool = buildTool<OutlineInput, OutlineResult>({
         } else {
           currentOutline = [...currentOutline, node];
         }
+        setOutline(currentOutline, context.paperId);
         return {
           data: {
             action: "add",
@@ -118,6 +121,7 @@ export const OutlineTool = buildTool<OutlineInput, OutlineResult>({
           };
         }
         currentOutline = findAndRemove(currentOutline, input.nodeId);
+        setOutline(currentOutline, context.paperId);
         return {
           data: {
             action: "remove",
@@ -137,14 +141,14 @@ export const OutlineTool = buildTool<OutlineInput, OutlineResult>({
   },
 });
 
-export function getOutline(): OutlineNode[] {
-  return currentOutline;
+export function getOutline(paperId = "default"): OutlineNode[] {
+  return outlines.get(paperId) ?? [];
 }
 
-export function setOutline(outline: OutlineNode[]): void {
-  currentOutline = outline;
+export function setOutline(outline: OutlineNode[], paperId = "default"): void {
+  outlines.set(paperId, outline);
 }
 
 export function clearOutline(): void {
-  currentOutline = [];
+  outlines.clear();
 }

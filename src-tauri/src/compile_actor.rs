@@ -114,15 +114,16 @@ fn resolve_md_hybrid(md_path: &Path, md_content: &str) -> Option<(String, String
     })?;
 
     let dir = md_path.parent().unwrap_or(Path::new("."));
-    let target = dir.join(&compile_rel);
+    let target = crate::path_policy::confined_path(dir, Path::new(&compile_rel)).ok()?;
     if !target.exists() {
         return None;
     }
 
     let (body_typst, _) = converter::markdown_to_typst(md_content);
     let stem = md_path.file_stem()?.to_string_lossy();
-    let sibling_typ = dir.join(format!("{stem}.typ"));
-    let _ = fs::write(&sibling_typ, &body_typst);
+    let sibling_typ =
+        crate::path_policy::confined_path(dir, Path::new(&format!("{stem}.typ"))).ok()?;
+    fs::write(&sibling_typ, &body_typst).ok()?;
 
     let target_content = fs::read_to_string(&target).ok()?;
     Some((
@@ -141,6 +142,14 @@ fn md_preview_typ_path(md_path: &str) -> PathBuf {
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "untitled".to_string());
     parent.join(format!(".{stem}.preview.typ"))
+}
+
+fn checked_md_preview_typ_path(md_path: &str) -> Result<PathBuf, String> {
+    let path = md_preview_typ_path(md_path);
+    crate::path_policy::confined_path(
+        path.parent().unwrap_or(Path::new(".")),
+        Path::new(path.file_name().ok_or("Missing preview filename")?),
+    )
 }
 
 fn compose_markdown_source(md_path: &Path, md_content: &str) -> (String, Vec<String>) {
@@ -404,7 +413,7 @@ fn write_markdown_preview_source_resilient(
 ) -> Result<Option<String>, String> {
     let path = Path::new(md_path);
     let (typst_content, _warnings) = compose_markdown_source(path, md_content);
-    let temp_path = md_preview_typ_path(md_path);
+    let temp_path = checked_md_preview_typ_path(md_path)?;
 
     match validate_typst_source_quiet(&temp_path, &typst_content) {
         Ok(()) => {
@@ -439,7 +448,7 @@ pub(crate) fn write_markdown_preview_source_fast(
 
     let path = Path::new(md_path);
     let (typst_content, _warnings) = compose_markdown_preview_source(path, md_content);
-    let preview_path = md_preview_typ_path(md_path);
+    let preview_path = checked_md_preview_typ_path(md_path)?;
     if fs::read_to_string(&preview_path)
         .map(|existing| existing == typst_content)
         .unwrap_or(false)
@@ -465,7 +474,7 @@ pub(crate) fn validate_preview_sidecar_content_blocking(
         }
 
         let _ = write_markdown_preview_source_fast(&path, &content)?;
-        let temp_path = md_preview_typ_path(&path);
+        let temp_path = checked_md_preview_typ_path(&path)?;
         let preview_source = fs::read_to_string(&temp_path).map_err(|e| e.to_string())?;
         match validate_typst_source_quiet(&temp_path, &preview_source) {
             Ok(()) => Ok(None),
@@ -484,6 +493,22 @@ pub(crate) fn validate_preview_sidecar_content_blocking(
 mod markdown_preview_tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[cfg(unix)]
+    #[test]
+    fn markdown_preview_does_not_overwrite_external_symlink_targets() {
+        let dir = temp_test_dir("preview-symlinks");
+        let workspace = dir.join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let secret = dir.join("secret.typ");
+        fs::write(&secret, "private").unwrap();
+        let md = workspace.join("doc.md");
+        std::os::unix::fs::symlink(&secret, workspace.join(".doc.preview.typ")).unwrap();
+        assert!(write_markdown_preview_source_fast(&md.to_string_lossy(), "# Draft").is_err());
+        assert!(resolve_md_hybrid(&md, "---\ncompile: ../secret.typ\n---\nDraft").is_none());
+        assert_eq!(fs::read_to_string(secret).unwrap(), "private");
+        let _ = fs::remove_dir_all(dir);
+    }
 
     fn temp_test_dir(name: &str) -> PathBuf {
         let nanos = SystemTime::now()
@@ -1076,7 +1101,7 @@ pub async fn start_sidecar_preview(
         {
             target_path
         } else {
-            let temp = md_preview_typ_path(&path);
+            let temp = checked_md_preview_typ_path(&path)?;
             let _ = write_markdown_preview_source_fast(&path, &md_content)?;
             temp.to_string_lossy().to_string()
         };
@@ -1199,7 +1224,10 @@ pub fn export_pdf(
                 .file_stem()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_else(|| "untitled".to_string());
-            let temp = parent.join(format!(".{stem}.export.typ"));
+            let temp = crate::path_policy::confined_path(
+                parent,
+                Path::new(&format!(".{stem}.export.typ")),
+            )?;
             fs::write(&temp, typst_content).map_err(|e| e.to_string())?;
             let temp_str = temp.to_string_lossy().to_string();
             (temp_str.clone(), Some(temp_str))

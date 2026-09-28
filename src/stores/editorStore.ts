@@ -52,6 +52,35 @@ function sessionWorkspacePath(session: Pick<AiChatSession, "workspacePath">): st
   return normalizeWorkspacePath(session.workspacePath);
 }
 
+/** Project transcripts are user-editable files; validate before rendering them. */
+function readChatSessions(value: unknown): AiChatSession[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  return value.flatMap((candidate): AiChatSession[] => {
+    if (!candidate || typeof candidate !== "object") return [];
+    const session = candidate as Record<string, unknown>;
+    if (typeof session.id !== "string" || !session.id || seen.has(session.id)
+      || typeof session.title !== "string" || !Array.isArray(session.messages)) return [];
+    const messages = session.messages.flatMap((entry): AiMessage[] => {
+      if (!entry || typeof entry !== "object") return [];
+      const message = entry as Record<string, unknown>;
+      if ((message.role !== "user" && message.role !== "assistant") || typeof message.content !== "string") return [];
+      return [{ role: message.role, content: message.content,
+        ...(typeof message.timestamp === "number" && Number.isFinite(message.timestamp) ? { timestamp: message.timestamp } : {}),
+        ...(typeof message.elapsed === "number" && Number.isFinite(message.elapsed) ? { elapsed: message.elapsed } : {}),
+      }];
+    });
+    if (!messages.length) return [];
+    seen.add(session.id);
+    return [{ id: session.id, title: session.title, messages,
+      createdAt: typeof session.createdAt === "number" && Number.isFinite(session.createdAt) ? session.createdAt : Date.now(),
+      ...(Object.prototype.hasOwnProperty.call(session, "workspacePath") ? { workspacePath: typeof session.workspacePath === "string" ? normalizeWorkspacePath(session.workspacePath) : null } : {}),
+      ...(typeof session.claudeSessionId === "string" ? { claudeSessionId: session.claudeSessionId } : {}),
+      ...(typeof session.codexSessionId === "string" ? { codexSessionId: session.codexSessionId } : {}),
+    }];
+  });
+}
+
 /** A reference paper the user has added — local PDF, .bib entry, or link.
  *  Persisted alongside other settings so the workspace remembers them. */
 export interface Reference {
@@ -164,7 +193,7 @@ interface EditorState {
   setActiveTab: (path: string) => void;
   updateTabContent: (path: string, content: string) => void;
   syncCleanTabContent: (path: string, content: string) => void;
-  markTabClean: (path: string) => void;
+  markTabClean: (path: string, savedContent?: string) => void;
   mtimeVersion: number;
   bumpMtimeVersion: () => void;
 
@@ -283,7 +312,8 @@ const PERSISTED_KEYS = [
 ] as const;
 
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
-let workspacePersistTimer: ReturnType<typeof setTimeout> | null = null;
+const workspacePersistTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const workspaceWrites = new Map<string, Promise<unknown>>();
 let workspaceLoadGeneration = 0;
 function schedulePersist(getState: () => EditorState) {
   if (!isTauriRuntime()) return;
@@ -304,20 +334,25 @@ function schedulePersist(getState: () => EditorState) {
   }, 150);
 }
 
-function scheduleWorkspacePersist(getState: () => EditorState) {
+function scheduleWorkspacePersist(getState: () => EditorState, path = getState().workspacePath) {
   if (!isTauriRuntime()) return;
-  if (workspacePersistTimer) clearTimeout(workspacePersistTimer);
-  workspacePersistTimer = setTimeout(() => {
-    const s = getState();
-    if (!s.workspacePath) return;
-    const workspace = normalizeWorkspacePath(s.workspacePath);
-    const sessions = s.chatSessions
+  const workspace = normalizeWorkspacePath(path);
+  if (!workspace) return;
+  const previousTimer = workspacePersistTimers.get(workspace);
+  if (previousTimer) clearTimeout(previousTimer);
+  // Capture the originating workspace now. A later project switch must not
+  // cancel this save or redirect its contents into another project's file.
+  workspacePersistTimers.set(workspace, setTimeout(() => {
+    workspacePersistTimers.delete(workspace);
+    const sessions = getState().chatSessions
       .filter((session) => sessionWorkspacePath(session) === workspace && session.messages.length > 0);
-    invoke("write_workspace_sessions", {
-      workspacePath: workspace,
-      contents: JSON.stringify(sessions, null, 2),
-    }).catch((e) => logger.error("write_workspace_sessions failed", e));
-  }, 150);
+    const contents = JSON.stringify(sessions, null, 2);
+    const write = (workspaceWrites.get(workspace) ?? Promise.resolve())
+      .then(() => invoke("write_workspace_sessions", { workspacePath: workspace, contents }))
+      .catch((error) => logger.error("write_workspace_sessions failed", error));
+    workspaceWrites.set(workspace, write);
+    void write.finally(() => { if (workspaceWrites.get(workspace) === write) workspaceWrites.delete(workspace); });
+  }, 150));
 }
 
 function createSessionId() {
@@ -344,6 +379,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
   setActiveChatSession: (id) => { set({ activeChatSessionId: id }); schedulePersist(get); },
   updateChatSession: (id, messages) => {
+    const workspace = get().chatSessions.find((session) => session.id === id)?.workspacePath ?? null;
     set((s) => ({
       chatSessions: s.chatSessions.map((sess) =>
         sess.id !== id ? sess : {
@@ -356,7 +392,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       ),
     }));
     schedulePersist(get);
-    scheduleWorkspacePersist(get);
+    scheduleWorkspacePersist(get, workspace);
   },
   updateChatSessionLive: (id, messages) => {
     set((s) => ({
@@ -372,31 +408,34 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }));
   },
   updateSessionClaudeId: (id, claudeSessionId) => {
+    const workspace = get().chatSessions.find((session) => session.id === id)?.workspacePath ?? null;
     set((s) => ({
       chatSessions: s.chatSessions.map((sess) =>
         sess.id !== id ? sess : { ...sess, claudeSessionId }
       ),
     }));
     schedulePersist(get);
-    scheduleWorkspacePersist(get);
+    scheduleWorkspacePersist(get, workspace);
   },
   updateSessionCodexId: (id, codexSessionId) => {
+    const workspace = get().chatSessions.find((session) => session.id === id)?.workspacePath ?? null;
     set((s) => ({
       chatSessions: s.chatSessions.map((sess) =>
         sess.id !== id ? sess : { ...sess, codexSessionId }
       ),
     }));
     schedulePersist(get);
-    scheduleWorkspacePersist(get);
+    scheduleWorkspacePersist(get, workspace);
   },
   renameChatSession: (id, title) => {
+    const workspace = get().chatSessions.find((session) => session.id === id)?.workspacePath ?? null;
     set((s) => ({
       chatSessions: s.chatSessions.map((sess) =>
         sess.id !== id ? sess : { ...sess, title: title.trim() || sess.title }
       ),
     }));
     schedulePersist(get);
-    scheduleWorkspacePersist(get);
+    scheduleWorkspacePersist(get, workspace);
   },
   forkChatSession: (id) => {
     const original = get().chatSessions.find((s) => s.id === id);
@@ -411,9 +450,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     };
     set((s) => ({ chatSessions: [...s.chatSessions, forked], activeChatSessionId: newId }));
     schedulePersist(get);
-    scheduleWorkspacePersist(get);
+    scheduleWorkspacePersist(get, forked.workspacePath);
   },
   deleteChatSession: (id) => {
+    const workspace = get().chatSessions.find((session) => session.id === id)?.workspacePath ?? null;
     set((s) => {
       const remaining = s.chatSessions.filter((sess) => sess.id !== id);
       const currentWorkspace = normalizeWorkspacePath(s.workspacePath);
@@ -424,36 +464,31 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       return { chatSessions: remaining, activeChatSessionId: nextActive };
     });
     schedulePersist(get);
-    scheduleWorkspacePersist(get);
+    scheduleWorkspacePersist(get, workspace);
   },
   loadWorkspaceSessions: async (path) => {
     const workspace = normalizeWorkspacePath(path);
     if (!workspace || !isTauriRuntime()) return;
     const generation = ++workspaceLoadGeneration;
+    const initialIds = new Set(get().chatSessions.filter((session) => sessionWorkspacePath(session) === workspace).map((session) => session.id));
     try {
       const raw = await invoke<string>("read_workspace_sessions", { workspacePath: workspace });
-      const parsed = raw ? JSON.parse(raw) : [];
-      const loaded = Array.isArray(parsed)
-        ? (parsed as AiChatSession[])
-            .filter((session) => Array.isArray(session.messages) && session.messages.length > 0)
-            .map((session) => ({ ...session, workspacePath: workspace }))
-        : [];
+      const loaded = readChatSessions(raw ? JSON.parse(raw) : []).map((session) => ({ ...session, workspacePath: workspace }));
       const state = get();
       if (generation !== workspaceLoadGeneration || normalizeWorkspacePath(state.workspacePath) !== workspace) return;
-
-      // Sessions from the old global settings file had no project association.
-      // If this project has no local store yet, adopt them once and write them
-      // into the project so subsequent launches are fully project-local.
-      const legacy = loaded.length === 0
-        ? state.chatSessions.filter((session) => sessionWorkspacePath(session) === workspace && session.messages.length > 0)
-        : [];
-      const sessions = legacy.map((session) => ({ ...session, workspacePath: workspace }));
-      const current = state.chatSessions.filter((session) => sessionWorkspacePath(session) !== workspace);
+      const current = state.chatSessions.filter((session) => sessionWorkspacePath(session) === workspace);
+      const foreign = state.chatSessions.filter((session) => sessionWorkspacePath(session) !== workspace);
+      const foreignIds = new Set(foreign.map((session) => session.id));
+      const currentIds = new Set(current.map((session) => session.id));
+      // Keep conversations created, changed, or deleted while disk I/O was in
+      // flight. In particular, a late load must not replace an in-flight turn.
+      const restored = loaded.filter((session) => !foreignIds.has(session.id) && !currentIds.has(session.id) && !initialIds.has(session.id));
+      const combined = [...restored, ...current];
       set({
-        chatSessions: [...current, ...(loaded.length > 0 ? loaded : sessions)],
-        activeChatSessionId: null,
+        chatSessions: [...foreign, ...combined],
+        activeChatSessionId: combined.some((session) => session.id === state.activeChatSessionId) ? state.activeChatSessionId : null,
       });
-      if (legacy.length > 0) scheduleWorkspacePersist(get);
+      if (current.some((session) => session.messages.length > 0)) scheduleWorkspacePersist(get, workspace);
     } catch (e) {
       logger.error("read_workspace_sessions failed", e);
     }
@@ -645,10 +680,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       ),
     })),
 
-  markTabClean: (path) =>
+  markTabClean: (path, savedContent) =>
     set((s) => ({
       tabs: s.tabs.map((t) =>
-        t.path === path ? { ...t, isDirty: false } : t
+        t.path === path && (savedContent === undefined || t.content === savedContent) ? { ...t, isDirty: false } : t
       ),
       mtimeVersion: s.mtimeVersion + 1,
     })),
@@ -725,14 +760,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       if (typeof parsed.claudeModel === "string") patch.claudeModel = parsed.claudeModel;
       if (typeof parsed.codexModel === "string") patch.codexModel = parsed.codexModel;
       if (Array.isArray(parsed.chatSessions)) {
-        patch.chatSessions = (parsed.chatSessions as AiChatSession[])
-          .filter((session) => Array.isArray(session.messages) && session.messages.length > 0)
-          .map((session) => {
-            // Preserve the missing-property distinction so first-project
-            // recovery can recognize sessions created before workspace scoping.
-            if (!Object.prototype.hasOwnProperty.call(session, "workspacePath")) return session;
-            return { ...session, workspacePath: normalizeWorkspacePath(session.workspacePath) };
-          });
+        patch.chatSessions = readChatSessions(parsed.chatSessions);
       }
       // The active chat is deliberately ephemeral: reopening Grapheme starts
       // a fresh chat, while the persisted sessions remain available in History.

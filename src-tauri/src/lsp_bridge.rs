@@ -13,9 +13,38 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::process::Command;
 use tokio::sync::broadcast;
+use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
 use tokio_tungstenite::tungstenite::Message;
 
 const LSP_PORT: u16 = 8765;
+
+fn allowed_origin(origin: Option<&str>) -> bool {
+    matches!(
+        origin,
+        Some("tauri://localhost" | "http://tauri.localhost" | "https://tauri.localhost")
+    ) || (cfg!(debug_assertions)
+        && matches!(
+            origin,
+            Some("http://localhost:1420" | "http://127.0.0.1:1420")
+        ))
+}
+
+#[allow(clippy::result_large_err)]
+fn validate_handshake(request: &Request, response: Response) -> Result<Response, ErrorResponse> {
+    if allowed_origin(
+        request
+            .headers()
+            .get("origin")
+            .and_then(|value| value.to_str().ok()),
+    ) {
+        Ok(response)
+    } else {
+        Err(tokio_tungstenite::tungstenite::http::Response::builder()
+            .status(403)
+            .body(Some("Untrusted LSP origin".to_string()))
+            .expect("valid response"))
+    }
+}
 
 /// Start the LSP bridge. Runs forever until the process exits.
 /// Call this in a dedicated tokio task via `tokio::spawn`.
@@ -38,7 +67,7 @@ pub async fn run_lsp_bridge(tinymist_path: String) {
 
 /// Handle one WebSocket connection: spawn Tinymist and wire up the pipes.
 async fn handle_connection(stream: tokio::net::TcpStream, tinymist_path: String) {
-    let ws_stream = match tokio_tungstenite::accept_async(stream).await {
+    let ws_stream = match tokio_tungstenite::accept_hdr_async(stream, validate_handshake).await {
         Ok(ws) => ws,
         Err(e) => {
             eprintln!("[lsp_bridge] WebSocket handshake failed: {e}");
@@ -55,6 +84,7 @@ async fn handle_connection(stream: tokio::net::TcpStream, tinymist_path: String)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
+        .kill_on_drop(true)
         .spawn()
     {
         Ok(c) => c,
@@ -73,7 +103,7 @@ async fn handle_connection(stream: tokio::net::TcpStream, tinymist_path: String)
 
     // ── Tinymist stdout → WebSocket ───────────────────────────────────────
     let shutdown_tx2 = shutdown_tx.clone();
-    let stdout_task = tokio::spawn(async move {
+    let mut stdout_task = tokio::spawn(async move {
         loop {
             // Read the "Content-Length: N" header line
             let mut header = String::new();
@@ -118,7 +148,7 @@ async fn handle_connection(stream: tokio::net::TcpStream, tinymist_path: String)
 
     // ── WebSocket → Tinymist stdin ────────────────────────────────────────
     let mut shutdown_rx = shutdown_tx.subscribe();
-    let stdin_task = tokio::spawn(async move {
+    let mut stdin_task = tokio::spawn(async move {
         loop {
             tokio::select! {
                 msg = ws_rx.next() => {
@@ -144,10 +174,39 @@ async fn handle_connection(stream: tokio::net::TcpStream, tinymist_path: String)
 
     // Wait for either half to finish
     tokio::select! {
-        _ = stdout_task => {}
-        _ = stdin_task => {}
+        _ = &mut stdout_task => { stdin_task.abort(); }
+        _ = &mut stdin_task => { stdout_task.abort(); }
     }
 
     let _ = child.kill().await;
     eprintln!("[lsp_bridge] Connection closed, Tinymist process killed");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_app_origins_can_start_a_language_server() {
+        for origin in [
+            "tauri://localhost",
+            "http://tauri.localhost",
+            "https://tauri.localhost",
+        ] {
+            assert!(allowed_origin(Some(origin)));
+        }
+        for origin in [
+            None,
+            Some("null"),
+            Some("https://evil.example"),
+            Some("http://localhost:9999"),
+            Some("http://tauri.localhost.evil.example"),
+        ] {
+            assert!(!allowed_origin(origin));
+        }
+        assert_eq!(
+            allowed_origin(Some("http://localhost:1420")),
+            cfg!(debug_assertions)
+        );
+    }
 }

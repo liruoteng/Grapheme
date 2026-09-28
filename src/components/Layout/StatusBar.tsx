@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from "react";
-import { useMonaco } from "@monaco-editor/react";
+import { useState, useEffect, useRef, useSyncExternalStore } from "react";
 import type * as Monaco from "monaco-editor";
+import { getLoadedMonaco, subscribeToMonaco } from "../Editor/monacoRegistry";
 import {
   Circle,
   X,
@@ -27,7 +27,7 @@ interface StatusBarProps {
  * to the first marker of the given severity.
  */
 function useActiveMarkers(activeTabPath: string | null) {
-  const monaco = useMonaco();
+  const monaco = useSyncExternalStore(subscribeToMonaco, getLoadedMonaco);
   const [counts, setCounts] = useState({ errors: 0, warnings: 0 });
 
   useEffect(() => {

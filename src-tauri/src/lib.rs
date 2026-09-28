@@ -1,4 +1,5 @@
 mod ai;
+mod ai_stream;
 mod commands;
 mod compile_actor;
 mod converter;
@@ -104,6 +105,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::set_workspace_root,
             commands::approve_path,
+            commands::open_approved_path,
             commands::file_stat,
             commands::read_file,
             commands::read_file_bytes,

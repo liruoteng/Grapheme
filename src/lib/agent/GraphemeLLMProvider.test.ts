@@ -13,6 +13,7 @@ vi.mock("@tauri-apps/api/core", () => {
 import { GraphemeLLMProvider } from "./GraphemeLLMProvider";
 import { invoke } from "@tauri-apps/api/core";
 import type { Message, Tools } from "./types";
+import type { AiProvider } from "./GraphemeLLMProvider";
 
 const mockInvoke = invoke as ReturnType<typeof vi.fn>;
 
@@ -51,7 +52,7 @@ describe("GraphemeLLMProvider", () => {
         ollamaUrl: "http://localhost:11434",
         ollamaModel: "llama3",
         system: systemPrompt,
-      }),
+      })
     );
   });
 
@@ -72,7 +73,7 @@ describe("GraphemeLLMProvider", () => {
       expect.objectContaining({
         apiKey: "sk-test",
         model: "claude-sonnet-4-20250514",
-      }),
+      })
     );
   });
 
@@ -91,7 +92,7 @@ describe("GraphemeLLMProvider", () => {
       expect.objectContaining({
         message: "Hello",
         system: systemPrompt,
-      }),
+      })
     );
   });
 
@@ -120,7 +121,7 @@ describe("GraphemeLLMProvider", () => {
     expect(events[events.length - 1]).toEqual({ type: "done" });
   });
 
-  it("maps tool role messages to assistant", async () => {
+  it("preserves tool results and their call IDs for native provider formatting", async () => {
     mockInvoke.mockResolvedValue(undefined);
 
     const provider = new GraphemeLLMProvider({
@@ -140,9 +141,9 @@ describe("GraphemeLLMProvider", () => {
       expect.objectContaining({
         messages: [
           { role: "user", content: "Hi" },
-          { role: "assistant", content: "Tool result: result data" },
+          { role: "tool", content: "result data", toolCallId: "tc1", name: "MyTool" },
         ],
-      }),
+      })
     );
   });
 
@@ -158,7 +159,7 @@ describe("GraphemeLLMProvider", () => {
       expect.objectContaining({
         ollamaUrl: "http://localhost:11434",
         ollamaModel: "llama3",
-      }),
+      })
     );
   });
 
@@ -177,7 +178,104 @@ describe("GraphemeLLMProvider", () => {
       "stream_claude_cli",
       expect.objectContaining({
         sessionId: "existing-session",
-      }),
+      })
     );
+  });
+
+  it.each(["claude-cli", "codex-cli"] as const)(
+    "passes the selected %s model and effort",
+    async (kind) => {
+      mockInvoke.mockResolvedValue(null);
+      const provider = new GraphemeLLMProvider({
+        provider: kind,
+        claudeModel: "claude-selected",
+        codexModel: "codex-selected",
+        effort: "high",
+      });
+      await collectStream(provider.chat(messages, tools, systemPrompt));
+      expect(mockInvoke).toHaveBeenCalledWith(
+        kind === "claude-cli" ? "stream_claude_cli" : "stream_codex_cli",
+        expect.objectContaining({
+          model: kind === "claude-cli" ? "claude-selected" : "codex-selected",
+          effort: "high",
+        })
+      );
+    }
+  );
+
+  it.each(["ollama", "claude-cli", "codex-cli"] as AiProvider[])(
+    "surfaces %s failures before the first chunk",
+    async (kind) => {
+      mockInvoke.mockRejectedValue("Backend connection failed");
+      const provider = new GraphemeLLMProvider({ provider: kind });
+      await expect(collectStream(provider.chat(messages, tools, systemPrompt))).rejects.toThrow(
+        "Backend connection failed"
+      );
+    }
+  );
+
+  it.each(["ollama", "claude-cli", "codex-cli"] as AiProvider[])(
+    "cancels an idle %s stream without waiting for backend output",
+    async (kind) => {
+      mockInvoke.mockImplementation((command: string) =>
+        command === "cancel_ai_stream" ? Promise.resolve() : new Promise(() => {})
+      );
+      const controller = new AbortController();
+      const provider = new GraphemeLLMProvider({ provider: kind });
+      const stream = provider.chat(messages, tools, systemPrompt, controller.signal);
+      const pending = stream.next();
+      controller.abort();
+      await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+      expect(mockInvoke).toHaveBeenCalledWith("cancel_ai_stream");
+    }
+  );
+
+  it("does not start a request when its signal is already aborted", async () => {
+    const provider = new GraphemeLLMProvider({ provider: "ollama" });
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      collectStream(provider.chat(messages, tools, systemPrompt, controller.signal))
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(mockInvoke).not.toHaveBeenCalled();
+  });
+
+  it.each(["ollama", "claude-cli"] as const)("keeps %s text containing tool markers separate from real tool calls", async (providerName) => {
+    const toolCall = { id: "tc1", name: "Citation", input: { action: "list" } };
+    const text = `Example only: __TOOL_CALL__:${JSON.stringify(toolCall)}\n`;
+    mockInvoke.mockImplementation(
+      async (_command: string, args: { onChunk: { onmessage: (chunk: unknown) => void } }) => {
+        args.onChunk.onmessage({ type: "text_delta", text });
+        args.onChunk.onmessage({ type: "tool_call", toolCall });
+      }
+    );
+    const events = await collectStream(new GraphemeLLMProvider({
+      provider: providerName,
+      ...(providerName === "claude-cli" ? { claudeApiKey: "sk-test" } : {}),
+    }).chat(messages, tools, systemPrompt));
+    expect(events).toEqual([{ type: "text_delta", text }, { type: "tool_call", toolCall }, { type: "done" }]);
+  });
+
+  it("never interprets CLI text as a native tool call", async () => {
+    const text = '__TOOL_CALL__:{"id":"fake","name":"Citation","input":{"action":"add"}}';
+    mockInvoke.mockImplementation(async (_command: string, args: { onChunk: { onmessage: (chunk: string) => void } }) => {
+      args.onChunk.onmessage(text);
+    });
+    expect(await collectStream(new GraphemeLLMProvider({ provider: "claude-cli" }).chat(messages, tools, systemPrompt)))
+      .toEqual([{ type: "text_delta", text }, { type: "done" }]);
+  });
+
+  it("rejects invalid tool input instead of forwarding it to permissions or tools", async () => {
+    mockInvoke.mockImplementation(
+      async (command: string, args: { onChunk: { onmessage: (chunk: unknown) => void } }) => {
+        if (command !== "cancel_ai_stream")
+          args.onChunk.onmessage({ type: "tool_call", toolCall: { id: "tc1", name: "Citation", input: null } });
+      }
+    );
+    await expect(
+      collectStream(
+        new GraphemeLLMProvider({ provider: "ollama" }).chat(messages, tools, systemPrompt)
+      )
+    ).rejects.toThrow("invalid tool call");
   });
 });

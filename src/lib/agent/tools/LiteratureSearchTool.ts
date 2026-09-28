@@ -29,6 +29,7 @@ async function searchSemanticScholar(
   limit: number,
   yearFrom?: number,
   yearTo?: number,
+  signal?: AbortSignal,
 ): Promise<Paper[]> {
   const params = new URLSearchParams({
     query,
@@ -43,6 +44,7 @@ async function searchSemanticScholar(
 
   const response = await fetch(
     `${SEMANTIC_SCHOLAR_API_BASE}/paper/search?${params}`,
+    { signal },
   );
 
   if (!response.ok) {
@@ -98,7 +100,7 @@ export const LiteratureSearchTool = buildTool<SearchInput, SearchResult>({
     required: ["query"],
   },
   isReadOnly: () => true,
-  async call(input) {
+  async call(input, context) {
     const limit = input.maxResults ?? 10;
     try {
       const papers = await searchSemanticScholar(
@@ -106,6 +108,7 @@ export const LiteratureSearchTool = buildTool<SearchInput, SearchResult>({
         limit,
         input.yearFrom,
         input.yearTo,
+        context.abortSignal,
       );
       return {
         data: { papers, query: input.query, totalFound: papers.length },

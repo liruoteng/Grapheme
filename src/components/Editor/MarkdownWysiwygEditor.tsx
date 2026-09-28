@@ -11,7 +11,7 @@ import { logger } from "../../lib/logger";
 import katex from "katex";
 import { refractor } from "refractor/all";
 import type { Element as HastElement, Nodes as HastNode, Root as HastRoot, Text as HastText } from "hast";
-import { EditorSelection, EditorState, StateEffect, StateField, Compartment } from "@codemirror/state";
+import { Annotation, EditorSelection, EditorState, StateEffect, StateField, Compartment } from "@codemirror/state";
 import type { Extension, Range, Transaction, TransactionSpec } from "@codemirror/state";
 import {
   Decoration,
@@ -32,6 +32,7 @@ import { getActiveDragSource } from "../FileExplorer/fileDrag";
 import { PANEL_DRAG_MIME } from "../Layout/PanelManager";
 import { SlashMenu, type SlashCommand } from "./SlashMenu";
 import { codeBlockLanguages } from "./codeBlockLanguages";
+import { safeExternalLink } from "./safeExternalLink";
 import {
   serializeTableWithLayout,
   tableAt,
@@ -92,6 +93,7 @@ const editTableSourceEffect = StateEffect.define<InlineRange | null>();
 const editImageSourceEffect = StateEffect.define<InlineRange | null>();
 const editHtmlBlockEffect = StateEffect.define<InlineRange | null>();
 const revealMarkdownSyntaxEffect = StateEffect.define<null>();
+const syncFromDisk = Annotation.define<boolean>();
 
 const tableSourceEditRangeField = StateField.define<InlineRange | null>({
   create: () => null,
@@ -3899,7 +3901,12 @@ function markdownWysiwygDecorations(
         const additionRanges: Range<Decoration>[] = [];
         const cursor = additions.iter();
         while (cursor.value) {
-          additionRanges.push(cursor.value.range(cursor.from, cursor.to));
+          // Parsing needs preceding lines for block context, but those lines
+          // still have decorations in `value`. Re-adding them duplicates every
+          // widget before the edit on each keystroke in a long document.
+          if (dirtyRanges.some((range) => rangesIntersect(range, { from: cursor.from, to: cursor.to }))) {
+            additionRanges.push(cursor.value.range(cursor.from, cursor.to));
+          }
           cursor.next();
         }
 
@@ -4025,6 +4032,7 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
   const previewUpdateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingAutoSaveRef = useRef<{ path: string; value: string } | null>(null);
   const pendingPreviewRef = useRef<{ path: string; value: string } | null>(null);
+  const pendingImageDropsRef = useRef(new Set<{ pos: number }>());
   const pointerScrollSnapshotRef = useRef<ScrollSnapshot | null>(null);
   const pointerScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollbarTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -4060,7 +4068,6 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
   useEffect(() => {
     const tab = useEditorStore.getState().activeTab();
     setEditorFile(tab && isMarkdownPath(tab.path) ? { path: tab.path, content: tab.content } : null);
-    pathRef.current = tab?.path ?? null;
     setSlashMenu(null);
     slashStartRef.current = null;
     setCitationMenu(null);
@@ -4156,6 +4163,7 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
     if (!useEditorStore.getState().typewriterMode) return;
     const cursor = view.state.selection.main.head;
     requestAnimationFrame(() => {
+      if (viewRef.current !== view) return;
       const coords = view.coordsAtPos(cursor);
       if (!coords) return;
       const scroller = view.scrollDOM;
@@ -4286,7 +4294,14 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
       ...searchKeymap,
     ]),
     EditorView.updateListener.of((update) => {
-      if (update.docChanged) handleChange(update.view);
+      if (update.docChanged) {
+        for (const drop of pendingImageDropsRef.current) {
+          drop.pos = update.changes.mapPos(drop.pos, 1);
+        }
+        if (!update.transactions.every((tr) => !tr.docChanged || tr.annotation(syncFromDisk))) {
+          handleChange(update.view);
+        }
+      }
 
       if (update.selectionSet || update.docChanged) {
         if (update.selectionSet && !update.docChanged && pointerSelectionActiveRef.current && !update.state.selection.main.empty) {
@@ -4357,7 +4372,8 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
         if (!link) return false;
         event.preventDefault();
         selectRangePreservingScroll(view, link.from, link.to);
-        openUrl(link.href).catch((err: unknown) => logger.error("open link failed", err));
+        const href = safeExternalLink(link.href);
+        if (href) openUrl(href).catch((err: unknown) => logger.error("open link failed", err));
         return true;
       },
       dragover(event) {
@@ -4384,12 +4400,17 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
         if (imageFiles.length > 0) {
           event.preventDefault();
           event.stopPropagation();
+          const drop = { pos: dropPos };
+          const documentPath = pathRef.current;
+          pendingImageDropsRef.current.add(drop);
           copyImageFilesToAssets(imageFiles, workspacePath)
             .then((names) => {
+              if (viewRef.current !== view || pathRef.current !== documentPath) return;
               const paths = names.map((name) => markdownImagePathForFile(`${workspacePath}/assets/${name}`));
-              insertImageMarkdown(view, paths, dropPos);
+              insertImageMarkdown(view, paths, drop.pos);
             })
-            .catch((err: unknown) => logger.error("image drop error", err));
+            .catch((err: unknown) => logger.error("image drop error", err))
+            .finally(() => pendingImageDropsRef.current.delete(drop));
           return true;
         }
 
@@ -4439,10 +4460,11 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
     const view = new EditorView({ state, parent: container });
     const fm = frontmatterAtTop(view.state);
     if (fm && view.state.selection.main.from <= fm.to) {
-      view.dispatch({ selection: { anchor: fm.to + 1 } });
+      view.dispatch({ selection: { anchor: Math.min(fm.to + 1, view.state.doc.length) } });
     }
     viewRef.current = view;
     pathRef.current = editorFile.path;
+    const pendingDrops = pendingImageDropsRef.current;
     const scroller = view.scrollDOM;
     const revealScrollbar = () => {
       scroller.classList.add("is-scrolling");
@@ -4455,12 +4477,16 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
     scroller.addEventListener("scroll", revealScrollbar, { passive: true });
 
     return () => {
+      // Persist this document before the next editor can replace its debounce.
+      pathRef.current = null;
+      flushPendingPersistence();
+      pendingDrops.clear();
       scroller.removeEventListener("scroll", revealScrollbar);
       if (scrollbarTimerRef.current) clearTimeout(scrollbarTimerRef.current);
       view.destroy();
       viewRef.current = null;
     };
-  }, [editorFile?.path, extensions]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [editorFile?.path, extensions, flushPendingPersistence]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const view = viewRef.current;
@@ -4474,11 +4500,11 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
         },
       })),
     });
-  }, [editorFontSize, editorMdFont]);
+  }, [editorFontSize, editorMdFont, editorFile?.path]);
 
   useEffect(() => {
     viewRef.current?.dispatch({ effects: setCodeBlockLineNumbersEffect.of(markdownCodeLineNumbers) });
-  }, [markdownCodeLineNumbers]);
+  }, [markdownCodeLineNumbers, editorFile?.path]);
 
   useEffect(() => {
     if (!externalContent || !viewRef.current) return;
@@ -4497,29 +4523,41 @@ export function MarkdownWysiwygEditor({ onSave, onSnapshot, onPreviewTrigger, ex
   // Uses Zustand's subscribe API (no re-renders). When content changes for the
   // same active tab, update the CodeMirror document imperatively.
   useEffect(() => {
-    let prevContent: string | undefined;
-    let prevPath: string | undefined;
-    const unsub = useEditorStore.subscribe((state) => {
+    const unsub = useEditorStore.subscribe((state, previousState) => {
       const tab = state.tabs.find((t) => t.path === state.activeTabPath);
-      if (!tab) return;
+      // Store subscriptions run before React replaces the view on a tab switch.
+      if (!tab || tab.path !== pathRef.current) return;
       const { content, path } = tab;
-      if (prevContent !== undefined && (content === prevContent || path !== prevPath)) {
-        prevContent = content;
-        prevPath = path;
-        return;
-      }
-      prevContent = content;
-      prevPath = path;
+      const previousTab = previousState.tabs.find((t) => t.path === path);
+      if (previousTab?.content === content) return;
       const view = viewRef.current;
       if (!view) return;
       if (content !== view.state.doc.toString()) {
+        if (!tab.isDirty) {
+          if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+          if (previewUpdateTimer.current) clearTimeout(previewUpdateTimer.current);
+          autoSaveTimer.current = previewUpdateTimer.current = null;
+          pendingAutoSaveRef.current = pendingPreviewRef.current = null;
+        }
         view.dispatch({
           changes: { from: 0, to: view.state.doc.length, insert: content },
-          selection: EditorSelection.cursor(0),
+          selection: EditorSelection.cursor(Math.min(view.state.selection.main.head, content.length)),
+          annotations: syncFromDisk.of(!tab.isDirty),
         });
       }
     });
     return unsub;
+  }, []);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const view = viewRef.current;
+      if (!view || pathRef.current !== useEditorStore.getState().activeTabPath) return;
+      const { from, to } = view.state.selection.main;
+      (event as CustomEvent<{ capture: (range: { from: number; to: number }) => void }>).detail.capture({ from, to });
+    };
+    window.addEventListener("editor:capture-selection", handler);
+    return () => window.removeEventListener("editor:capture-selection", handler);
   }, []);
 
   useEffect(() => {

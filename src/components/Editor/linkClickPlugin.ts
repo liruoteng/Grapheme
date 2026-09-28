@@ -2,6 +2,7 @@ import { Plugin, PluginKey } from "@milkdown/prose/state";
 import { $prose } from "@milkdown/utils";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { logger } from "../../lib/logger";
+import { safeExternalLink } from "./safeExternalLink";
 
 const linkClickKey = new PluginKey("link-click");
 
@@ -20,7 +21,9 @@ export const linkClickPlugin = $prose(() => {
         // Only handle Cmd/Ctrl+Click
         if (event.metaKey || event.ctrlKey) {
           event.preventDefault();
-          openUrl(href).catch((err: unknown) => {
+          const safeHref = safeExternalLink(href);
+          if (!safeHref) return true;
+          openUrl(safeHref).catch((err: unknown) => {
             logger.error("Failed to open link:", err);
           });
           return true;

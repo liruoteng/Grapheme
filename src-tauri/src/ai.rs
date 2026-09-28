@@ -1,27 +1,19 @@
+pub use crate::ai_stream::AiCancelFlag;
+use crate::ai_stream::{LineDecoder, ToolInput};
 use futures_util::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use tauri::ipc::Channel;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::Command as TokioCommand;
 
 // ── Cancellation flag ──────────────────────────────────────────────────────
 
-pub struct AiCancelFlag(pub Arc<AtomicBool>);
-
-impl Default for AiCancelFlag {
-    fn default() -> Self {
-        AiCancelFlag(Arc::new(AtomicBool::new(false)))
-    }
-}
-
 #[tauri::command]
 pub fn cancel_ai_stream(cancel: tauri::State<AiCancelFlag>) {
-    cancel.0.store(true, Ordering::Relaxed);
+    cancel.cancel();
 }
 
 // ── Shared types ───────────────────────────────────────────────────────────
@@ -30,6 +22,12 @@ pub fn cancel_ai_stream(cancel: tauri::State<AiCancelFlag>) {
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
+    #[serde(default, rename = "toolCalls")]
+    pub tool_calls: Vec<ToolCall>,
+    #[serde(default, rename = "toolCallId")]
+    pub tool_call_id: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 // ── Claude CLI ────────────────────────────────────────────────────────────
@@ -202,6 +200,21 @@ fn codex_context_window(model_id: Option<&str>) -> u64 {
         .unwrap_or(200_000)
 }
 
+fn validate_cli_session_id(session_id: Option<&str>) -> Result<(), String> {
+    if let Some(id) = session_id {
+        if id.is_empty()
+            || id.len() > 200
+            || id.starts_with('-')
+            || !id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            return Err("Invalid AI session ID".into());
+        }
+    }
+    Ok(())
+}
+
 /// Run Codex through its authenticated local CLI. This deliberately uses a
 /// read-only sandbox: the AI panel is a writing assistant, not a code agent.
 #[tauri::command]
@@ -217,113 +230,113 @@ pub async fn stream_codex_cli(
     on_status: Channel<String>,
     cancel: tauri::State<'_, AiCancelFlag>,
 ) -> Result<Option<String>, String> {
-    cancel.0.store(false, Ordering::Relaxed);
-    let mut cmd = TokioCommand::new("codex");
-    cmd.env("PATH", extended_path());
-    let context_window = codex_context_window(model.as_deref());
+    validate_cli_session_id(session_id.as_deref())?;
+    cancel.run(async {
+        let mut cmd = TokioCommand::new("codex");
+        cmd.env("PATH", extended_path());
+        let context_window = codex_context_window(model.as_deref());
 
-    if let Some(ref sid) = session_id {
-        cmd.args(["exec", "resume", sid, "--all"]);
-    } else {
-        cmd.args(["exec", "--sandbox", "read-only", "--skip-git-repo-check"]);
-        if let Some(ref dir) = cwd {
-            cmd.args(["--cd", dir]);
+        if let Some(ref sid) = session_id {
+            cmd.args(["exec", "resume", sid, "--all"]);
+        } else {
+            cmd.args(["exec", "--sandbox", "read-only", "--skip-git-repo-check"]);
+            if let Some(ref dir) = cwd {
+                cmd.args(["--cd", dir]);
+            }
         }
-    }
-    cmd.arg("--json");
-    if let Some(ref m) = model.filter(|m| !m.is_empty()) {
-        cmd.args(["--model", m]);
-    }
-    if let Some(ref e) = effort.filter(|e| !e.is_empty()) {
-        cmd.arg("-c").arg(format!("model_reasoning_effort=\"{e}\""));
-    }
-
-    let prompt = if system.is_empty() {
-        message
-    } else {
-        format!("System instructions:\n{system}\n\nUser request:\n{message}")
-    };
-    cmd.arg(prompt)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    let mut child = cmd.spawn().map_err(|e| {
-        format!("Codex CLI not found: {e}. Install Codex and run `codex login` to authenticate.")
-    })?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| "Codex CLI stdout unavailable".to_string())?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| "Codex CLI stderr unavailable".to_string())?;
-    let stderr_task = tokio::spawn(async move {
-        let mut out = String::new();
-        BufReader::new(stderr).read_to_string(&mut out).await.ok();
-        out
-    });
-
-    let mut lines = BufReader::new(stdout).lines();
-    let mut thread_id = None;
-    while let Some(line) = lines.next_line().await.map_err(|e| e.to_string())? {
-        if cancel.0.load(Ordering::Relaxed) {
-            let _ = child.kill().await;
-            return Err("cancelled".to_string());
+        // Resume must retain the same sandbox as a new writing conversation.
+        cmd.args(["-c", "sandbox_mode=\"read-only\"", "-c", "approval_policy=\"never\""]);
+        cmd.arg("--json");
+        if let Some(ref m) = model.filter(|m| !m.is_empty()) {
+            cmd.args(["--model", m]);
         }
-        let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) else {
-            continue;
+        if let Some(ref e) = effort.filter(|e| !e.is_empty()) {
+            cmd.arg("-c").arg(format!("model_reasoning_effort={}", serde_json::to_string(e).map_err(|error| error.to_string())?));
+        }
+
+        let prompt = if system.is_empty() {
+            message
+        } else {
+            format!("System instructions:\n{system}\n\nUser request:\n{message}")
         };
-        if let Some(usage) = event["usage"].as_object() {
-            let used = usage["input_tokens"]
-                .as_u64()
-                .or_else(|| usage["total_tokens"].as_u64())
-                .unwrap_or(0);
-            if used > 0 {
-                let window = event["context_window"]
+        cmd.arg("--").arg(prompt)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let mut child = cmd.kill_on_drop(true).spawn().map_err(|e| {
+            format!("Codex CLI not found: {e}. Install Codex and run `codex login` to authenticate.")
+        })?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "Codex CLI stdout unavailable".to_string())?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| "Codex CLI stderr unavailable".to_string())?;
+        let stderr_task = tokio::spawn(async move {
+            let mut out = String::new();
+            BufReader::new(stderr).read_to_string(&mut out).await.ok();
+            out
+        });
+
+        let mut lines = BufReader::new(stdout).lines();
+        let mut thread_id = None;
+        while let Some(line) = lines.next_line().await.map_err(|e| e.to_string())? {
+            let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) else {
+                continue;
+            };
+            if let Some(usage) = event["usage"].as_object() {
+                let used = usage["input_tokens"]
                     .as_u64()
-                    .or_else(|| event["model_context_window"].as_u64())
-                    .unwrap_or(context_window);
-                let _ = on_status.send(format!(
-                    r#"{{"t":"usage","used":{used},"window":{window}}}"#
-                ));
-            }
-        }
-        match event["type"].as_str() {
-            Some("thread.started") => {
-                thread_id = event["thread_id"].as_str().map(str::to_string);
-            }
-            Some("item.completed") => {
-                if event["item"]["type"].as_str() == Some("agent_message") {
-                    if let Some(text) = event["item"]["text"].as_str() {
-                        on_chunk.send(text.to_string()).map_err(|e| e.to_string())?;
-                    }
+                    .or_else(|| usage["total_tokens"].as_u64())
+                    .unwrap_or(0);
+                if used > 0 {
+                    let window = event["context_window"]
+                        .as_u64()
+                        .or_else(|| event["model_context_window"].as_u64())
+                        .unwrap_or(context_window);
+                    let _ = on_status.send(format!(
+                        r#"{{"t":"usage","used":{used},"window":{window}}}"#
+                    ));
                 }
             }
-            Some("item.started") if event["item"]["type"].as_str() == Some("reasoning") => {
-                let _ = on_status.send("Codex is thinking…".to_string());
+            match event["type"].as_str() {
+                Some("thread.started") => {
+                    thread_id = event["thread_id"].as_str().map(str::to_string);
+                }
+                Some("item.completed") => {
+                    if event["item"]["type"].as_str() == Some("agent_message") {
+                        if let Some(text) = event["item"]["text"].as_str() {
+                            on_chunk.send(text.to_string()).map_err(|e| e.to_string())?;
+                        }
+                    }
+                }
+                Some("item.started") if event["item"]["type"].as_str() == Some("reasoning") => {
+                    let _ = on_status.send("Codex is thinking…".to_string());
+                }
+                Some("turn.failed") | Some("error") => {
+                    let msg = event["error"]["message"]
+                        .as_str()
+                        .or_else(|| event["message"].as_str())
+                        .unwrap_or("Codex CLI returned an error");
+                    return Err(msg.to_string());
+                }
+                _ => {}
             }
-            Some("turn.failed") | Some("error") => {
-                let msg = event["error"]["message"]
-                    .as_str()
-                    .or_else(|| event["message"].as_str())
-                    .unwrap_or("Codex CLI returned an error");
-                return Err(msg.to_string());
-            }
-            _ => {}
         }
-    }
-    let status = child.wait().await.map_err(|e| e.to_string())?;
-    let stderr_output = stderr_task.await.unwrap_or_default();
-    if !status.success() {
-        return Err(if stderr_output.trim().is_empty() {
-            "Codex CLI failed. Make sure Codex is installed and authenticated with `codex login`."
-                .to_string()
-        } else {
-            stderr_output.trim().to_string()
-        });
-    }
-    Ok(thread_id)
+        let status = child.wait().await.map_err(|e| e.to_string())?;
+        let stderr_output = stderr_task.await.unwrap_or_default();
+        if !status.success() {
+            return Err(if stderr_output.trim().is_empty() {
+                "Codex CLI failed. Make sure Codex is installed and authenticated with `codex login`."
+                    .to_string()
+            } else {
+                stderr_output.trim().to_string()
+            });
+        }
+        Ok(thread_id)
+    }).await
 }
 
 #[tauri::command]
@@ -357,136 +370,140 @@ pub async fn stream_claude_cli(
     on_status: Channel<String>,
     cancel: tauri::State<'_, AiCancelFlag>,
 ) -> Result<Option<String>, String> {
-    cancel.0.store(false, Ordering::Relaxed);
-    let mut cmd = TokioCommand::new("claude");
-    cmd.env("PATH", extended_path())
-        .arg("--output-format")
-        .arg("stream-json")
-        .arg("--verbose")
-        .arg("-p")
-        .arg(&message);
+    validate_cli_session_id(session_id.as_deref())?;
+    cancel.run(async {
+        let mut cmd = TokioCommand::new("claude");
+        cmd.env("PATH", extended_path())
+            .arg("--output-format")
+            .arg("stream-json")
+            .arg("--verbose")
+            .arg("-p")
+            // Grapheme supplies document context and applies edits itself.
+            // Native CLI tools must not bypass its document/approval boundary.
+            .args(["--tools", "", "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}", "--disable-slash-commands"])
+            .args(["--settings", "{\"disableAllHooks\":true}"]);
 
-    if let Some(ref sid) = session_id {
-        cmd.arg("--resume").arg(sid);
-    } else if !system.is_empty() {
-        cmd.arg("--system-prompt").arg(&system);
-    }
 
-    if let Some(ref m) = model {
-        cmd.arg("--model").arg(m);
-    }
-
-    if let Some(ref e) = effort {
-        cmd.arg("--effort").arg(e);
-    }
-
-    if thinking {
-        cmd.arg("--think");
-    }
-
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-
-    let mut child = cmd.spawn().map_err(|e| {
-        format!("Claude CLI not found: {e}. Install with: npm install -g @anthropic-ai/claude-code")
-    })?;
-
-    let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
-
-    let stderr_task = tokio::spawn(async move {
-        let mut out = String::new();
-        BufReader::new(stderr).read_to_string(&mut out).await.ok();
-        out
-    });
-
-    let mut lines = BufReader::new(stdout).lines();
-    let mut new_session_id: Option<String> = None;
-
-    while let Some(line) = lines.next_line().await.map_err(|e| e.to_string())? {
-        if cancel.0.load(Ordering::Relaxed) {
-            let _ = child.kill().await;
-            return Err("cancelled".to_string());
+        if let Some(ref sid) = session_id {
+            cmd.arg("--resume").arg(sid);
         }
-        if line.is_empty() {
-            continue;
+        if !system.is_empty() {
+            cmd.arg("--system-prompt").arg(&system);
         }
-        let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) else {
-            continue;
-        };
 
-        match event["type"].as_str() {
-            Some("assistant") => {
-                if let Some(content) = event["message"]["content"].as_array() {
-                    for block in content {
-                        match block["type"].as_str() {
-                            Some("thinking") => {
-                                if let Some(t) = block["thinking"].as_str() {
-                                    let hint: String = t.chars().take(200).collect();
-                                    let text_json =
-                                        serde_json::to_string(&hint).unwrap_or_default();
-                                    let _ = on_status
-                                        .send(format!(r#"{{"t":"thinking","text":{text_json}}}"#));
-                                }
-                            }
-                            Some("text") => {
-                                if let Some(text) = block["text"].as_str() {
-                                    if !text.is_empty() {
-                                        on_chunk
-                                            .send(text.to_string())
-                                            .map_err(|e| e.to_string())?;
+        if let Some(ref m) = model {
+            cmd.arg("--model").arg(m);
+        }
+
+        if let Some(ref e) = effort {
+            cmd.arg("--effort").arg(e);
+        }
+
+        if thinking {
+            cmd.env("MAX_THINKING_TOKENS", "10000");
+        }
+
+        cmd.arg("--").arg(&message);
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+        let mut child = cmd.kill_on_drop(true).spawn().map_err(|e| {
+            format!("Claude CLI not found: {e}. Install with: npm install -g @anthropic-ai/claude-code")
+        })?;
+
+        let stdout = child.stdout.take().unwrap();
+        let stderr = child.stderr.take().unwrap();
+
+        let stderr_task = tokio::spawn(async move {
+            let mut out = String::new();
+            BufReader::new(stderr).read_to_string(&mut out).await.ok();
+            out
+        });
+
+        let mut lines = BufReader::new(stdout).lines();
+        let mut new_session_id: Option<String> = None;
+
+        while let Some(line) = lines.next_line().await.map_err(|e| e.to_string())? {
+            if line.is_empty() {
+                continue;
+            }
+            let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) else {
+                continue;
+            };
+
+            match event["type"].as_str() {
+                Some("assistant") => {
+                    if let Some(content) = event["message"]["content"].as_array() {
+                        for block in content {
+                            match block["type"].as_str() {
+                                Some("thinking") => {
+                                    if let Some(t) = block["thinking"].as_str() {
+                                        let hint: String = t.chars().take(200).collect();
+                                        let text_json =
+                                            serde_json::to_string(&hint).unwrap_or_default();
+                                        let _ = on_status
+                                            .send(format!(r#"{{"t":"thinking","text":{text_json}}}"#));
                                     }
                                 }
+                                Some("text") => {
+                                    if let Some(text) = block["text"].as_str() {
+                                        if !text.is_empty() {
+                                            on_chunk
+                                                .send(text.to_string())
+                                                .map_err(|e| e.to_string())?;
+                                        }
+                                    }
+                                }
+                                _ => {}
                             }
-                            _ => {}
                         }
                     }
                 }
-            }
-            Some("system") | Some("result") => {
-                if let Some(sid) = event["session_id"].as_str() {
-                    new_session_id = Some(sid.to_string());
-                }
-                if event["type"].as_str() == Some("result") {
-                    if event["subtype"].as_str().is_some_and(|s| s != "success") {
-                        let msg = event["error"]
-                            .as_str()
-                            .unwrap_or("Claude CLI returned an error");
-                        return Err(msg.to_string());
+                Some("system") | Some("result") => {
+                    if let Some(sid) = event["session_id"].as_str() {
+                        new_session_id = Some(sid.to_string());
                     }
-                    // Emit actual token usage so the frontend can show a real context %
-                    let u = &event["usage"];
-                    let used = u["input_tokens"].as_u64().unwrap_or(0)
-                        + u["cache_read_input_tokens"].as_u64().unwrap_or(0)
-                        + u["cache_creation_input_tokens"].as_u64().unwrap_or(0);
-                    let window = event["modelUsage"]
-                        .as_object()
-                        .and_then(|m| m.values().next())
-                        .and_then(|v| v["contextWindow"].as_u64())
-                        .unwrap_or(200_000);
-                    if used > 0 {
-                        let _ = on_status.send(format!(
-                            r#"{{"t":"usage","used":{used},"window":{window}}}"#
-                        ));
+                    if event["type"].as_str() == Some("result") {
+                        if event["subtype"].as_str().is_some_and(|s| s != "success") {
+                            let msg = event["error"]
+                                .as_str()
+                                .unwrap_or("Claude CLI returned an error");
+                            return Err(msg.to_string());
+                        }
+                        // Emit actual token usage so the frontend can show a real context %
+                        let u = &event["usage"];
+                        let used = u["input_tokens"].as_u64().unwrap_or(0)
+                            + u["cache_read_input_tokens"].as_u64().unwrap_or(0)
+                            + u["cache_creation_input_tokens"].as_u64().unwrap_or(0);
+                        let window = event["modelUsage"]
+                            .as_object()
+                            .and_then(|m| m.values().next())
+                            .and_then(|v| v["contextWindow"].as_u64())
+                            .unwrap_or(200_000);
+                        if used > 0 {
+                            let _ = on_status.send(format!(
+                                r#"{{"t":"usage","used":{used},"window":{window}}}"#
+                            ));
+                        }
                     }
                 }
+                _ => {}
             }
-            _ => {}
         }
-    }
 
-    let status = child.wait().await.map_err(|e| e.to_string())?;
-    let stderr_output = stderr_task.await.unwrap_or_default();
+        let status = child.wait().await.map_err(|e| e.to_string())?;
+        let stderr_output = stderr_task.await.unwrap_or_default();
 
-    if !status.success() && new_session_id.is_none() {
-        return Err(if stderr_output.trim().is_empty() {
-            "Claude CLI failed. Make sure you are authenticated — run `claude` in your terminal."
-                .to_string()
-        } else {
-            stderr_output.trim().to_string()
-        });
-    }
+        if !status.success() {
+            return Err(if stderr_output.trim().is_empty() {
+                "Claude CLI failed. Make sure you are authenticated — run `claude` in your terminal."
+                    .to_string()
+            } else {
+                stderr_output.trim().to_string()
+            });
+        }
 
-    Ok(new_session_id)
+        Ok(new_session_id)
+    }).await
 }
 
 // ── Tool calling types ─────────────────────────────────────────────────────
@@ -544,6 +561,8 @@ struct OllamaMessage<'a> {
     content: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_calls: Option<Vec<OllamaToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_name: Option<&'a str>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -557,6 +576,44 @@ struct OllamaToolCallFunction {
     arguments: serde_json::Value,
 }
 
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AiStreamEvent {
+    TextDelta {
+        text: String,
+    },
+    ToolCall {
+        #[serde(rename = "toolCall")]
+        tool_call: ToolCall,
+    },
+}
+
+enum AiOutput<'a> {
+    Text(&'a Channel<String>),
+    Events(&'a Channel<AiStreamEvent>),
+}
+
+impl AiOutput<'_> {
+    fn text(&self, text: &str) -> Result<(), String> {
+        match self {
+            Self::Text(channel) => channel.send(text.to_string()),
+            Self::Events(channel) => channel.send(AiStreamEvent::TextDelta {
+                text: text.to_string(),
+            }),
+        }
+        .map_err(|e| e.to_string())
+    }
+
+    fn tool_call(&self, tool_call: ToolCall) -> Result<(), String> {
+        match self {
+            Self::Events(channel) => channel
+                .send(AiStreamEvent::ToolCall { tool_call })
+                .map_err(|e| e.to_string()),
+            Self::Text(_) => Err("Unexpected tool call in a text-only response".into()),
+        }
+    }
+}
+
 async fn stream_ollama(
     client: &Client,
     messages: &[ChatMessage],
@@ -564,7 +621,6 @@ async fn stream_ollama(
     model: &str,
     system: &str,
     on_chunk: &Channel<String>,
-    cancel: &Arc<AtomicBool>,
 ) -> Result<(), String> {
     stream_ollama_with_tools(
         client,
@@ -573,8 +629,7 @@ async fn stream_ollama(
         model,
         system,
         &[],
-        on_chunk,
-        cancel,
+        &AiOutput::Text(on_chunk),
     )
     .await
 }
@@ -587,19 +642,34 @@ async fn stream_ollama_with_tools(
     model: &str,
     system: &str,
     tools: &[ToolDefinition],
-    on_chunk: &Channel<String>,
-    cancel: &Arc<AtomicBool>,
+    output: &AiOutput<'_>,
 ) -> Result<(), String> {
     let mut ollama_messages: Vec<OllamaMessage> = vec![OllamaMessage {
         role: "system",
         content: system,
         tool_calls: None,
+        tool_name: None,
     }];
     for m in messages {
         ollama_messages.push(OllamaMessage {
             role: &m.role,
             content: &m.content,
-            tool_calls: None,
+            tool_calls: if m.tool_calls.is_empty() {
+                None
+            } else {
+                Some(
+                    m.tool_calls
+                        .iter()
+                        .map(|call| OllamaToolCall {
+                            function: OllamaToolCallFunction {
+                                name: call.name.clone(),
+                                arguments: call.input.clone(),
+                            },
+                        })
+                        .collect(),
+                )
+            },
+            tool_name: m.name.as_deref(),
         });
     }
 
@@ -652,15 +722,18 @@ async fn stream_ollama_with_tools(
         let response_text = resp.text().await.map_err(|e| e.to_string())?;
         let event: serde_json::Value =
             serde_json::from_str(&response_text).map_err(|e| e.to_string())?;
+        if let Some(error) = event["error"].as_str() {
+            return Err(format!("Ollama error: {error}"));
+        }
 
         // Send text content
         if let Some(text) = event["message"]["content"].as_str() {
             if !text.is_empty() {
-                on_chunk.send(text.to_string()).map_err(|e| e.to_string())?;
+                output.text(text)?;
             }
         }
 
-        // Send tool calls as JSON via on_chunk
+        // Keep native tool calls separate from model-generated text.
         if let Some(tool_calls) = event["message"]["tool_calls"].as_array() {
             for (i, tc) in tool_calls.iter().enumerate() {
                 if let Some(func) = tc["function"].as_object() {
@@ -671,51 +744,47 @@ async fn stream_ollama_with_tools(
                         name: name.to_string(),
                         input: args.clone(),
                     };
-                    let tc_json = serde_json::to_string(&tool_call).unwrap_or_default();
-                    on_chunk
-                        .send(format!("\n__TOOL_CALL__:{}\n", tc_json))
-                        .map_err(|e| e.to_string())?;
+                    output.tool_call(tool_call)?;
                 }
             }
         }
         return Ok(());
     }
 
-    // Streaming response (no tools)
+    // Streaming response (no tools).
     let mut byte_stream = resp.bytes_stream();
-    let mut buffer = String::new();
-
+    let mut decoder = LineDecoder::default();
     while let Some(chunk) = byte_stream.next().await {
-        if cancel.load(Ordering::Relaxed) {
-            return Err("cancelled".to_string());
-        }
         let chunk = chunk.map_err(|e| e.to_string())?;
-        buffer.push_str(&String::from_utf8_lossy(&chunk));
-        loop {
-            match buffer.find('\n') {
-                None => break,
-                Some(pos) => {
-                    let line = buffer[..pos].trim().to_string();
-                    buffer = buffer[pos + 1..].to_string();
-                    if line.is_empty() {
-                        continue;
-                    }
-                    if let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) {
-                        if let Some(text) = event["message"]["content"].as_str() {
-                            if !text.is_empty() {
-                                on_chunk.send(text.to_string()).map_err(|e| e.to_string())?;
-                            }
-                        }
-                        if event["done"].as_bool().unwrap_or(false) {
-                            return Ok(());
-                        }
-                    }
-                }
+        for line in decoder.push(&chunk)? {
+            if emit_ollama_line(&line, output)? {
+                return Ok(());
             }
         }
     }
+    if let Some(line) = decoder.finish()? {
+        if emit_ollama_line(&line, output)? {
+            return Ok(());
+        }
+    }
+    Err("Ollama stream ended before completion".into())
+}
 
-    Ok(())
+fn emit_ollama_line(line: &str, output: &AiOutput<'_>) -> Result<bool, String> {
+    if line.trim().is_empty() {
+        return Ok(false);
+    }
+    let event: serde_json::Value = serde_json::from_str(line).map_err(|e| e.to_string())?;
+    if let Some(error) = event["error"].as_str() {
+        return Err(format!("Ollama error: {error}"));
+    }
+    if let Some(text) = event["message"]["content"]
+        .as_str()
+        .filter(|text| !text.is_empty())
+    {
+        output.text(text)?;
+    }
+    Ok(event["done"].as_bool().unwrap_or(false))
 }
 
 // ── Public command ─────────────────────────────────────────────────────────
@@ -729,18 +798,20 @@ pub async fn stream_ai_chat(
     on_chunk: Channel<String>,
     cancel: tauri::State<'_, AiCancelFlag>,
 ) -> Result<(), String> {
-    cancel.0.store(false, Ordering::Relaxed);
-    let client = Client::new();
-    stream_ollama(
-        &client,
-        &messages,
-        &ollama_url,
-        &ollama_model,
-        &system,
-        &on_chunk,
-        &cancel.0,
-    )
-    .await
+    cancel
+        .run(async {
+            let client = Client::new();
+            stream_ollama(
+                &client,
+                &messages,
+                &ollama_url,
+                &ollama_model,
+                &system,
+                &on_chunk,
+            )
+            .await
+        })
+        .await
 }
 
 // ── Tool-enabled Ollama chat ──────────────────────────────────────────────
@@ -752,22 +823,24 @@ pub async fn stream_ai_chat_with_tools(
     ollama_model: String,
     system: String,
     tools: Vec<ToolDefinition>,
-    on_chunk: Channel<String>,
+    on_chunk: Channel<AiStreamEvent>,
     cancel: tauri::State<'_, AiCancelFlag>,
 ) -> Result<(), String> {
-    cancel.0.store(false, Ordering::Relaxed);
-    let client = Client::new();
-    stream_ollama_with_tools(
-        &client,
-        &messages,
-        &ollama_url,
-        &ollama_model,
-        &system,
-        &tools,
-        &on_chunk,
-        &cancel.0,
-    )
-    .await
+    cancel
+        .run(async {
+            let client = Client::new();
+            stream_ollama_with_tools(
+                &client,
+                &messages,
+                &ollama_url,
+                &ollama_model,
+                &system,
+                &tools,
+                &AiOutput::Events(&on_chunk),
+            )
+            .await
+        })
+        .await
 }
 
 // ── Claude API with native tool calling ───────────────────────────────────
@@ -795,11 +868,29 @@ struct ClaudeApiTool<'a> {
     input_schema: &'a serde_json::Value,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-struct ClaudeToolUse {
-    id: String,
-    name: String,
-    input: serde_json::Value,
+fn claude_messages(messages: &[ChatMessage]) -> Result<Vec<ClaudeApiMessage<'_>>, String> {
+    messages.iter().map(|message| {
+        if message.role == "tool" {
+            let id = message.tool_call_id.as_ref().ok_or("Tool result is missing its call ID")?;
+            return Ok(ClaudeApiMessage {
+                role: "user",
+                content: serde_json::json!([{
+                    "type": "tool_result", "tool_use_id": id, "content": message.content
+                }]),
+            });
+        }
+        if message.tool_calls.is_empty() {
+            return Ok(ClaudeApiMessage { role: &message.role, content: serde_json::json!(message.content) });
+        }
+        let mut blocks = Vec::new();
+        if !message.content.is_empty() {
+            blocks.push(serde_json::json!({ "type": "text", "text": message.content }));
+        }
+        for call in &message.tool_calls {
+            blocks.push(serde_json::json!({ "type": "tool_use", "id": call.id, "name": call.name, "input": call.input }));
+        }
+        Ok(ClaudeApiMessage { role: &message.role, content: serde_json::Value::Array(blocks) })
+    }).collect()
 }
 
 #[tauri::command]
@@ -810,182 +901,144 @@ pub async fn stream_claude_api(
     model: String,
     system: String,
     tools: Vec<ToolDefinition>,
-    on_chunk: Channel<String>,
+    on_chunk: Channel<AiStreamEvent>,
     on_status: Channel<String>,
     cancel: tauri::State<'_, AiCancelFlag>,
 ) -> Result<(), String> {
-    cancel.0.store(false, Ordering::Relaxed);
-    let client = Client::new();
+    cancel
+        .run(async {
+            let client = Client::new();
 
-    let claude_messages: Vec<ClaudeApiMessage> = messages
-        .iter()
-        .map(|m| {
-            let content = if m.role == "tool" {
-                // Tool results need special formatting
-                serde_json::json!([{
-                    "type": "tool_result",
-                    "tool_use_id": m.content.clone(),
-                    "content": ""
-                }])
-            } else {
-                serde_json::json!(m.content)
-            };
-            ClaudeApiMessage {
-                role: &m.role,
-                content,
+            let claude_messages = claude_messages(&messages)?;
+
+            let claude_tools: Vec<ClaudeApiTool> = tools
+                .iter()
+                .map(|t| ClaudeApiTool {
+                    name: &t.name,
+                    description: &t.description,
+                    input_schema: &t.parameters,
+                })
+                .collect();
+
+            let body = serde_json::to_string(&ClaudeApiRequest {
+                model: &model,
+                max_tokens: 8192,
+                system: &system,
+                messages: claude_messages,
+                tools: claude_tools,
+                stream: true,
+            })
+            .map_err(|e| e.to_string())?;
+
+            let resp = client
+                .post("https://api.anthropic.com/v1/messages")
+                .header("x-api-key", &api_key)
+                .header("anthropic-version", "2023-06-01")
+                .header("content-type", "application/json")
+                .body(body)
+                .send()
+                .await
+                .map_err(|e| format!("Claude API error: {e}"))?;
+
+            if !resp.status().is_success() {
+                let status = resp.status().as_u16();
+                let body = resp.text().await.unwrap_or_default();
+                return Err(format!("Claude API error {status}: {body}"));
             }
-        })
-        .collect();
 
-    let claude_tools: Vec<ClaudeApiTool> = tools
-        .iter()
-        .map(|t| ClaudeApiTool {
-            name: &t.name,
-            description: &t.description,
-            input_schema: &t.parameters,
-        })
-        .collect();
+            let mut byte_stream = resp.bytes_stream();
+            let mut decoder = LineDecoder::default();
+            let mut current_tool_use: Option<ToolInput> = None;
+            let output = AiOutput::Events(&on_chunk);
 
-    let body = serde_json::to_string(&ClaudeApiRequest {
-        model: &model,
-        max_tokens: 8192,
-        system: &system,
-        messages: claude_messages,
-        tools: claude_tools,
-        stream: true,
-    })
-    .map_err(|e| e.to_string())?;
-
-    let resp = client
-        .post("https://api.anthropic.com/v1/messages")
-        .header("x-api-key", &api_key)
-        .header("anthropic-version", "2023-06-01")
-        .header("content-type", "application/json")
-        .body(body)
-        .send()
-        .await
-        .map_err(|e| format!("Claude API error: {e}"))?;
-
-    if !resp.status().is_success() {
-        let status = resp.status().as_u16();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!("Claude API error {status}: {body}"));
-    }
-
-    let mut byte_stream = resp.bytes_stream();
-    let mut buffer = String::new();
-    let mut current_tool_use: Option<ClaudeToolUse> = None;
-
-    while let Some(chunk) = byte_stream.next().await {
-        if cancel.0.load(Ordering::Relaxed) {
-            return Err("cancelled".to_string());
-        }
-        let chunk = chunk.map_err(|e| e.to_string())?;
-        buffer.push_str(&String::from_utf8_lossy(&chunk));
-
-        while let Some(pos) = buffer.find("\n\n") {
-            let event_text = buffer[..pos].to_string();
-            buffer = buffer[pos + 2..].to_string();
-
-            for line in event_text.lines() {
-                if !line.starts_with("data: ") {
-                    continue;
-                }
-                let data = &line[6..];
-                if data == "[DONE]" {
-                    return Ok(());
-                }
-
-                let Ok(event): Result<serde_json::Value, _> = serde_json::from_str(data) else {
-                    continue;
-                };
-
-                match event["type"].as_str() {
-                    Some("content_block_start") => {
-                        let block = &event["content_block"];
-                        match block["type"].as_str() {
-                            Some("text") => {
-                                if let Some(text) = block["text"].as_str() {
-                                    if !text.is_empty() {
-                                        on_chunk
-                                            .send(text.to_string())
-                                            .map_err(|e| e.to_string())?;
-                                    }
-                                }
-                            }
-                            Some("tool_use") => {
-                                current_tool_use = Some(ClaudeToolUse {
-                                    id: block["id"].as_str().unwrap_or("").to_string(),
-                                    name: block["name"].as_str().unwrap_or("").to_string(),
-                                    input: serde_json::Value::Object(serde_json::Map::new()),
-                                });
-                            }
-                            _ => {}
-                        }
+            while let Some(chunk) = byte_stream.next().await {
+                let chunk = chunk.map_err(|e| e.to_string())?;
+                for line in decoder.push(&chunk)? {
+                    if !line.starts_with("data: ") {
+                        continue;
                     }
-                    Some("content_block_delta") => {
-                        let delta = &event["delta"];
-                        match delta["type"].as_str() {
-                            Some("text_delta") => {
-                                if let Some(text) = delta["text"].as_str() {
-                                    if !text.is_empty() {
-                                        on_chunk
-                                            .send(text.to_string())
-                                            .map_err(|e| e.to_string())?;
-                                    }
-                                }
-                            }
-                            Some("input_json_delta") => {
-                                if let Some(partial) = delta["partial_json"].as_str() {
-                                    if let Some(ref mut tool_use) = current_tool_use {
-                                        // Accumulate partial JSON
-                                        if let Ok(partial_value) =
-                                            serde_json::from_str::<serde_json::Value>(partial)
-                                        {
-                                            if let (Some(obj), Some(partial_obj)) = (
-                                                tool_use.input.as_object_mut(),
-                                                partial_value.as_object(),
-                                            ) {
-                                                for (k, v) in partial_obj {
-                                                    obj.insert(k.clone(), v.clone());
-                                                }
-                                            }
+                    let data = &line[6..];
+                    if data == "[DONE]" {
+                        return Ok(());
+                    }
+
+                    let Ok(event): Result<serde_json::Value, _> = serde_json::from_str(data) else {
+                        continue;
+                    };
+
+                    match event["type"].as_str() {
+                        Some("message_stop") => return Ok(()),
+                        Some("error") => {
+                            return Err(format!("Claude API error: {}", event["error"]))
+                        }
+                        Some("content_block_start") => {
+                            let block = &event["content_block"];
+                            match block["type"].as_str() {
+                                Some("text") => {
+                                    if let Some(text) = block["text"].as_str() {
+                                        if !text.is_empty() {
+                                            output.text(text)?;
                                         }
                                     }
                                 }
+                                Some("tool_use") => {
+                                    current_tool_use = Some(ToolInput {
+                                        id: block["id"].as_str().unwrap_or("").to_string(),
+                                        name: block["name"].as_str().unwrap_or("").to_string(),
+                                        json: String::new(),
+                                    });
+                                }
+                                _ => {}
                             }
-                            _ => {}
                         }
-                    }
-                    Some("content_block_stop") => {
-                        if let Some(tool_use) = current_tool_use.take() {
-                            let tc = ToolCall {
-                                id: tool_use.id,
-                                name: tool_use.name,
-                                input: tool_use.input,
-                            };
-                            let tc_json = serde_json::to_string(&tc).unwrap_or_default();
-                            on_chunk
-                                .send(format!("\n__TOOL_CALL__:{}\n", tc_json))
-                                .map_err(|e| e.to_string())?;
+                        Some("content_block_delta") => {
+                            let delta = &event["delta"];
+                            match delta["type"].as_str() {
+                                Some("text_delta") => {
+                                    if let Some(text) = delta["text"].as_str() {
+                                        if !text.is_empty() {
+                                            output.text(text)?;
+                                        }
+                                    }
+                                }
+                                Some("input_json_delta") => {
+                                    if let Some(partial) = delta["partial_json"].as_str() {
+                                        if let Some(ref mut tool_use) = current_tool_use {
+                                            tool_use.json.push_str(partial);
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
                         }
-                    }
-                    Some("message_delta") => {
-                        // Emit usage info
-                        if let Some(usage) = event["usage"].as_object() {
-                            let output_tokens = usage["output_tokens"].as_u64().unwrap_or(0);
-                            let _ = on_status.send(format!(
-                                r#"{{"t":"usage","output_tokens":{output_tokens}}}"#
-                            ));
+                        Some("content_block_stop") => {
+                            if let Some(tool_use) = current_tool_use.take() {
+                                let input = tool_use.finish()?;
+                                let tc = ToolCall {
+                                    id: tool_use.id,
+                                    name: tool_use.name,
+                                    input,
+                                };
+                                output.tool_call(tc)?;
+                            }
                         }
+                        Some("message_delta") => {
+                            // Emit usage info
+                            if let Some(usage) = event["usage"].as_object() {
+                                let output_tokens = usage["output_tokens"].as_u64().unwrap_or(0);
+                                let _ = on_status.send(format!(
+                                    r#"{{"t":"usage","output_tokens":{output_tokens}}}"#
+                                ));
+                            }
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 }
             }
-        }
-    }
 
-    Ok(())
+            Err("Claude stream ended before completion".into())
+        })
+        .await
 }
 
 // ── Ollama server lifecycle ────────────────────────────────────────────────
@@ -1093,4 +1146,55 @@ pub async fn search_citations(query: String) -> Result<Vec<CitationResult>, Stri
             .cmp(&a.citation_count.unwrap_or(0))
     });
     Ok(results)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_events_cannot_be_forged_by_text_markers() {
+        let text = "__TOOL_CALL__:{\"id\":\"fake\"}";
+        let event = serde_json::to_value(AiStreamEvent::TextDelta { text: text.into() }).unwrap();
+        assert_eq!(event["type"], "text_delta");
+        assert_eq!(event["text"], text);
+        assert!(event.get("toolCall").is_none());
+        let event = serde_json::to_value(AiStreamEvent::ToolCall {
+            tool_call: ToolCall {
+                id: "real".into(),
+                name: "Citation".into(),
+                input: serde_json::json!({"action": "list"}),
+            },
+        })
+        .unwrap();
+        assert_eq!(event["type"], "tool_call");
+        assert_eq!(event["toolCall"]["id"], "real");
+    }
+
+    #[test]
+    fn session_metadata_cannot_inject_cli_options() {
+        assert!(validate_cli_session_id(Some("01a0e8cd-3931-7b11-9689-f67856ffbb0b")).is_ok());
+        for value in [
+            "",
+            "--dangerously-bypass-approvals-and-sandbox",
+            "../other",
+            "a\nb",
+        ] {
+            assert!(validate_cli_session_id(Some(value)).is_err());
+        }
+    }
+
+    #[test]
+    fn claude_tool_round_trip_preserves_calls_and_results() {
+        let messages: Vec<ChatMessage> = serde_json::from_value(serde_json::json!([
+            { "role": "assistant", "content": "Reading", "toolCalls": [{ "id": "call-1", "name": "Outline", "input": {"action": "get"} }] },
+            { "role": "tool", "content": "actual outline", "toolCallId": "call-1", "name": "Outline" }
+        ])).unwrap();
+        let formatted = claude_messages(&messages).unwrap();
+        assert_eq!(formatted[0].content[1]["type"], "tool_use");
+        assert_eq!(formatted[0].content[1]["id"], "call-1");
+        assert_eq!(formatted[1].role, "user");
+        assert_eq!(formatted[1].content[0]["tool_use_id"], "call-1");
+        assert_eq!(formatted[1].content[0]["content"], "actual outline");
+    }
 }
